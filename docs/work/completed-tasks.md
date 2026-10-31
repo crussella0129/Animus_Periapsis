@@ -14,4 +14,4 @@
 - **Completed:** 2026-10-31T21:05:20Z
 - **Files modified:** docs/spec/format-v1.md, crates/xtask/src/policy.rs, docs/intents/INT-0006-format-v1.md
 - **Evidence:** Windows 11 host, rustc 1.99.1. The spec lands before any hash or codec code. `cargo policy` → PASS for all 10 rules including the new `spec` rule (exit 0); `cargo test --workspace --locked` → 16 passed, including `policy_requires_format_spec` (missing spec, missing Object identity section, empty Object kinds, empty Worked examples → FAIL `spec`); fmt and Clippy clean.
-- **Commit:** PENDING
+- **Commit:** `951be4fe76da7c7e754f3914b49ac3a4ef09d39d`
