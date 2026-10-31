@@ -114,8 +114,14 @@ impl<'a> Decoder<'a> {
 
     /// Reads one raw byte.
     pub fn byte(&mut self) -> Result<u8, DecodeError> {
+        self.byte_of(self.pos)
+    }
+
+    /// Reads the next byte of a value that starts at `start`, so input that
+    /// ends inside the value is reported where the value starts.
+    fn byte_of(&mut self, start: usize) -> Result<u8, DecodeError> {
         let byte = *self.input.get(self.pos).ok_or(DecodeError::UnexpectedEnd {
-            at: self.pos,
+            at: start,
             needed: 1,
         })?;
         self.pos += 1;
@@ -124,10 +130,11 @@ impl<'a> Decoder<'a> {
 
     /// Reads `len` raw bytes.
     pub fn take(&mut self, len: usize) -> Result<&'a [u8], DecodeError> {
-        if len > self.remaining() {
+        let remaining = self.remaining();
+        if len > remaining {
             return Err(DecodeError::UnexpectedEnd {
                 at: self.pos,
-                needed: len,
+                needed: len - remaining,
             });
         }
         let bytes = &self.input[self.pos..self.pos + len];
@@ -147,7 +154,7 @@ impl<'a> Decoder<'a> {
         let start = self.pos;
         let mut value = 0u64;
         for index in 0..MAX_VARINT_LEN {
-            let byte = self.byte()?;
+            let byte = self.byte_of(start)?;
             // The tenth byte carries only bit 63, so anything above 0x01
             // either overflows or continues past ten bytes.
             if index == MAX_VARINT_LEN - 1 && byte > 0x01 {
@@ -170,11 +177,13 @@ impl<'a> Decoder<'a> {
     pub fn length(&mut self) -> Result<usize, DecodeError> {
         let at = self.pos;
         let len = self.uvarint()?;
+        let remaining = self.remaining();
         match usize::try_from(len) {
-            Ok(len) if len <= self.remaining() => Ok(len),
+            Ok(len) if len <= remaining => Ok(len),
+            // `len` exceeds `remaining` here, so the subtraction cannot wrap.
             _ => Err(DecodeError::UnexpectedEnd {
                 at,
-                needed: usize::try_from(len).unwrap_or(usize::MAX),
+                needed: usize::try_from(len - remaining as u64).unwrap_or(usize::MAX),
             }),
         }
     }
@@ -356,7 +365,9 @@ impl<T: Encode> Encode for Vec<T> {
 impl<T: Decode> Decode for Vec<T> {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self, DecodeError> {
         let count = dec.length()?;
-        let mut items = Vec::with_capacity(count);
+        // Nothing is reserved from `count`: an element can take many times its
+        // encoded size, so memory grows only with the elements actually read.
+        let mut items = Vec::new();
         for _ in 0..count {
             items.push(T::decode(dec)?);
         }

@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 
 use codec::{
-    Bytes, Decode, DecodeError, Encode, ObjectKind, RESERVED_KINDS, blob, decode_envelope,
+    Bytes, Decode, DecodeError, Decoder, Encode, ObjectKind, RESERVED_KINDS, blob, decode_envelope,
     encode_object, from_slice, object_id, to_vec,
 };
 use hash::{HashAlg, HashRef};
@@ -14,6 +14,19 @@ type Nested = BTreeMap<String, BTreeMap<u64, Option<Vec<Bytes>>>>;
 
 /// Cases per property: every type gets its own 10,000.
 const CASES: u32 = 10_000;
+
+/// Random byte strings decoded as every type (AC-5).
+const TOTALITY_CASES: u32 = 100_000;
+
+#[test]
+fn case_counts_are_not_overridden() {
+    // proptest lets PROPTEST_CASES replace a configured count, which would let
+    // the properties pass on fewer cases than the record states.
+    for cases in [CASES, TOTALITY_CASES] {
+        let config = proptest::test_runner::contextualize_config(ProptestConfig::with_cases(cases));
+        assert_eq!(config.cases, cases, "unset PROPTEST_CASES to run the suite");
+    }
+}
 
 fn any_hash() -> impl Strategy<Value = HashRef> {
     (
@@ -144,7 +157,7 @@ proptest! {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(100_000))]
+    #![proptest_config(ProptestConfig::with_cases(TOTALITY_CASES))]
 
     #[test]
     fn decode_is_total_on_random_bytes(bytes in prop::collection::vec(any::<u8>(), 0..256)) {
@@ -210,6 +223,25 @@ fn varint_rejects_non_canonical() {
 }
 
 #[test]
+fn truncated_varint_located_at_its_start() {
+    // The input ends inside the second element's varint, which starts at 2.
+    for cut in [&[0x80][..], &[0xff, 0xff, 0xff]] {
+        assert_eq!(
+            from_slice::<Vec<u64>>(&second_element(0x01, cut)),
+            Err(DecodeError::UnexpectedEnd { at: 2, needed: 1 })
+        );
+    }
+    assert_eq!(
+        from_slice::<u64>(&[0x80]),
+        Err(DecodeError::UnexpectedEnd { at: 0, needed: 1 })
+    );
+    assert_eq!(
+        from_slice::<Bytes>(&[0x80]),
+        Err(DecodeError::UnexpectedEnd { at: 0, needed: 1 })
+    );
+}
+
+#[test]
 fn u32_range_is_enforced() {
     assert_eq!(
         from_slice::<u32>(&[0x80, 0x80, 0x80, 0x80, 0x10]),
@@ -259,6 +291,29 @@ fn oversize_prefixes_rejected_without_allocation() {
     at_prefix(from_slice::<Vec<Vec<u64>>>(&input).map(drop));
     at_prefix(from_slice::<Vec<BTreeSet<u64>>>(&input).map(drop));
     at_prefix(from_slice::<Vec<BTreeMap<u64, u64>>>(&input).map(drop));
+}
+
+#[test]
+fn overrun_reports_bytes_still_needed() {
+    // Five bytes declared and three present: two more are needed.
+    let short = from_slice::<Bytes>(&[0x05, 0x01, 0x02, 0x03]);
+    assert_eq!(short, Err(DecodeError::UnexpectedEnd { at: 0, needed: 2 }));
+    assert_eq!(
+        short.unwrap_err().to_string(),
+        "value at byte 0 is truncated; 2 more bytes needed"
+    );
+    // The second element's prefix is at 2, and one of its five bytes is present.
+    assert_eq!(
+        from_slice::<Vec<Bytes>>(&second_element(0x00, &[0x05, 0x01])),
+        Err(DecodeError::UnexpectedEnd { at: 2, needed: 4 })
+    );
+    // `take` from offset 1 with two bytes left: three of its five are missing.
+    let mut dec = Decoder::new(&[0x01, 0x02, 0x03]);
+    dec.byte().unwrap();
+    assert_eq!(
+        dec.take(5),
+        Err(DecodeError::UnexpectedEnd { at: 1, needed: 3 })
+    );
 }
 
 #[test]

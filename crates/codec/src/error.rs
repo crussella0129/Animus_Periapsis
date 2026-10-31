@@ -1,5 +1,9 @@
-//! Decoding errors. Every variant carries the byte offset where decoding
-//! stopped, so a rejected object can be located exactly.
+//! Decoding errors. A variant that carries `at` gives the absolute byte offset
+//! where the faulty value starts (for a string that is not UTF-8, its first
+//! content byte), so a rejected object can be located exactly. The exceptions,
+//! `UnsupportedFormatVersion`, `ReservedObjectKind` and `UnknownObjectKind`,
+//! carry no offset: they name envelope-header fields at fixed positions, the
+//! format version at byte 0 and the kind at byte 1.
 
 use std::error::Error;
 use std::fmt;
@@ -9,7 +13,11 @@ use hash::HashError;
 /// Why a byte string is not a canonical encoding.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DecodeError {
-    /// The input ended before a value was complete.
+    /// The input ended before a value was complete. `at` is the absolute
+    /// offset where that value starts, and `needed` is the least number of
+    /// further bytes the input must have: 1 for a missing byte or a cut-off
+    /// varint, and for a length, count or `Decoder::take` larger than the
+    /// remaining input, how far it exceeds it (saturating at `usize::MAX`).
     UnexpectedEnd { at: usize, needed: usize },
     /// A varint has a redundant zero final group.
     NonMinimalVarint { at: usize },
@@ -41,7 +49,10 @@ impl fmt::Display for DecodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DecodeError::UnexpectedEnd { at, needed } => {
-                write!(f, "input ends at byte {at}; {needed} more bytes needed")
+                write!(
+                    f,
+                    "value at byte {at} is truncated; {needed} more bytes needed"
+                )
             }
             DecodeError::NonMinimalVarint { at } => {
                 write!(f, "non-minimal varint at byte {at}")

@@ -154,10 +154,14 @@ reserved for Ed25519.
 - **Exact:** a value must use the whole input; trailing bytes are an error.
 - **Bounded:** a length or count larger than the remaining input is rejected
   before anything of that size is allocated. Every encoded value takes at least
-  one byte, so a count can never exceed the remaining input.
+  one byte, so a count can never exceed the remaining input. A decoded element
+  can still take many times its encoded size, so no decoder reserves memory
+  from a declared count: a collection grows only as its elements decode.
 - **Located:** every error reports the absolute byte offset where the faulty
   value starts. A string that is not UTF-8 is reported at its first content
-  byte, after its length prefix.
+  byte, after its length prefix. An error in the envelope header names its
+  field instead, because the field's position is fixed: the format version is
+  at offset 0 and the kind at offset 1.
 - **Canonical:** only the encoding defined here is accepted, so
   `encode(decode(b)) = b` for every accepted `b`.
 
