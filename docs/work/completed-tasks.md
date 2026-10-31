@@ -62,4 +62,4 @@
 - **Completed:** 2026-10-31T21:18:01Z
 - **Files modified:** README.md, crates/xtask/src/main.rs, crates/xtask/src/docs.rs
 - **Evidence:** Windows 11 host, rustc 1.99.1. `prior_art_credits_every_listed_system` passed: all 36 listed systems, projects and test-data sources are named in docs/prior-art.md (prior-art needed no change). `readme_keeps_statement_and_links_book` passed: the two owner paragraphs from 620f99c are verbatim, including the trailing space; there is a `docs/SUMMARY.md` link; all four commands are documented; and the exact sentence "`cargo ci`, `cargo policy` and `cargo book` take no flags." is present. `cargo ci` → all 5 steps PASS, exit 0.
-- **Commit:** PENDING
+- **Commit:** `7c0ae6e3a1ebd09af5dbceaf283490ea00f2bd00`
