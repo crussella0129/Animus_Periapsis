@@ -49,7 +49,7 @@ and the independent mrustc bootstrap are C++, so that claim is not achievable
   - Proxy: the `names` rule of `cargo policy`.
 - **AC-9** `necessary` `empirical` — The tooling commands `cargo ci`, `cargo policy` and `cargo book` are idempotent and take no flags: each rejects any argument starting with `-` with exit code 2, and two consecutive runs leave the working tree unchanged.
   - Threshold: 100% of tooling commands.
-- **AC-10** `supporting` `empirical` — The README keeps the owner's original statement, links the Book, and documents every tooling command (`cargo ci`, `cargo policy`, `cargo book`, `cargo deny check`) and that none takes flags.
+- **AC-10** `supporting` `empirical` — The README keeps the owner's original statement, links the Book, documents the commands `cargo ci`, `cargo policy`, `cargo book` and `cargo deny check`, and states that the three project commands (`cargo ci`, `cargo policy`, `cargo book`) take no flags; `cargo deny check` is a third-party tool, run exactly as shown.
 
 ## Rationale
 - "Reproducible and bootstrappable" is the honest target: trusting-trust risk,
@@ -99,4 +99,4 @@ and the independent mrustc bootstrap are C++, so that claim is not achievable
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 I.5 Phase 0 and the Biblio report §5).
-- 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-001, T-007, T-008). Revised before planning on owner direction: single-word crate names and flagless idempotent tooling (AC-8 and AC-9 added, AC-7 reworded for publication only). After the first plan critique: cargo-deny's place outside `cargo ci`, and the CI-dependence of AC-2 to AC-4, recorded in Consequences. After the second plan critique: AC-6's audit command corrected to `cargo tree --workspace --target all -e normal,build -i cc` (`-e build` alone never reaches a normal dependency such as `blake3`); AC-8 limited to unpublished packages, with the publication path in Consequences; AC-10 added for the README; CI evidence recorded by the next sprint.
+- 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-001, T-007, T-008). Revised before planning on owner direction: single-word crate names and flagless idempotent tooling (AC-8 and AC-9 added, AC-7 reworded for publication only). After the first plan critique: cargo-deny's place outside `cargo ci`, and the CI-dependence of AC-2 to AC-4, recorded in Consequences. After the second plan critique: AC-6's audit command corrected to `cargo tree --workspace --target all -e normal,build -i cc` (`-e build` alone never reaches a normal dependency such as `blake3`); AC-8 limited to unpublished packages, with the publication path in Consequences; AC-10 added for the README; CI evidence recorded by the next sprint. After the third: AC-10 limits the no-flags statement to the three project commands, since cargo-deny is a third-party tool with its own flags.

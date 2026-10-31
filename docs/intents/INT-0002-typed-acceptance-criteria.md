@@ -49,7 +49,9 @@ Declaration: a Book opts into this contract with the line
 `typed-acceptance: 1` in its `docs/.sprint-loop-book` marker. In a declared
 Book every criterion must be typed; an undeclared Book is read with the port
 rule below. The Book itself says which rule applies, so checking it needs no
-flags.
+flags. A `typed-acceptance` value other than `1` is refused rather than read
+with the port rule, because it names a contract this version does not know.
+A directory without a `.sprint-loop-book` marker is not a Book and is refused.
 
 Semantics:
 - **Certified** — every criterion holds with evidence. **Refuted** — some
@@ -128,4 +130,4 @@ a second lifecycle — chapters keep Sprint Loops' seven states.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; grammar derived from Master Report v6 R5 Part B and R4).
-- 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-006, T-007). Clarified before planning: claims may wrap onto continuation lines, and a Book declares the contract with `typed-acceptance: 1` in its marker instead of the checker taking a mode flag (owner direction: no flags on idempotent commands). After the first plan critique: an empty criteria list is Undetermined, and a declared Book with a criterion-less chapter is in violation. After the second plan critique: how "never reused" is enforced, and why strength is not computed yet, recorded in Consequences.
+- 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-006, T-007). Clarified before planning: claims may wrap onto continuation lines, and a Book declares the contract with `typed-acceptance: 1` in its marker instead of the checker taking a mode flag (owner direction: no flags on idempotent commands). After the first plan critique: an empty criteria list is Undetermined, and a declared Book with a criterion-less chapter is in violation. After the second plan critique: how "never reused" is enforced, and why strength is not computed yet, recorded in Consequences. After the third: the Declaration paragraph refuses unknown `typed-acceptance` values and marker-less directories.

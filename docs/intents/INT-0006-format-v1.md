@@ -95,10 +95,13 @@ laid out on disk is [INT-0007](INT-0007-crash-safe-storage.md) and
   algorithm space Periapsis needs.
 
 ## Consequences
-- Any encoding change requires a format-version change and new golden files.
+- Any change to a frozen encoding (one the owner has signed off under AC-6)
+  requires a format-version change and new golden files. Before that
+  sign-off, the spec's worked example, the golden file and the encoder change
+  together in one commit.
 - Derived data must be keyed by algorithm id and version so that a hash
   migration is an explicit derived-data migration (INT-0013).
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §3.1 as slimmed by R3 §5).
-- 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-002 to T-005: spec first, then hashes, canonical encoding, golden corpus). After the first plan critique: object identity as the hash of the whole envelope, the reserved-kind error, and staged freezing (what Sprint 0 freezes versus the Phase 1 freeze of format v1) recorded in Intent. After the second plan critique: AC-3's "CI" defined as the canonical suite, locally and in the GitHub matrix; golden values carried as worked examples in the spec; freezing takes effect at the owner's AC-6 sign-off.
+- 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-002 to T-005: spec first, then hashes, canonical encoding, golden corpus). After the first plan critique: object identity as the hash of the whole envelope, the reserved-kind error, and staged freezing (what Sprint 0 freezes versus the Phase 1 freeze of format v1) recorded in Intent. After the second plan critique: AC-3's "CI" defined as the canonical suite, locally and in the GitHub matrix; golden values carried as worked examples in the spec; freezing takes effect at the owner's AC-6 sign-off. After the third: the Consequences bullet on encoding changes now distinguishes frozen (signed-off) encodings from unfrozen ones.

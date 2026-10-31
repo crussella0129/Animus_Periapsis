@@ -4,11 +4,12 @@
 - [INT-0002](../../../intents/INT-0002-typed-acceptance-criteria.md) — state: planned; acceptance criteria covered: AC-2 (0 grammar violations, including the `missing` rule), AC-3 (status consistency, by proxy), AC-4 (port rule over the Animus_Sprint_Loops corpus). AC-1 and AC-5 are sign-offs outside this sprint.
 - [INT-0003](../../../intents/INT-0003-engineering-baseline.md) — state: planned; acceptance criteria covered:
   - locally: AC-1, AC-6, AC-8, AC-9 and AC-10, plus the local half of AC-2 to AC-4 (pinned, locked, deny-clean, fmt- and clippy-clean on Windows and Linux) and supporting evidence for AC-5 (the design-credit list);
-  - carried forward: the GitHub Actions half of AC-2 to AC-4. It can only run at the checkpoint, after this sprint closes, so Loop queues a backlog task for Sprint 1 to record it;
+  - carried forward: the GitHub Actions half of AC-2 to AC-4. It can only run at the checkpoint, after this sprint closes, so the carried-forward task `T-009 (backlog)` below records it;
   - owner actions: AC-5's sign-off (at the checkpoint) and AC-7 (crates.io reservation).
 - [INT-0004](../../../intents/INT-0004-windows-and-linux.md) — state: planned; acceptance criteria covered: AC-1 for this sprint's code (Windows host checkout, WSL ext4 clone, fresh Windows clone with `core.autocrlf=true`). AC-2 to AC-6 need paths, a working copy, storage or the INT-0007/INT-0024 scenarios.
 - [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md) — state: planned; acceptance criteria covered: AC-4 (no randomly seeded hash collections, enforced by Clippy). AC-1 to AC-3 and AC-5 arrive with the first storage code.
-- [INT-0006](../../../intents/INT-0006-format-v1.md) — state: planned; acceptance criteria covered: AC-1 to AC-5, and AC-6 up to the owner's sign-off of the spec at the checkpoint, which is also when Sprint 0's encodings freeze. AC-7 waits for signatures (INT-0016).
+- [INT-0006](../../../intents/INT-0006-format-v1.md) — state: planned; acceptance criteria covered: AC-1, AC-2, AC-4 and AC-5; AC-3's local half (the canonical suite on Windows and Linux), with its GitHub-matrix half carried forward in the same backlog task as INT-0003's; and AC-6 up to the owner's sign-off of the spec at the checkpoint, which is also when Sprint 0's encodings freeze. AC-7 waits for signatures (INT-0016).
+- Carried-forward task: Loop appends `T-009 (backlog) [intent: INT-0001, INT-0002, INT-0003, INT-0006]` and links it from those chapters' Work evidence. Its job is to record the Sprint 0 checkpoint's GitHub Actions run (head SHA, both matrix legs with their golden and `cargo ci` results, the `deny` job, runner OS and `rustc`) and the owner's checkpoint sign-offs (INT-0001 AC-1, INT-0002 AC-1, INT-0003 AC-5, INT-0006 AC-6).
 - Context, not advanced:
   - [INT-0001](../../../intents/INT-0001-periapsis-charter.md) stays `proposed` until the owner signs off its decomposition (its AC-1). Its Consequences now record that figures quoted from the R1 to R5 prototypes are targets until each owning intent's sprint re-measures them; Sprint 0 quotes none as evidence.
   - [INT-0022](../../../intents/INT-0022-agent-and-human-interfaces.md) holds the product form of the owner's naming and flag rule.
@@ -36,18 +37,20 @@
 - **Intent:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md), [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md)
 - **Touches:** `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `deny.toml`, `clippy.toml`, `.gitattributes`, `.cargo/config.toml`, `docs/prior-art.md`, `crates/xtask/Cargo.toml`, `crates/xtask/src/main.rs`, `crates/xtask/src/policy.rs`
 - **Depends on:** (none)
-- **Acceptance criterion:** INT-0003 AC-1 (no `unsafe`), AC-2 (pinned and locked, local half), AC-3 (deny configuration and a clean local run), AC-6 (dependencies credited, with licence and C-build status, pure or justified), AC-8 (single-word names), AC-9 (flagless `cargo policy`); INT-0005 AC-4 (no randomly seeded hash collections)
+- **Acceptance criterion:** INT-0003 AC-1 (no `unsafe`), AC-2 (pinned and locked, local half), AC-3 (deny configuration and a clean local run), AC-6 (dependencies credited, with licence and C-build status, pure or justified), AC-8 (single-word names, with every member unpublished as INT-0003's boundary requires), AC-9 (flagless `cargo policy`); INT-0005 AC-4 (no randomly seeded hash collections)
 - **Success criterion (EARS):**
-  - **WHEN** `cargo policy` runs at the repository root after this task, **THEN** it **SHALL** exit 0 and print `PASS <rule>` for each of `lints`, `unsafe`, `toolchain`, `lockfile`, `deps`, `credits`, `clippy` and `names`.
+  - **WHEN** `cargo policy` runs at the repository root after this task, **THEN** it **SHALL** exit 0 and print `PASS <rule>` for each of `lints`, `unsafe`, `toolchain`, `lockfile`, `publish`, `deps`, `credits`, `clippy` and `names`.
+  - **WHEN** the rules run against the clean fixture workspace that the negative tests start from, **THEN** every rule **SHALL** pass, so each negative test fails for its one planted defect only.
+  - **WHEN** a member manifest does not resolve to `publish = false` (neither `publish = false` nor `publish.workspace = true` with the workspace value `false`), **THEN** policy **SHALL** fail with rule `publish` and name the crate, until INT-0003 records a publishable crate.
   - **WHEN** a member crate's `Cargo.toml` lacks `[lints]` with `workspace = true`, **THEN** policy **SHALL** fail with rule `lints` and name the crate.
   - **WHEN** a member crate root (`src/lib.rs` or `src/main.rs`) lacks `#![forbid(unsafe_code)]`, **THEN** policy **SHALL** fail with rule `unsafe` and name the file.
   - **WHEN** `rust-toolchain.toml` names a channel that is not an exact `X.Y.Z` release, **THEN** policy **SHALL** fail with rule `toolchain`.
   - **WHEN** `Cargo.lock` is absent, **THEN** policy **SHALL** fail with rule `lockfile`.
   - **WHEN** a member manifest declares a normal, dev or build dependency, or a `[dependencies.<name>]` table, without `workspace = true`, **THEN** policy **SHALL** fail with rule `deps` and name the crate and the dependency.
-  - **WHEN** `docs/prior-art.md` is missing, or a non-path entry of `[workspace.dependencies]` lacks a dependency-table row with a non-empty licence cell and a C-build cell that starts with `yes` or `no`, or a `yes` row has an empty "how Periapsis builds it" cell, **THEN** policy **SHALL** fail with rule `credits` and name the dependency or the missing file.
+  - **WHEN** `docs/prior-art.md` is missing; or a non-path entry of `[workspace.dependencies]` lacks a dependency-table row with a non-empty licence cell and a C-build cell that starts with `yes` or `no`; or a `yes` row's "how Periapsis builds it" cell neither names a feature, as `features = ["<name>"]`, that the matching `[workspace.dependencies]` entry enables, nor starts with `C allowed:` followed by a justification, **THEN** policy **SHALL** fail with rule `credits` and name the dependency or the missing file.
   - **WHEN** `clippy.toml` does not list both `std::collections::HashMap` and `std::collections::HashSet` under `disallowed-types`, **THEN** policy **SHALL** fail with rule `clippy`.
   - **WHEN** a member crate uses `std::collections::HashMap` or `HashSet`, **THEN** `cargo clippy --workspace --all-targets -- -D warnings` **SHALL** fail on `disallowed_types`.
-  - **WHEN** an unpublished workspace package's name does not match `[a-z][a-z0-9]*`, **THEN** policy **SHALL** fail with rule `names` and name the package.
+  - **WHEN** any workspace package's name does not match `[a-z][a-z0-9]*`, **THEN** policy **SHALL** fail with rule `names` and name the package.
   - **WHEN** the policy command receives any argument besides its command name, including any argument starting with `-`, **THEN** it **SHALL** exit 2 and write a usage message to stderr.
   - **WHEN** `cargo deny check` runs at this task's boundary, **THEN** advisories, bans, licenses and sources **SHALL** all report ok, and the output **SHALL** be recorded with the task's completion entry.
 - **Notes:**
@@ -83,12 +86,13 @@
   - **WHEN** `HashAlg::Blake3.hash(input)` runs for each of the 35 official BLAKE3 test-vector inputs (lengths 0 to 102,400, byte `i` = `i mod 251`), **THEN** it **SHALL** return the first 32 bytes of that vector's `hash` output.
   - **WHEN** `HashAlg::Sha256.hash` runs on `""` and `"abc"`, **THEN** it **SHALL** return the FIPS 180-2 digests `e3b0c442…b855` and `ba7816bf…15ad`.
   - **WHEN** `HashAlg::from_id(id)` runs for every `id` in 0..=255, **THEN** it **SHALL** succeed exactly for 0x01 and 0x02 and return `UnknownAlgorithm(id)` otherwise.
+  - **WHEN** the public hash registry is read, **THEN** `HashAlg::ALL` **SHALL** be exactly Blake3 (0x01, `blake3`, 32 bytes) and Sha256 (0x02, `sha256`, 32 bytes), in that order, and `HashAlg::DEFAULT` **SHALL** be Blake3.
   - **WHEN** `HashRef::new(alg, digest)` receives a digest whose length differs from `alg.digest_len()`, **THEN** it **SHALL** return `DigestLength { expected, actual }`.
   - **WHEN** two `HashRef`s hold identical digest bytes under different algorithms, **THEN** they **SHALL** compare unequal and order by algorithm id first.
   - **WHEN** a `HashRef` goes to binary `[id][digest]` and back, **THEN** it **SHALL** equal the original; **WHEN** the binary input has an unknown id, a truncated digest or trailing bytes, **THEN** parsing **SHALL** fail.
   - **WHEN** a `HashRef` is rendered as text, **THEN** it **SHALL** read `<name>:<lowercase hex>` and parse back to itself; **WHEN** text has uppercase hex, an unknown name, odd or wrong-length hex, or no `:`, **THEN** parsing **SHALL** fail.
   - **WHEN** input is fed to `Hasher::update` in arbitrary chunks, **THEN** `finalize` **SHALL** equal the one-shot hash for both algorithms.
-  - **WHEN** `cargo tree --workspace --target all -e normal,build -i cc` runs after this task, **THEN** the crates it lists as depending on `cc` **SHALL** be exactly those with C-build `yes` in prior-art (here `blake3`), and each such row's build cell **SHALL** name its pure-Rust option (`features = ["pure"]`).
+  - **WHEN** `cargo tree --workspace --target all -e normal,build -i cc --depth 1` runs after this task, **THEN** the direct dependents of `cc` it lists **SHALL** be exactly the third-party crates with C-build `yes` in prior-art (here `blake3`); **WHEN** `cargo tree --workspace -e features -i blake3` runs, **THEN** it **SHALL** show `blake3 feature "pure"`, so the pure build is checked on the resolved graph and not only in prose.
   - **WHEN** `cargo policy` and `cargo deny check` run at this task's boundary, **THEN** both **SHALL** pass with `blake3`, `sha2` and `proptest` credited, and the deny output **SHALL** be recorded with the completion entry.
 - **Notes:**
   - Dependencies: `blake3 = { version = "1.8.7", default-features = false, features = ["std", "pure"] }`; `sha2 = { version = "0.11.1", default-features = false }`; dev-dependency `proptest = { version = "1.12.0", default-features = false, features = ["std"] }`, which T-004 and T-006 reuse.
@@ -106,7 +110,7 @@
   - **WHEN** a `Vec<u64>` whose second element is `80 00`, an 11-byte varint, or a 10-byte varint with tenth byte `02` is decoded, **THEN** decoding **SHALL** fail with `NonMinimalVarint` or `VarintOverflow` at offset 2, where that element starts.
   - **WHEN** a `u32` is decoded from `80 80 80 80 10` (2³²), **THEN** decoding **SHALL** fail with `IntegerOutOfRange`; **WHEN** it is decoded from `ff ff ff ff 0f` (2³² − 1), **THEN** it **SHALL** succeed.
   - **WHEN** the second element of a `Vec<bool>` is `02`, of a `Vec<Option<u64>>` has tag `02`, or of a `Vec<String>` holds bytes that are not UTF-8, **THEN** decoding **SHALL** fail with `InvalidBool`, `InvalidOptionTag` or `InvalidUtf8`. The offset is where the bad element starts, except that `InvalidUtf8` carries the offset of the string's first content byte, after its length prefix.
-  - **WHEN** a byte-string or string length, or the element count of a `Vec`, `BTreeSet` or `BTreeMap`, is the ten-byte varint for `u64::MAX` followed by fewer bytes, **THEN** decoding **SHALL** fail with `UnexpectedEnd` at the prefix's offset without attempting the allocation; a pre-allocation of that size would panic and fail the test.
+  - **WHEN** a byte-string or string length, or the element count of a `Vec`, `BTreeSet` or `BTreeMap`, is the ten-byte varint for `u64::MAX` followed by fewer bytes, as the second element of a `Vec` whose first element takes one byte, **THEN** decoding **SHALL** fail with `UnexpectedEnd { at: 2 }`, the prefix's offset, without attempting the allocation; a pre-allocation of that size would panic and fail the test.
   - **WHEN** a map or set encoding has keys that are not strictly increasing in the key type's canonical order, **THEN** decoding **SHALL** fail with `UnsortedOrDuplicateKey` at the offending key's offset.
   - **WHEN** `from_slice` decodes input that has bytes left after the value, **THEN** it **SHALL** fail with `TrailingBytes`.
   - **WHEN** a property test generates 10,000 values of a supported type, **THEN** decoding each value's encoding **SHALL** give the value back. This holds separately for each of u64, u32, bool, String, Bytes, HashRef, Option, Vec, BTreeSet, BTreeMap, 2-tuples, nested maps and blob envelopes with arbitrary bodies, each with its own 10,000 cases.
@@ -178,7 +182,7 @@
   - **WHEN** `cargo ci` receives any argument besides its command name, including any argument starting with `-`, **THEN** it **SHALL** exit 2 and write a usage message to stderr.
   - **WHEN** the runner starts the `test` step, **THEN** it **SHALL** remove `PERI_GOLDEN_CREATE` from that child's environment, so a variable left set in the shell can never create golden files.
   - **WHEN** `cargo ci` runs on the Windows 11 host checkout, in a WSL Ubuntu ext4 clone and in a fresh Windows clone made with `core.autocrlf=true`, **THEN** every step **SHALL** print `PASS` and the runner **SHALL** exit 0, with each run's OS release and `rustc -Vv` recorded.
-  - **WHEN** `cargo ci` runs twice in a row on a clean checkout, **THEN** `git status --porcelain` **SHALL** be empty after each run.
+  - **WHEN** `cargo ci`, `cargo policy` and `cargo book` each run twice in a row, with no arguments, on a clean checkout, **THEN** every run **SHALL** exit 0, `cargo book` **SHALL** print one counted line per `docs/intents/INT-*.md` chapter, and `git status --porcelain` **SHALL** be empty after every run.
   - **WHEN** the workflow test reads `.github/workflows/ci.yml`, **THEN** it **SHALL** find:
     - push triggers for `dev` and `main`, and a `pull_request` trigger;
     - a job whose matrix holds `ubuntu-latest` and `windows-latest` and that runs `cargo ci`;
@@ -187,7 +191,7 @@
 - **Notes:**
   - The `book` step runs in-process through the `book` library (`book.workspace = true`, from the path entry T-006 adds); policy runs in-process too.
   - cargo-deny stays its own command and CI job, as INT-0003 records. Dependabot gains a `cargo` ecosystem entry targeting `dev`; that is configuration, not a tested promise.
-  - The GitHub Actions run starts only at the checkpoint, after the sprint closes, so Loop queues a backlog task for Sprint 1 to record it as INT-0003 AC-2 to AC-4 evidence.
+  - The GitHub Actions run starts only at the checkpoint, after the sprint closes. It is recorded by the carried-forward task `T-009 (backlog)` defined in the Intents section, as INT-0003 AC-2 to AC-4 and INT-0006 AC-3 evidence.
 
 ### T-008: README and documentation checks
 - **Intent:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md)
@@ -200,5 +204,5 @@
     - the owner's two original paragraphs verbatim, compared against copies embedded in the test from `README.md` at `620f99c`;
     - a link to `docs/SUMMARY.md`;
     - the commands `cargo ci`, `cargo policy`, `cargo book` and `cargo deny check`;
-    - a statement that none of them takes flags.
+    - the exact sentence "`cargo ci`, `cargo policy` and `cargo book` take no flags." (`cargo deny check` is a third-party tool, run exactly as shown).
 - **Notes:** The README adds status, crate and command sections below the owner's text; INT-0031 is the Book form of the branding paragraph. `docs.rs` is a test-only module.
