@@ -1,5 +1,6 @@
-//! `cargo policy`: mechanical checks of the engineering baseline (INT-0003)
-//! and of the hash-collection guard (INT-0005 AC-4).
+//! `cargo policy`: mechanical checks of the engineering baseline (INT-0003),
+//! the hash-collection guard (INT-0005 AC-4) and the format spec's presence
+//! (INT-0006 AC-6).
 //!
 //! Each rule is a pure function of the files under the workspace root, so the
 //! tests run every rule against small fixture trees.
@@ -12,7 +13,7 @@ use std::path::{Path, PathBuf};
 type Rule = fn(&Path, &[PathBuf]) -> Vec<String>;
 
 /// The rules, in the order they are reported.
-pub const RULES: [(&str, Rule); 9] = [
+pub const RULES: [(&str, Rule); 10] = [
     ("lints", lints),
     ("unsafe", forbid_unsafe),
     ("toolchain", toolchain),
@@ -22,12 +23,33 @@ pub const RULES: [(&str, Rule); 9] = [
     ("credits", credits),
     ("clippy", clippy),
     ("names", names),
+    ("spec", spec),
 ];
 
 const FORBID_UNSAFE: &str = "#![forbid(unsafe_code)]";
 const DEPENDENCY_TABLES: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
 const DISALLOWED: [&str; 2] = ["std::collections::HashMap", "std::collections::HashSet"];
 const C_ALLOWED: &str = "C allowed:";
+const SPEC_PATH: &str = "docs/spec/format-v1.md";
+const SPEC_SECTIONS: [&str; 11] = [
+    "Conventions",
+    "Primitives",
+    "Canonical order",
+    "Hash algorithms",
+    "Objects",
+    "Object kinds",
+    "Object identity",
+    "Worked examples",
+    "Signatures (reserved)",
+    "Decoder requirements",
+    "Change control",
+];
+/// Tables the spec must hold rows in: (section, row prefix, minimum cells).
+const SPEC_TABLES: [(&str, &str, usize); 3] = [
+    ("Hash algorithms", "| `0x", 4),
+    ("Object kinds", "| `0x", 3),
+    ("Worked examples", "| `", 3),
+];
 
 /// The outcome of one rule: an empty problem list means it passed.
 #[derive(Debug)]
@@ -304,6 +326,50 @@ fn is_single_word(name: &str) -> bool {
     let mut bytes = name.bytes();
     bytes.next().is_some_and(|b| b.is_ascii_lowercase())
         && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+}
+
+/// The format spec exists, keeps every required section, and its registry
+/// and worked-example tables hold rows (INT-0006 AC-6: the spec comes first).
+fn spec(root: &Path, _members: &[PathBuf]) -> Vec<String> {
+    let path = root.join(SPEC_PATH);
+    if !path.is_file() {
+        return vec![format!("{SPEC_PATH} is missing")];
+    }
+    let text = read(&path);
+    let headings: Vec<&str> = text
+        .lines()
+        .filter_map(|line| line.strip_prefix('#'))
+        .map(|rest| rest.trim_start_matches('#').trim())
+        .collect();
+    let mut problems: Vec<String> = SPEC_SECTIONS
+        .into_iter()
+        .filter(|name| !headings.contains(name))
+        .map(|name| format!("{SPEC_PATH} has no \"{name}\" section"))
+        .collect();
+    for (name, prefix, cells) in SPEC_TABLES {
+        if table_rows(&text, name, prefix, cells) == 0 {
+            problems.push(format!("{SPEC_PATH} \"{name}\" has no table rows"));
+        }
+    }
+    problems
+}
+
+/// Counts table rows that start with `prefix` and hold at least `cells`
+/// cells, in the section headed `name`.
+fn table_rows(text: &str, name: &str, prefix: &str, cells: usize) -> usize {
+    let mut inside = false;
+    let mut rows = 0;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix('#') {
+            inside = rest.trim_start_matches('#').trim() == name;
+        } else if inside
+            && line.starts_with(prefix)
+            && line.trim().trim_matches('|').split('|').count() >= cells
+        {
+            rows += 1;
+        }
+    }
+    rows
 }
 
 /// Reads a file, treating a missing or unreadable file as empty; each rule
@@ -611,5 +677,33 @@ mod tests {
         }
         assert!(is_single_word("hash"));
         assert!(is_single_word("sha256"));
+    }
+
+    #[test]
+    fn policy_requires_format_spec() {
+        let fixture = Fixture::new("spec-missing");
+        fs::remove_file(fixture.0.join("docs/spec/format-v1.md")).unwrap();
+        fixture.fails_only("spec", "format-v1.md is missing");
+
+        let fixture = Fixture::new("spec-section");
+        fixture.write(
+            "docs/spec/format-v1.md",
+            &SPEC.replace("### Object identity\n", ""),
+        );
+        fixture.fails_only("spec", "Object identity");
+
+        let fixture = Fixture::new("spec-kinds");
+        fixture.write(
+            "docs/spec/format-v1.md",
+            &SPEC.replace("| `0x01` | `blob` | defined |\n", ""),
+        );
+        fixture.fails_only("spec", "Object kinds");
+
+        let fixture = Fixture::new("spec-examples");
+        fixture.write(
+            "docs/spec/format-v1.md",
+            &SPEC.replace("| `bool-true` | true | `01` |\n", ""),
+        );
+        fixture.fails_only("spec", "Worked examples");
     }
 }

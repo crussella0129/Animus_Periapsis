@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0006
-- **State:** planned
+- **State:** active
 - **Work evidence:** [T-002 build plan](../sprints/s0/sprint-plans/build-plan.md#t-002-format-v1-specification), [T-003 build plan](../sprints/s0/sprint-plans/build-plan.md#t-003-algorithm-tagged-hashes-in-the-hash-crate), [T-004 build plan](../sprints/s0/sprint-plans/build-plan.md#t-004-canonical-binary-encoding-in-the-codec-crate), [T-005 build plan](../sprints/s0/sprint-plans/build-plan.md#t-005-golden-corpus-and-spec-consistency)
 - **Completion evidence:** none
 - **Code evidence:** none
@@ -105,3 +105,4 @@ laid out on disk is [INT-0007](INT-0007-crash-safe-storage.md) and
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §3.1 as slimmed by R3 §5).
 - 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-002 to T-005: spec first, then hashes, canonical encoding, golden corpus). After the first plan critique: object identity as the hash of the whole envelope, the reserved-kind error, and staged freezing (what Sprint 0 freezes versus the Phase 1 freeze of format v1) recorded in Intent. After the second plan critique: AC-3's "CI" defined as the canonical suite, locally and in the GitHub matrix; golden values carried as worked examples in the spec; freezing takes effect at the owner's AC-6 sign-off. After the third: the Consequences bullet on encoding changes now distinguishes frozen (signed-off) encodings from unfrozen ones.
+- 2026-10-31: `planned` → `active` (Sprint 0 build, T-002 starts: the spec lands before the code).
