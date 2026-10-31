@@ -69,3 +69,4 @@ starts with `C allowed:` and gives the reason.
 | Data | Source | Licence | Where |
 |---|---|---|---|
 | BLAKE3 test vectors (35 cases) | [`test_vectors.json`](https://github.com/BLAKE3-team/BLAKE3/blob/master/test_vectors/test_vectors.json) | CC0-1.0 OR Apache-2.0 | `crates/hash/tests/vectors.rs` |
+| Two Sprint Loops intent chapters and their Book marker (commit `216867f`) | [Animus_Sprint_Loops](https://github.com/crussella0129/Animus_Sprint_Loops) `docs/` | MIT (notice kept in `NOTICE.md` beside the fixtures) | `crates/book/tests/fixtures/sprint-loops/` |

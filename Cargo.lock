@@ -43,6 +43,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "book"
+version = "0.0.0"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
 name = "cc"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
