@@ -54,4 +54,4 @@
 - **Completed:** 2026-10-31T21:16:49Z
 - **Files modified:** crates/xtask/Cargo.toml, crates/xtask/src/main.rs, crates/xtask/src/ci.rs, .github/workflows/ci.yml, .github/dependabot.yml, Cargo.lock
 - **Evidence:** Windows 11 host, rustc 1.99.1. `cargo test -p xtask` → 22 passed, including `ci_steps_are_ordered_and_locked`; `ci_failures_do_not_stop_later_steps` (two failures, every step runs, exit 1, summary names both); `ci_rejects_extra_arguments`; `test_step_removes_golden_create`; `workflow_matches_ci_contract`. `cargo ci` on this checkout → PASS fmt, clippy, test, policy, book; "ci: all 5 steps passed"; exit 0 in 9.4 s. `cargo ci --fast` → usage on stderr, exit 2. The book and policy steps run in-process; the nested `cargo test` did not rebuild the running xtask binary. The WSL ext4 clone, fresh `core.autocrlf=true` clone and idempotence runs need committed state and run in the Test phase.
-- **Commit:** PENDING
+- **Commit:** `1a0658ed3fa7e7d9b08cf89f2e509119eaafc2d8`
