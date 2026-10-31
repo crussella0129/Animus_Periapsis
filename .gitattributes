@@ -1,2 +1,4 @@
 # Text files are stored and checked out with LF on every platform (INT-0004).
 * text=auto eol=lf
+# Golden encodings are byte-exact; never convert them (INT-0006 AC-3).
+*.bin binary

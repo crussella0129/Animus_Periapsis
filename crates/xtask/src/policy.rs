@@ -1,6 +1,6 @@
 //! `cargo policy`: mechanical checks of the engineering baseline (INT-0003),
-//! the hash-collection guard (INT-0005 AC-4) and the format spec's presence
-//! (INT-0006 AC-6).
+//! the hash-collection guard (INT-0005 AC-4), the format spec's presence
+//! (INT-0006 AC-6) and byte-exact golden files (INT-0006 AC-3).
 //!
 //! Each rule is a pure function of the files under the workspace root, so the
 //! tests run every rule against small fixture trees.
@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 type Rule = fn(&Path, &[PathBuf]) -> Vec<String>;
 
 /// The rules, in the order they are reported.
-pub const RULES: [(&str, Rule); 10] = [
+pub const RULES: [(&str, Rule); 11] = [
     ("lints", lints),
     ("unsafe", forbid_unsafe),
     ("toolchain", toolchain),
@@ -24,6 +24,7 @@ pub const RULES: [(&str, Rule); 10] = [
     ("clippy", clippy),
     ("names", names),
     ("spec", spec),
+    ("golden", golden),
 ];
 
 const FORBID_UNSAFE: &str = "#![forbid(unsafe_code)]";
@@ -354,6 +355,21 @@ fn spec(root: &Path, _members: &[PathBuf]) -> Vec<String> {
     problems
 }
 
+/// Golden encodings must reach every platform byte for byte, so Git must
+/// treat them as binary (INT-0006 AC-3, INT-0004 AC-1).
+fn golden(root: &Path, _members: &[PathBuf]) -> Vec<String> {
+    let text = read(&root.join(".gitattributes"));
+    let marked = text.lines().any(|line| {
+        let mut fields = line.split_whitespace();
+        fields.next() == Some("*.bin") && fields.any(|field| field == "binary")
+    });
+    if marked {
+        Vec::new()
+    } else {
+        vec![".gitattributes does not mark *.bin as binary".to_owned()]
+    }
+}
+
 /// Counts table rows that start with `prefix` and hold at least `cells`
 /// cells, in the section headed `name`.
 fn table_rows(text: &str, name: &str, prefix: &str, cells: usize) -> usize {
@@ -677,6 +693,17 @@ mod tests {
         }
         assert!(is_single_word("hash"));
         assert!(is_single_word("sha256"));
+    }
+
+    #[test]
+    fn policy_requires_binary_golden_attr() {
+        let fixture = Fixture::new("golden");
+        fixture.write(".gitattributes", "* text=auto eol=lf\n");
+        fixture.fails_only("golden", "*.bin");
+
+        let fixture = Fixture::new("golden-text");
+        fixture.write(".gitattributes", "* text=auto eol=lf\n*.bin text\n");
+        fixture.fails_only("golden", "*.bin");
     }
 
     #[test]

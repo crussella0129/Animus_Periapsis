@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0004
-- **State:** planned
+- **State:** active
 - **Work evidence:** [T-005 build plan](../sprints/s0/sprint-plans/build-plan.md#t-005-golden-corpus-and-spec-consistency), [T-007 build plan](../sprints/s0/sprint-plans/build-plan.md#t-007-canonical-suite-runner-and-ci-workflow)
 - **Completion evidence:** none
 - **Code evidence:** none
@@ -66,3 +66,4 @@ watchers.
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; research gap II §7 plus the owner's test-machine inventory).
 - 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-005, T-007: golden bytes and the canonical runner on Windows and WSL, including a fresh Windows clone with `core.autocrlf=true`).
+- 2026-10-31: `planned` → `active` (Sprint 0 build, T-005 starts: golden bytes kept binary on every platform).
