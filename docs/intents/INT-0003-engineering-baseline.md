@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0003
-- **State:** planned
+- **State:** active
 - **Work evidence:** [T-001 build plan](../sprints/s0/sprint-plans/build-plan.md#t-001-workspace-guardrails-policy-checker-and-credits), [T-007 build plan](../sprints/s0/sprint-plans/build-plan.md#t-007-canonical-suite-runner-and-ci-workflow), [T-008 build plan](../sprints/s0/sprint-plans/build-plan.md#t-008-readme-and-documentation-checks)
 - **Completion evidence:** none
 - **Code evidence:** none
@@ -100,3 +100,4 @@ and the independent mrustc bootstrap are C++, so that claim is not achievable
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 I.5 Phase 0 and the Biblio report §5).
 - 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-001, T-007, T-008). Revised before planning on owner direction: single-word crate names and flagless idempotent tooling (AC-8 and AC-9 added, AC-7 reworded for publication only). After the first plan critique: cargo-deny's place outside `cargo ci`, and the CI-dependence of AC-2 to AC-4, recorded in Consequences. After the second plan critique: AC-6's audit command corrected to `cargo tree --workspace --target all -e normal,build -i cc` (`-e build` alone never reaches a normal dependency such as `blake3`); AC-8 limited to unpublished packages, with the publication path in Consequences; AC-10 added for the README; CI evidence recorded by the next sprint. After the third: AC-10 limits the no-flags statement to the three project commands, since cargo-deny is a third-party tool with its own flags.
+- 2026-10-31: `planned` → `active` (Sprint 0 build, T-001 starts).

@@ -1,3 +1,5 @@
+Finalized - DO NOT EDIT
+
 # Sprint 0 Test Plan
 
 Every recorded run states the host OS release, `rustc -Vv`, the head SHA and
