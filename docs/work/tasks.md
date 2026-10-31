@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-001 (sprint 0) [intent: INT-0003, INT-0005]: Workspace, guardrails, policy checker and credits — touches: Cargo.toml, Cargo.lock, rust-toolchain.toml, deny.toml, clippy.toml, .gitattributes, .cargo/config.toml, docs/prior-art.md, crates/xtask/
 - [ ] T-002 (sprint 0) [intent: INT-0006]: Format v1 specification — touches: docs/spec/format-v1.md, crates/xtask/src/policy.rs
 - [ ] T-003 (sprint 0) [intent: INT-0006, INT-0003]: Algorithm-tagged hashes in the hash crate — touches: Cargo.toml, Cargo.lock, deny.toml, docs/prior-art.md, crates/hash/
 - [ ] T-004 (sprint 0) [intent: INT-0006]: Canonical binary encoding in the codec crate — touches: Cargo.toml, Cargo.lock, crates/codec/

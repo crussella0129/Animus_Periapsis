@@ -1,0 +1,19 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-only"
+repository = "https://github.com/crussella0129/Animus_Periapsis"
+publish = false
+
+# Every dependency of a member crate is declared here and inherited with
+# `<name>.workspace = true`, so licences and credits are checked in one place
+# (`cargo policy`, rules `deps` and `credits`).
+[workspace.dependencies]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
