@@ -277,26 +277,52 @@ fn binary_rejects_malformed() {
 fn text_rejects_malformed() {
     let valid = HashAlg::Blake3.hash(b"x").to_string();
     let digest_hex = valid.split_once(':').unwrap().1;
+    let unknown = |name: &str| HashError::UnknownAlgorithmName(name.to_owned());
+    let length = |actual| HashError::DigestLength {
+        alg: HashAlg::Blake3,
+        expected: 32,
+        actual,
+    };
     let cases = [
-        valid.to_uppercase(),
-        format!("blake3:{}", digest_hex.to_uppercase()),
-        format!("md5:{digest_hex}"),
-        format!("blake3:{}", &digest_hex[1..]),
-        format!("blake3:{}", &digest_hex[2..]),
-        format!("blake3:{digest_hex}00"),
-        digest_hex.to_owned(),
-        format!("blake3:{}zz", &digest_hex[2..]),
+        (valid.to_uppercase(), unknown("BLAKE3")),
+        // Names are exact, so a name in another case is not a second text form.
+        (format!("BLAKE3:{digest_hex}"), unknown("BLAKE3")),
+        (format!("Blake3:{digest_hex}"), unknown("Blake3")),
+        (format!("md5:{digest_hex}"), unknown("md5")),
+        (
+            format!("blake3:{}", digest_hex.to_uppercase()),
+            HashError::InvalidHex,
+        ),
+        // Odd lengths fail on their own: the first 64 of 65 digits would make
+        // a digest of the right length.
+        (
+            format!("blake3:{}", &digest_hex[1..]),
+            HashError::InvalidHex,
+        ),
+        (format!("blake3:{digest_hex}0"), HashError::InvalidHex),
+        (
+            format!("blake3:{}zz", &digest_hex[2..]),
+            HashError::InvalidHex,
+        ),
+        (format!("blake3:{}", &digest_hex[2..]), length(31)),
+        (format!("blake3:{digest_hex}00"), length(33)),
+        (digest_hex.to_owned(), HashError::MissingSeparator),
+        ("blake3".to_owned(), HashError::MissingSeparator),
     ];
-    for text in cases {
-        assert!(
-            text.parse::<HashRef>().is_err(),
-            "{text:?} should be rejected"
-        );
+    for (text, expected) in cases {
+        assert_eq!(text.parse::<HashRef>(), Err(expected), "{text:?}");
     }
-    assert_eq!(
-        "blake3".parse::<HashRef>(),
-        Err(HashError::MissingSeparator)
-    );
+}
+
+/// Cases per property below.
+const CASES: u32 = 10_000;
+
+#[test]
+fn case_count_is_not_overridden() {
+    // proptest lets PROPTEST_CASES replace a configured count, which would let
+    // the properties pass on fewer cases than the record states.
+    let config = proptest::test_runner::contextualize_config(ProptestConfig::with_cases(CASES));
+    assert_eq!(config.cases, CASES, "unset PROPTEST_CASES to run the suite");
 }
 
 fn any_hash() -> impl Strategy<Value = HashRef> {
@@ -308,6 +334,8 @@ fn any_hash() -> impl Strategy<Value = HashRef> {
 }
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(CASES))]
+
     #[test]
     fn binary_round_trip(hash in any_hash()) {
         let bytes = hash.to_bytes();
