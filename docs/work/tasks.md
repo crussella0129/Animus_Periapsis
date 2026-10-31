@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-003 (sprint 0) [intent: INT-0006, INT-0003]: Algorithm-tagged hashes in the hash crate — touches: Cargo.toml, Cargo.lock, deny.toml, docs/prior-art.md, crates/hash/
 - [ ] T-004 (sprint 0) [intent: INT-0006]: Canonical binary encoding in the codec crate — touches: Cargo.toml, Cargo.lock, crates/codec/
 - [ ] T-005 (sprint 0) [intent: INT-0006, INT-0004]: Golden corpus and spec consistency — touches: .gitattributes, crates/xtask/src/policy.rs, crates/codec/tests/
 - [ ] T-006 (sprint 0) [intent: INT-0002, INT-0003]: Typed-acceptance validator in the book crate — touches: Cargo.toml, Cargo.lock, docs/prior-art.md, docs/.sprint-loop-book, crates/book/

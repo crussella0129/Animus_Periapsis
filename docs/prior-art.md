@@ -60,8 +60,12 @@ starts with `C allowed:` and gives the reason.
 
 | Crate | Version | Licence | Used by | Can build C | How Periapsis builds it |
 |---|---|---|---|---|---|
+| `blake3` | 1.8.7 | CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception | `hash` | yes (its build script compiles C and assembly SIMD backends through `cc`) | `features = ["pure"]`: Rust implementations only, including Rust SIMD |
+| `sha2` | 0.11.1 | MIT OR Apache-2.0 | `hash` | no | default features off; pure Rust |
+| `proptest` | 1.12.0 | MIT OR Apache-2.0 | tests only | no | `default-features = false, features = ["std"]` |
 
 ## Test data
 
 | Data | Source | Licence | Where |
 |---|---|---|---|
+| BLAKE3 test vectors (35 cases) | [`test_vectors.json`](https://github.com/BLAKE3-team/BLAKE3/blob/master/test_vectors/test_vectors.json) | CC0-1.0 OR Apache-2.0 | `crates/hash/tests/vectors.rs` |
