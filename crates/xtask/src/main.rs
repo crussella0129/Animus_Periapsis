@@ -4,6 +4,8 @@
 //! Every command here is idempotent, so none takes flags (INT-0003 AC-9).
 
 mod ci;
+#[cfg(test)]
+mod docs;
 mod policy;
 
 use std::env;

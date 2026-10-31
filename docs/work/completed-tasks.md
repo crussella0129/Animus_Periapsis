@@ -55,3 +55,11 @@
 - **Files modified:** crates/xtask/Cargo.toml, crates/xtask/src/main.rs, crates/xtask/src/ci.rs, .github/workflows/ci.yml, .github/dependabot.yml, Cargo.lock
 - **Evidence:** Windows 11 host, rustc 1.99.1. `cargo test -p xtask` → 22 passed, including `ci_steps_are_ordered_and_locked`; `ci_failures_do_not_stop_later_steps` (two failures, every step runs, exit 1, summary names both); `ci_rejects_extra_arguments`; `test_step_removes_golden_create`; `workflow_matches_ci_contract`. `cargo ci` on this checkout → PASS fmt, clippy, test, policy, book; "ci: all 5 steps passed"; exit 0 in 9.4 s. `cargo ci --fast` → usage on stderr, exit 2. The book and policy steps run in-process; the nested `cargo test` did not rebuild the running xtask binary. The WSL ext4 clone, fresh `core.autocrlf=true` clone and idempotence runs need committed state and run in the Test phase.
 - **Commit:** `1a0658ed3fa7e7d9b08cf89f2e509119eaafc2d8`
+
+## T-008 (sprint 0)
+- **Description:** README and documentation checks
+- **Intent:** [INT-0003](../intents/INT-0003-engineering-baseline.md)
+- **Completed:** 2026-10-31T21:18:01Z
+- **Files modified:** README.md, crates/xtask/src/main.rs, crates/xtask/src/docs.rs
+- **Evidence:** Windows 11 host, rustc 1.99.1. `prior_art_credits_every_listed_system` passed: all 36 listed systems, projects and test-data sources are named in docs/prior-art.md (prior-art needed no change). `readme_keeps_statement_and_links_book` passed: the two owner paragraphs from 620f99c are verbatim, including the trailing space; there is a `docs/SUMMARY.md` link; all four commands are documented; and the exact sentence "`cargo ci`, `cargo policy` and `cargo book` take no flags." is present. `cargo ci` → all 5 steps PASS, exit 0.
+- **Commit:** PENDING
