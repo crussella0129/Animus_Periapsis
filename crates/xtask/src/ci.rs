@@ -1,8 +1,9 @@
 //! `cargo ci`: the canonical suite runner. The same steps run on every
 //! developer machine and in GitHub Actions.
 
+use std::collections::BTreeSet;
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
@@ -64,6 +65,16 @@ pub const STEPS: [Step; 5] = [
 /// the shell cannot create golden files.
 const GOLDEN_CREATE: &str = "PERI_GOLDEN_CREATE";
 
+/// proptest reads `PROPTEST_*` variables, and `PROPTEST_CASES` replaces even an
+/// explicit case count, so no step inherits them: the property tests run the
+/// counts their sources and the test records state.
+const PROPTEST_PREFIX: &str = "PROPTEST_";
+
+/// Clippy reads its configuration from this directory instead of the
+/// workspace's `clippy.toml`, which would lift the ban on randomly seeded hash
+/// collections (INT-0005 AC-4), so no step inherits it.
+const CLIPPY_CONF_DIR: &str = "CLIPPY_CONF_DIR";
+
 /// How a step ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -109,26 +120,44 @@ pub fn finish(failed: &[&str], out: &mut dyn Write) -> u8 {
 
 /// Runs the suite at `root` and returns the exit code.
 pub fn run(root: &Path, out: &mut dyn Write) -> u8 {
-    let failed = run_with(&STEPS, out, |step| execute(root, step));
+    let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+    let failed = run_with(&STEPS, out, |step| {
+        execute_with(root, step, |args| cargo_command(&cargo, root, args))
+    });
     finish(&failed, out)
 }
 
-/// The child process a cargo step runs.
-pub fn cargo_command(root: &Path, args: &[&str]) -> Command {
-    let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
-    let mut command = Command::new(cargo);
-    command
-        .args(args)
-        .current_dir(root)
-        .env_remove(GOLDEN_CREATE);
+/// The child process a cargo step runs, with `program` as cargo.
+pub fn cargo_command(program: &OsStr, root: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new(program);
+    command.args(args).current_dir(root);
+    for name in scrubbed(env::vars_os().map(|(name, _)| name)) {
+        command.env_remove(name);
+    }
     command
 }
 
-fn execute(root: &Path, step: &Step) -> Outcome {
+/// The variables a cargo step does not inherit, given the names set where
+/// `cargo ci` runs: golden-file create mode, `PROPTEST_CASES` and
+/// `CLIPPY_CONF_DIR` always, and every other proptest variable that is set.
+fn scrubbed(set: impl IntoIterator<Item = OsString>) -> BTreeSet<OsString> {
+    let mut names =
+        BTreeSet::from([GOLDEN_CREATE, "PROPTEST_CASES", CLIPPY_CONF_DIR].map(OsString::from));
+    names.extend(set.into_iter().filter(|name| {
+        name.to_str()
+            .is_some_and(|name| name.to_ascii_uppercase().starts_with(PROPTEST_PREFIX))
+    }));
+    names
+}
+
+/// Runs one step at `root`. A cargo step runs the command `cargo` builds from
+/// the step's arguments: `cargo_command` with the cargo that started
+/// `cargo ci` (or `cargo` from the path), or whatever a test builds.
+fn execute_with(root: &Path, step: &Step, cargo: impl Fn(&[&str]) -> Command) -> Outcome {
     match step.action {
-        Action::Cargo(args) => match cargo_command(root, args).status() {
+        Action::Cargo(args) => match cargo(args).status() {
             Ok(status) if status.success() => Outcome::Pass,
-            Ok(status) => Outcome::Fail(format!("cargo {} exited with {status}", args[0])),
+            Ok(status) => Outcome::Fail(format!("cargo {} exited with {status}", args.join(" "))),
             Err(error) => Outcome::Fail(format!("could not run cargo: {error}")),
         },
         Action::Policy => {
@@ -154,41 +183,125 @@ fn execute(root: &Path, step: &Step) -> Outcome {
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::OsStr;
+    use std::collections::BTreeSet;
+    use std::ffi::{OsStr, OsString};
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
 
-    use super::{Action, Outcome, STEPS, Step, cargo_command, finish, run_with};
+    use super::{
+        Action, Outcome, STEPS, Step, cargo_command, execute_with, finish, run_with, scrubbed,
+    };
+    use crate::workflow;
+
+    fn repo_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
 
     fn repo_file(path: &str) -> String {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join(path);
+        let path = repo_root().join(path);
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
     }
 
+    /// `text` with `from` replaced by `to`; `from` must occur, so a mutant
+    /// cannot silently equal the original.
+    fn replace(text: &str, from: &str, to: &str) -> String {
+        assert!(text.contains(from), "{from:?} is not in the workflow");
+        text.replace(from, to)
+    }
+
+    /// The exact commands of the T-007 clause, in order.
     #[test]
     fn ci_steps_are_ordered_and_locked() {
-        let names: Vec<&str> = STEPS.iter().map(|step| step.name).collect();
-        assert_eq!(names, ["fmt", "clippy", "test", "policy", "book"]);
-        for name in ["clippy", "test"] {
-            let step = STEPS.iter().find(|step| step.name == name).unwrap();
-            let Action::Cargo(args) = step.action else {
-                panic!("{name} runs cargo");
-            };
-            assert!(args.contains(&"--locked"), "{name} must be --locked");
+        let expected = [
+            Step {
+                name: "fmt",
+                action: Action::Cargo(&["fmt", "--all", "--check"]),
+            },
+            Step {
+                name: "clippy",
+                action: Action::Cargo(&[
+                    "clippy",
+                    "--workspace",
+                    "--all-targets",
+                    "--locked",
+                    "--",
+                    "-D",
+                    "warnings",
+                ]),
+            },
+            Step {
+                name: "test",
+                action: Action::Cargo(&["test", "--workspace", "--locked"]),
+            },
+            Step {
+                name: "policy",
+                action: Action::Policy,
+            },
+            Step {
+                name: "book",
+                action: Action::Book,
+            },
+        ];
+        assert_eq!(STEPS, expected);
+    }
+
+    /// Each kind of step really runs: cargo as a child process, policy and
+    /// the Book in-process.
+    #[test]
+    fn steps_execute_for_real() {
+        let root = repo_root();
+        let cargo = env!("CARGO");
+        // The real command, with its output kept out of the test log.
+        let quiet = |program: &'static str| {
+            let root = root.clone();
+            move |args: &[&str]| -> Command {
+                let mut command = cargo_command(OsStr::new(program), &root, args);
+                command.stdout(Stdio::null()).stderr(Stdio::null());
+                command
+            }
+        };
+        let step = |action| Step {
+            name: "probe",
+            action,
+        };
+
+        let version = step(Action::Cargo(&["--version"]));
+        assert_eq!(execute_with(&root, &version, quiet(cargo)), Outcome::Pass);
+
+        const UNKNOWN: &[&str] = &["no-such-subcommand", "--locked"];
+        let status = cargo_command(OsStr::new(cargo), &root, UNKNOWN)
+            .output()
+            .expect("cargo runs")
+            .status;
+        assert!(!status.success(), "cargo must reject {UNKNOWN:?}");
+        assert_eq!(
+            execute_with(&root, &step(Action::Cargo(UNKNOWN)), quiet(cargo)),
+            Outcome::Fail(format!(
+                "cargo no-such-subcommand --locked exited with {status}"
+            ))
+        );
+
+        let missing = execute_with(&root, &version, quiet("no-such-cargo-program"));
+        let Outcome::Fail(reason) = missing else {
+            panic!("a program that does not exist must fail the step");
+        };
+        assert!(reason.starts_with("could not run cargo: "), "{reason}");
+
+        for action in [Action::Policy, Action::Book] {
+            assert_eq!(
+                execute_with(&root, &step(action), quiet(cargo)),
+                Outcome::Pass
+            );
+            let nowhere = root.join("no-such-workspace");
             assert!(
-                args.contains(&"--workspace"),
-                "{name} must cover the workspace"
+                matches!(
+                    execute_with(&nowhere, &step(action), quiet(cargo)),
+                    Outcome::Fail(_)
+                ),
+                "{action:?} must fail without a workspace"
             );
         }
-        let Action::Cargo(clippy) = STEPS[1].action else {
-            panic!("clippy runs cargo");
-        };
-        assert!(
-            clippy.ends_with(&["--", "-D", "warnings"]),
-            "clippy denies warnings"
-        );
     }
 
     #[test]
@@ -236,62 +349,112 @@ mod tests {
         let Action::Cargo(args) = STEPS[2].action else {
             panic!("test runs cargo");
         };
-        let command = cargo_command(Path::new("."), args);
-        let removed = command
-            .get_envs()
-            .any(|(key, value)| key == OsStr::new("PERI_GOLDEN_CREATE") && value.is_none());
-        assert!(removed, "the test step must not inherit PERI_GOLDEN_CREATE");
+        let command = cargo_command(OsStr::new("cargo"), Path::new("."), args);
+        for name in ["PERI_GOLDEN_CREATE", "PROPTEST_CASES", "CLIPPY_CONF_DIR"] {
+            let removed = command
+                .get_envs()
+                .any(|(key, value)| key == OsStr::new(name) && value.is_none());
+            assert!(removed, "the test step must not inherit {name}");
+        }
+    }
+
+    #[test]
+    fn proptest_variables_are_never_inherited() {
+        let set = [
+            "PATH",
+            "PROPTEST_MAX_SHRINK_ITERS",
+            "proptest_rng_seed",
+            "CARGO",
+        ];
+        let names: BTreeSet<OsString> = [
+            "CLIPPY_CONF_DIR",
+            "PERI_GOLDEN_CREATE",
+            "PROPTEST_CASES",
+            "PROPTEST_MAX_SHRINK_ITERS",
+            "proptest_rng_seed",
+        ]
+        .map(OsString::from)
+        .into();
+        assert_eq!(scrubbed(set.map(OsString::from)), names);
     }
 
     #[test]
     fn workflow_matches_ci_contract() {
-        let workflow = repo_file(".github/workflows/ci.yml");
-        let lines: Vec<&str> = workflow.lines().map(str::trim).collect();
+        let workflow = repo_file(".github/workflows/ci.yml").replace("\r\n", "\n");
+        assert_eq!(workflow::problems(&workflow), Vec::<String>::new());
 
-        let push = lines
-            .iter()
-            .position(|line| *line == "push:")
-            .expect("a push trigger");
-        let branches = lines[push + 1];
-        assert!(
-            branches.starts_with("branches:")
-                && branches.contains("dev")
-                && branches.contains("main"),
-            "push must trigger on dev and main: {branches}"
-        );
-        assert!(
-            lines.iter().any(|line| line.starts_with("pull_request")),
-            "a pull_request trigger"
-        );
-        assert!(
-            lines.iter().any(|line| line.starts_with("os:")
-                && line.contains("ubuntu-latest")
-                && line.contains("windows-latest")),
-            "the matrix must hold ubuntu-latest and windows-latest"
-        );
-        assert!(
-            lines.contains(&"- run: cargo ci"),
-            "a step must run cargo ci"
-        );
-
-        let deny = lines
-            .iter()
-            .position(|line| *line == "deny:")
-            .expect("a deny job");
-        let deny_job = &lines[deny..];
-        assert!(
-            deny_job.contains(&"runs-on: ubuntu-latest"),
-            "deny runs on ubuntu-latest"
-        );
-        assert!(
-            deny_job.iter().any(|line| line.contains("cargo-deny")),
-            "the deny job runs cargo-deny"
-        );
-
-        assert!(
-            !workflow.contains("continue-on-error"),
-            "no step may swallow failure"
-        );
-        assert!(!workflow.contains("|| true"), "no step may swallow failure");
+        // Each mutant breaks one point of the clause and must be caught.
+        let without_ci = replace(&workflow, "      - run: cargo ci\n", "");
+        let mutants = [
+            replace(
+                &workflow,
+                "runs-on: ${{ matrix.os }}",
+                "runs-on: ubuntu-latest",
+            ),
+            replace(
+                &workflow,
+                "branches: [dev, main]",
+                "branches: [develop, main]",
+            ),
+            replace(&workflow, "pull_request:", "pull_request_target:"),
+            format!("{}\n      - run: cargo ci\n", without_ci.trim_end()),
+            format!(
+                "{}\n  other:\n    runs-on: ubuntu-latest\n    steps:\n      - run: cargo --version\n",
+                replace(
+                    &workflow,
+                    "runs-on: ubuntu-latest",
+                    "runs-on: windows-latest"
+                )
+                .trim_end()
+            ),
+            format!("{workflow}      - run: cargo deny check || true\n"),
+            format!("{workflow}      - run: cargo deny check ||true\n"),
+            format!("{workflow}      - run: cargo deny check || :\n"),
+            format!("{workflow}      - run: cargo deny check || exit 0\n"),
+            format!("{workflow}      - run: cargo deny check ||\n          true\n"),
+            format!("{workflow}      - run: set +e\n"),
+            replace(
+                &workflow,
+                "uses: EmbarkStudios/cargo-deny-action@v2",
+                "uses: taiki-e/install-action@cargo-deny",
+            ),
+            replace(
+                &workflow,
+                "      - uses: EmbarkStudios/cargo-deny-action@v2\n",
+                "      - uses: EmbarkStudios/cargo-deny-action@v2\n        with:\n          command: fetch\n",
+            ),
+            replace(
+                &workflow,
+                "      - uses: EmbarkStudios/cargo-deny-action@v2\n",
+                "      - run: cargo deny fetch\n",
+            ),
+            replace(
+                &workflow,
+                "      - uses: EmbarkStudios/cargo-deny-action@v2\n",
+                "      - run: cargo deny fetch && echo check\n",
+            ),
+            replace(&workflow, "  deny:\n", "  deny:\n    if: false\n"),
+            replace(
+                &workflow,
+                "      - run: cargo ci\n",
+                "      - run: cargo ci\n        if: false\n",
+            ),
+            replace(
+                &workflow,
+                "        os: [ubuntu-latest, windows-latest]\n",
+                "        os: [ubuntu-latest, windows-latest]\n        exclude:\n          - os: windows-latest\n",
+            ),
+            replace(
+                &workflow,
+                "    runs-on: ${{ matrix.os }}\n",
+                "    runs-on: ${{ matrix.os }}\n    continue-on-error: true\n",
+            ),
+        ];
+        for mutant in mutants {
+            assert!(
+                !workflow::problems(&mutant).is_empty(),
+                "this workflow must fail:\n{mutant}"
+            );
+        }
     }
 }

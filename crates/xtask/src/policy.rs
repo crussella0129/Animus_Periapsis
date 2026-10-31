@@ -2,11 +2,18 @@
 //! the hash-collection guard (INT-0005 AC-4), the format spec's presence
 //! (INT-0006 AC-6) and byte-exact golden files (INT-0006 AC-3).
 //!
-//! Each rule is a pure function of the files under the workspace root, so the
-//! tests run every rule against small fixture trees.
+//! Each rule reads the files under the workspace root (`golden` asks Git,
+//! which reads them too), so the tests run every rule against small fixture
+//! trees. TOML files are parsed, as Cargo, rustup and Clippy parse them.
 
-use std::fs;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use toml_edit::{DocumentMut, Item, Value};
+
+use crate::manifest::{dependency_tables, is_true, load, lookup, read_text, strings};
+use crate::workspace::members;
 
 /// A rule: given the workspace root and its member crate directories, the
 /// problems found. An empty list means the rule passed.
@@ -28,9 +35,12 @@ pub const RULES: [(&str, Rule); 11] = [
 ];
 
 const FORBID_UNSAFE: &str = "#![forbid(unsafe_code)]";
-const DEPENDENCY_TABLES: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
 const DISALLOWED: [&str; 2] = ["std::collections::HashMap", "std::collections::HashSet"];
+/// The configs Clippy looks for in each directory, the first one winning.
+const CLIPPY_CONFIGS: [&str; 2] = [".clippy.toml", "clippy.toml"];
 const C_ALLOWED: &str = "C allowed:";
+/// A path in the golden corpus for Git to judge; it need not exist.
+const GOLDEN_PROBE: &str = "crates/codec/tests/golden/v1/probe.bin";
 const SPEC_PATH: &str = "docs/spec/format-v1.md";
 const SPEC_SECTIONS: [&str; 11] = [
     "Conventions",
@@ -71,31 +81,55 @@ pub fn check(root: &Path) -> Vec<RuleResult> {
         .collect()
 }
 
-/// Member crate directories: every `crates/*` holding a `Cargo.toml`, matching
-/// the workspace's `members = ["crates/*"]`.
-fn members(root: &Path) -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = fs::read_dir(root.join("crates"))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.join("Cargo.toml").is_file())
-        .collect();
-    dirs.sort();
-    dirs
+/// Every member inherits the workspace lints, and they forbid `unsafe_code`:
+/// that lint is INT-0003 AC-1's guard for tests, build scripts, binaries and
+/// examples, which the `unsafe` rule never reads.
+fn lints(root: &Path, members: &[PathBuf]) -> Vec<String> {
+    let mut problems = match parse(root, &root.join("Cargo.toml")) {
+        Ok(workspace) => {
+            let mut problems = unexpandable_members(&workspace);
+            if !forbids_unsafe_code(&workspace) {
+                problems.push(
+                    "Cargo.toml does not set unsafe_code = \"forbid\" in [workspace.lints.rust]"
+                        .to_owned(),
+                );
+            }
+            problems
+        }
+        Err(problem) => vec![problem],
+    };
+    problems.extend(each_manifest(root, members, |dir, manifest| {
+        (!is_true(manifest.as_item(), &["lints", "workspace"]))
+            .then(|| format!("{dir} lacks [lints] workspace = true"))
+    }));
+    problems
 }
 
-fn lints(root: &Path, members: &[PathBuf]) -> Vec<String> {
-    members
-        .iter()
-        .filter(|dir| {
-            let manifest = read(&dir.join("Cargo.toml"));
-            !section(&manifest, "lints")
-                .iter()
-                .any(|line| key_value(line) == Some(("workspace", "true")))
+/// `members` entries that use glob syntax the policy does not expand, `[...]`
+/// classes and `**`. The crates Cargo finds through them would escape every
+/// member rule, so such an entry fails instead.
+fn unexpandable_members(workspace: &DocumentMut) -> Vec<String> {
+    strings(workspace.as_item(), &["workspace", "members"])
+        .into_iter()
+        .filter(|entry| entry.contains(['[', ']']) || entry.contains("**"))
+        .map(|entry| {
+            format!(
+                "Cargo.toml members entry {entry:?} uses a pattern the policy cannot expand; \
+                 use literal paths, * and ?"
+            )
         })
-        .map(|dir| format!("{} lacks [lints] workspace = true", relative(root, dir)))
         .collect()
+}
+
+/// `unsafe_code = "forbid"` in `[workspace.lints.rust]`, given as a level or
+/// as a table with a `level`.
+fn forbids_unsafe_code(workspace: &DocumentMut) -> bool {
+    let lint = lookup(
+        workspace.as_item(),
+        &["workspace", "lints", "rust", "unsafe_code"],
+    );
+    lint.and_then(|lint| lint.as_str().or_else(|| lookup(lint, &["level"])?.as_str()))
+        == Some("forbid")
 }
 
 fn forbid_unsafe(root: &Path, members: &[PathBuf]) -> Vec<String> {
@@ -112,15 +146,12 @@ fn forbid_unsafe(root: &Path, members: &[PathBuf]) -> Vec<String> {
 }
 
 fn toolchain(root: &Path, _members: &[PathBuf]) -> Vec<String> {
-    let text = read(&root.join("rust-toolchain.toml"));
-    let channel = section(&text, "toolchain")
-        .into_iter()
-        .find_map(|line| match key_value(line) {
-            Some(("channel", value)) => Some(value.trim_matches('"').to_owned()),
-            _ => None,
-        });
-    match channel {
-        Some(channel) if is_exact_version(&channel) => Vec::new(),
+    let config = match parse(root, &root.join("rust-toolchain.toml")) {
+        Ok(config) => config,
+        Err(problem) => return vec![problem],
+    };
+    match lookup(config.as_item(), &["toolchain", "channel"]).and_then(Item::as_str) {
+        Some(channel) if is_exact_version(channel) => Vec::new(),
         Some(channel) => vec![format!(
             "rust-toolchain.toml channel {channel:?} is not an exact X.Y.Z release"
         )],
@@ -147,74 +178,40 @@ fn lockfile(root: &Path, _members: &[PathBuf]) -> Vec<String> {
 /// Every member resolves to `publish = false`, until INT-0003 records a
 /// publishable crate.
 fn publish(root: &Path, members: &[PathBuf]) -> Vec<String> {
-    let workspace_unpublished = section(&read(&root.join("Cargo.toml")), "workspace.package")
-        .iter()
-        .any(|line| key_value(line) == Some(("publish", "false")));
-    members
-        .iter()
-        .filter(|dir| {
-            let manifest = read(&dir.join("Cargo.toml"));
-            let package = section(&manifest, "package");
-            let own = package
-                .iter()
-                .any(|line| key_value(line) == Some(("publish", "false")));
-            let inherited = workspace_unpublished
-                && package
-                    .iter()
-                    .any(|line| key_value(line) == Some(("publish.workspace", "true")));
-            !(own || inherited)
-        })
-        .map(|dir| {
-            format!(
-                "{} does not resolve to publish = false",
-                relative(root, dir)
-            )
-        })
-        .collect()
-}
-
-/// Every dependency of a member crate is inherited from the workspace table,
-/// which is the one place licences and credits are checked.
-fn deps(root: &Path, members: &[PathBuf]) -> Vec<String> {
-    let mut problems = Vec::new();
-    for dir in members {
-        let manifest = read(&dir.join("Cargo.toml"));
-        for (table, lines) in tables(&manifest) {
-            let kind = table.split('.').next().unwrap_or_default();
-            if !DEPENDENCY_TABLES.contains(&kind) {
-                continue;
-            }
-            if let Some((_, name)) = table.split_once('.') {
-                // A `[dependencies.<name>]` table.
-                let inherited = lines
-                    .iter()
-                    .any(|line| key_value(line) == Some(("workspace", "true")));
-                if !inherited {
-                    problems.push(direct(root, dir, name));
-                }
-                continue;
-            }
-            for line in lines {
-                let Some((key, value)) = key_value(line) else {
-                    continue;
-                };
-                let inherited = (key.ends_with(".workspace") && value == "true")
-                    || value.replace(' ', "").contains("workspace=true");
-                if !inherited {
-                    let name = key.split('.').next().unwrap_or(key);
-                    problems.push(direct(root, dir, name));
-                }
-            }
+    let (workspace_unpublished, mut problems) = match parse(root, &root.join("Cargo.toml")) {
+        Ok(workspace) => {
+            let publish = lookup(workspace.as_item(), &["workspace", "package", "publish"]);
+            (publish.and_then(Item::as_bool) == Some(false), Vec::new())
         }
-    }
+        Err(problem) => (false, vec![problem]),
+    };
+    problems.extend(each_manifest(root, members, |dir, manifest| {
+        let publish = lookup(manifest.as_item(), &["package", "publish"]);
+        let own = publish.and_then(Item::as_bool) == Some(false);
+        let inherited = workspace_unpublished
+            && publish.is_some_and(|publish| is_true(publish, &["workspace"]));
+        (!(own || inherited)).then(|| format!("{dir} does not resolve to publish = false"))
+    }));
     problems
 }
 
-fn direct(root: &Path, dir: &Path, name: &str) -> String {
-    format!(
-        "{} declares `{name}` directly; use `{name}.workspace = true`",
-        relative(root, dir)
-    )
+/// Every dependency of a member crate, in every dependency table including
+/// the target-specific ones, is inherited from the workspace table, which is
+/// the one place licences and credits are checked.
+fn deps(root: &Path, members: &[PathBuf]) -> Vec<String> {
+    each_manifest(root, members, |dir, manifest| {
+        let mut problems = Vec::new();
+        for (table, entries) in dependency_tables(manifest) {
+            for (name, entry) in entries.iter() {
+                if !is_true(entry, &["workspace"]) {
+                    problems.push(format!(
+                        "{dir} declares `{name}` directly in [{table}]; use `{name}.workspace = true`"
+                    ));
+                }
+            }
+        }
+        problems
+    })
 }
 
 /// Every third-party workspace dependency has a complete row in the
@@ -226,50 +223,66 @@ fn credits(root: &Path, _members: &[PathBuf]) -> Vec<String> {
         return vec!["docs/prior-art.md is missing".to_owned()];
     }
     let credits = read(&path);
-    let manifest = read(&root.join("Cargo.toml"));
-    let mut problems = Vec::new();
-    for line in section(&manifest, "workspace.dependencies") {
-        if line.contains("path =") {
-            continue;
-        }
-        let Some((name, entry)) = key_value(line) else {
-            continue;
-        };
-        let row_start = format!("| `{name}` |");
-        let Some(row) = credits
-            .lines()
-            .find(|line| line.trim_start().starts_with(&row_start))
-        else {
-            problems.push(format!(
-                "dependency `{name}` has no row in docs/prior-art.md"
-            ));
-            continue;
-        };
-        let cells: Vec<&str> = row
-            .trim()
-            .trim_matches('|')
-            .split('|')
-            .map(str::trim)
-            .collect();
-        let filled = |i: usize| cells.get(i).is_some_and(|c| !c.is_empty() && *c != "—");
-        let c_build = cells.get(4).copied().unwrap_or_default();
-        let how = cells.get(5).copied().unwrap_or_default();
-        let complete = filled(2)
-            && (c_build.starts_with("no")
-                || (c_build.starts_with("yes") && builds_pure_or_justified(how, entry)));
-        if !complete {
-            problems.push(format!(
-                "dependency `{name}` needs a licence, a yes/no C-build cell and, for yes, \
-                 an enabled pure feature or a `{C_ALLOWED}` justification in docs/prior-art.md"
-            ));
-        }
-    }
-    problems
+    let workspace = match parse(root, &root.join("Cargo.toml")) {
+        Ok(workspace) => workspace,
+        Err(problem) => return vec![problem],
+    };
+    let Some(dependencies) =
+        lookup(workspace.as_item(), &["workspace", "dependencies"]).and_then(Item::as_table_like)
+    else {
+        return Vec::new();
+    };
+    dependencies
+        .iter()
+        .filter(|(_, entry)| lookup(entry, &["path"]).is_none())
+        .filter_map(|(name, entry)| uncredited(&credits, name, entry))
+        .collect()
+}
+
+/// What the prior-art row of workspace dependency `name` lacks, if anything.
+fn uncredited(credits: &str, name: &str, entry: &Item) -> Option<String> {
+    let row_start = format!("| `{name}` |");
+    let Some(row) = credits
+        .lines()
+        .find(|line| line.trim_start().starts_with(&row_start))
+    else {
+        return Some(format!(
+            "dependency `{name}` has no row in docs/prior-art.md"
+        ));
+    };
+    let cells: Vec<&str> = row
+        .trim()
+        .trim_matches('|')
+        .split('|')
+        .map(str::trim)
+        .collect();
+    let filled = |i: usize| cells.get(i).is_some_and(|c| !c.is_empty() && *c != "—");
+    let c_build = cells.get(4).copied().map(first_word);
+    let how = cells.get(5).copied().unwrap_or_default();
+    let enabled = strings(entry, &["features"]);
+    let complete = filled(2)
+        && (c_build == Some("no")
+            || (c_build == Some("yes") && builds_pure_or_justified(how, &enabled)));
+    (!complete).then(|| {
+        format!(
+            "dependency `{name}` needs a licence, a yes/no C-build cell and, for yes, \
+             an enabled pure feature or a `{C_ALLOWED}` justification in docs/prior-art.md"
+        )
+    })
+}
+
+/// A cell's first word without trailing punctuation: `yes` for "yes", "yes,"
+/// or "yes (its build script …)".
+fn first_word(cell: &str) -> &str {
+    cell.split(|c: char| c.is_whitespace() || c == '(')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches([',', ';', ':', '.'])
 }
 
 /// A `yes` row either names features, as `features = ["…"]`, that the
 /// workspace entry enables, or starts with `C allowed:` and a reason.
-fn builds_pure_or_justified(how: &str, entry: &str) -> bool {
+fn builds_pure_or_justified(how: &str, enabled: &[&str]) -> bool {
     if let Some(reason) = how.strip_prefix(C_ALLOWED) {
         return !reason.trim().is_empty();
     }
@@ -285,42 +298,85 @@ fn builds_pure_or_justified(how: &str, entry: &str) -> bool {
         .map(|feature| feature.trim().trim_matches('"'))
         .filter(|feature| !feature.is_empty())
         .collect();
-    !named.is_empty()
-        && named
-            .iter()
-            .all(|feature| entry.contains(&format!("\"{feature}\"")))
+    !named.is_empty() && named.iter().all(|feature| enabled.contains(feature))
 }
 
-fn clippy(root: &Path, _members: &[PathBuf]) -> Vec<String> {
-    let text = read(&root.join("clippy.toml"));
-    let has_list = text.contains("disallowed-types");
-    DISALLOWED
-        .into_iter()
-        .filter(|path| !(has_list && text.contains(&format!("\"{path}\""))))
-        .map(|path| format!("clippy.toml does not list {path} under disallowed-types"))
-        .collect()
+/// Clippy rejects the randomly seeded hash collections (INT-0005 AC-4): the
+/// root `clippy.toml` lists both under `disallowed-types`, and no other
+/// config takes its place for any member.
+fn clippy(root: &Path, members: &[PathBuf]) -> Vec<String> {
+    let mut problems: Vec<String> = match parse(root, &root.join("clippy.toml")) {
+        Ok(config) => {
+            let listed = disallowed_types(&config);
+            DISALLOWED
+                .into_iter()
+                .filter(|path| !listed.contains(path))
+                .map(|path| format!("clippy.toml does not list {path} under disallowed-types"))
+                .collect()
+        }
+        Err(problem) => vec![problem],
+    };
+    problems.extend(shadowing_configs(root, members).iter().map(|path| {
+        format!(
+            "{} would be read instead of clippy.toml",
+            relative(root, path)
+        )
+    }));
+    problems
+}
+
+/// The paths `disallowed-types` lists, as strings or as tables with a `path`.
+fn disallowed_types(config: &DocumentMut) -> Vec<&str> {
+    match config.get("disallowed-types") {
+        Some(Item::Value(Value::Array(entries))) => entries
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .as_str()
+                    .or_else(|| entry.as_inline_table()?.get("path")?.as_str())
+            })
+            .collect(),
+        Some(Item::ArrayOfTables(tables)) => tables
+            .iter()
+            .filter_map(|table| table.get("path")?.as_str())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Configs Clippy would read instead of the root `clippy.toml`. Walking up
+/// from a crate's directory, it reads the first config it finds, and it
+/// prefers `.clippy.toml` to `clippy.toml` in the same directory.
+fn shadowing_configs(root: &Path, members: &[PathBuf]) -> BTreeSet<PathBuf> {
+    let mut configs = BTreeSet::new();
+    let hidden = root.join(".clippy.toml");
+    if hidden.is_file() {
+        configs.insert(hidden);
+    }
+    for dir in members {
+        for between in dir
+            .ancestors()
+            .take_while(|dir| *dir != root && dir.starts_with(root))
+        {
+            configs.extend(
+                CLIPPY_CONFIGS
+                    .into_iter()
+                    .map(|name| between.join(name))
+                    .filter(|path| path.is_file()),
+            );
+        }
+    }
+    configs
 }
 
 fn names(root: &Path, members: &[PathBuf]) -> Vec<String> {
-    members
-        .iter()
-        .filter_map(|dir| {
-            let manifest = read(&dir.join("Cargo.toml"));
-            let name = section(&manifest, "package")
-                .into_iter()
-                .find_map(|line| match key_value(line) {
-                    Some(("name", value)) => Some(value.trim_matches('"').to_owned()),
-                    _ => None,
-                })
-                .unwrap_or_default();
-            (!is_single_word(&name)).then(|| {
-                format!(
-                    "{} package name {name:?} is not a single lowercase word",
-                    relative(root, dir)
-                )
-            })
-        })
-        .collect()
+    each_manifest(root, members, |dir, manifest| {
+        let name = lookup(manifest.as_item(), &["package", "name"])
+            .and_then(Item::as_str)
+            .unwrap_or_default();
+        (!is_single_word(name))
+            .then(|| format!("{dir} package name {name:?} is not a single lowercase word"))
+    })
 }
 
 fn is_single_word(name: &str) -> bool {
@@ -356,21 +412,48 @@ fn spec(root: &Path, _members: &[PathBuf]) -> Vec<String> {
 }
 
 /// Golden encodings must reach every platform byte for byte, so Git must
-/// treat them as binary (INT-0006 AC-3, INT-0004 AC-1).
+/// treat them as binary (INT-0006 AC-3, INT-0004 AC-1). Later lines and
+/// deeper `.gitattributes` files override earlier ones, so the rule asks Git
+/// for its verdict rather than reading one file.
 fn golden(root: &Path, _members: &[PathBuf]) -> Vec<String> {
-    let text = read(&root.join(".gitattributes"));
-    let marked = text.lines().any(|line| {
-        let mut fields = line.split_whitespace();
-        fields.next() == Some("*.bin") && fields.any(|field| field == "binary")
-    });
-    if marked {
-        Vec::new()
-    } else {
-        vec![".gitattributes does not mark *.bin as binary".to_owned()]
+    // Outside a Git checkout, such as an unpacked source archive, Git converts
+    // nothing; a broken `.git` still fails below.
+    if !root.join(".git").exists() {
+        return Vec::new();
     }
+    let output = Command::new("git")
+        .args(["check-attr", "text", "--", GOLDEN_PROBE])
+        .current_dir(root)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        // Git's own messages, quoted below, in one language everywhere.
+        .env("LC_ALL", "C")
+        .output();
+    let output = match output {
+        Ok(output) => output,
+        Err(error) => {
+            return vec![format!(
+                "*.bin files cannot be checked: could not run git: {error}"
+            )];
+        }
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if output.status.success() && stdout.trim() == format!("{GOLDEN_PROBE}: text: unset") {
+        return Vec::new();
+    }
+    let printed = format!("{stdout}{}", String::from_utf8_lossy(&output.stderr));
+    let printed = printed.trim();
+    vec![if output.status.success() {
+        format!("*.bin files are not binary to Git: `git check-attr text` printed {printed:?}")
+    } else {
+        format!(
+            "*.bin files cannot be checked: `git check-attr text` exited with {}: {printed:?}",
+            output.status
+        )
+    }]
 }
 
-/// Counts table rows that start with `prefix` and hold at least `cells`
+/// Counts table rows that start with `prefix` and fill at least `cells`
 /// cells, in the section headed `name`.
 fn table_rows(text: &str, name: &str, prefix: &str, cells: usize) -> usize {
     let mut inside = false;
@@ -378,65 +461,71 @@ fn table_rows(text: &str, name: &str, prefix: &str, cells: usize) -> usize {
     for line in text.lines() {
         if let Some(rest) = line.strip_prefix('#') {
             inside = rest.trim_start_matches('#').trim() == name;
-        } else if inside
-            && line.starts_with(prefix)
-            && line.trim().trim_matches('|').split('|').count() >= cells
-        {
-            rows += 1;
+        } else if inside && line.starts_with(prefix) {
+            let filled = line
+                .trim()
+                .trim_matches('|')
+                .split('|')
+                .filter(|cell| !cell.trim().is_empty())
+                .count();
+            if filled >= cells {
+                rows += 1;
+            }
         }
     }
     rows
 }
 
-/// Reads a file, treating a missing or unreadable file as empty; each rule
-/// then reports what it found missing.
-fn read(path: &Path) -> String {
-    fs::read_to_string(path).unwrap_or_default()
-}
-
-/// Every TOML table as (header, content lines), without comments or blanks.
-fn tables(text: &str) -> Vec<(String, Vec<&str>)> {
-    let mut tables: Vec<(String, Vec<&str>)> = Vec::new();
-    for line in text.lines() {
-        let line = line.split('#').next().unwrap_or_default().trim();
-        if let Some(header) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            tables.push((header.trim().to_owned(), Vec::new()));
-        } else if !line.is_empty()
-            && let Some((_, lines)) = tables.last_mut()
-        {
-            lines.push(line);
+/// Runs `check` on each member's parsed manifest, passing the member's
+/// directory as named relative to the root; a manifest that does not parse
+/// is itself the problem.
+fn each_manifest<P: IntoIterator<Item = String>>(
+    root: &Path,
+    members: &[PathBuf],
+    mut check: impl FnMut(&str, &DocumentMut) -> P,
+) -> Vec<String> {
+    let mut problems = Vec::new();
+    for dir in members {
+        match parse(root, &dir.join("Cargo.toml")) {
+            Ok(manifest) => problems.extend(check(&relative(root, dir), &manifest)),
+            Err(problem) => problems.push(problem),
         }
     }
-    tables
+    problems
 }
 
-/// The content lines of one TOML table.
-fn section<'t>(text: &'t str, name: &str) -> Vec<&'t str> {
-    tables(text)
-        .into_iter()
-        .filter(|(header, _)| header == name)
-        .flat_map(|(_, lines)| lines)
-        .collect()
+/// Parses a TOML file under the root, naming it relative to the root in the
+/// problem it reports when it cannot.
+fn parse(root: &Path, path: &Path) -> Result<DocumentMut, String> {
+    load(path, &relative(root, path))
 }
 
-/// Splits `key = value` into trimmed parts.
-fn key_value(line: &str) -> Option<(&str, &str)> {
-    let (key, value) = line.split_once('=')?;
-    Some((key.trim(), value.trim()))
+/// Reads a file without its byte-order mark, treating a missing or unreadable
+/// file as empty; each rule then reports what it found missing.
+fn read(path: &Path) -> String {
+    read_text(path).unwrap_or_default()
 }
 
+/// `path` relative to the root, with `/` separators; the root itself is `.`.
 fn relative(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
+    let relative = path
+        .strip_prefix(root)
         .unwrap_or(path)
         .display()
         .to_string()
-        .replace('\\', "/")
+        .replace('\\', "/");
+    if relative.is_empty() {
+        ".".to_owned()
+    } else {
+        relative
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::process::Command;
 
     use super::{check, is_exact_version, is_single_word};
 
@@ -447,7 +536,13 @@ mod tests {
 ### Object identity\n## Worked examples\n| name | value | hex |\n|---|---|---|\n| `bool-true` | true | `01` |\n\
 ## Signatures (reserved)\n## Decoder requirements\n## Change control\n";
 
-    /// A fixture workspace that passes every rule until a test breaks one.
+    /// The clean fixture's root manifest.
+    const WORKSPACE: &str = "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\npublish = false\n\n\
+                             [workspace.dependencies]\nblake3 = { version = \"1\", features = [\"pure\"] }\n\
+                             hash = { path = \"crates/hash\" }\n\n[workspace.lints.rust]\nunsafe_code = \"forbid\"\n";
+
+    /// A fixture workspace, in its own Git repository, that passes every rule
+    /// until a test breaks one.
     struct Fixture(PathBuf);
 
     impl Fixture {
@@ -455,13 +550,24 @@ mod tests {
             let root =
                 std::env::temp_dir().join(format!("xtask-policy-{}-{name}", std::process::id()));
             let _ = fs::remove_dir_all(&root);
-            let fixture = Fixture(root);
-            fixture.write(
-                "Cargo.toml",
-                "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\npublish = false\n\n\
-                 [workspace.dependencies]\nblake3 = { version = \"1\", features = [\"pure\"] }\n\
-                 hash = { path = \"crates/hash\" }\n",
+            fs::create_dir_all(&root).unwrap();
+            // An empty template keeps the machine's own (hooks, info/attributes)
+            // out of the fixture.
+            let init = Command::new("git")
+                .args(["init", "-q", "--template="])
+                .current_dir(&root)
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .output()
+                .expect("git must be on PATH");
+            assert!(
+                init.status.success(),
+                "git init failed in {}: {}",
+                root.display(),
+                String::from_utf8_lossy(&init.stderr)
             );
+            let fixture = Fixture(root);
+            fixture.write("Cargo.toml", WORKSPACE);
             fixture.write("Cargo.lock", "version = 4\n");
             fixture.write("rust-toolchain.toml", "[toolchain]\nchannel = \"1.99.1\"\n");
             fixture.write(".gitattributes", "* text=auto eol=lf\n*.bin binary\n");
@@ -490,6 +596,10 @@ mod tests {
             fs::write(path, text).unwrap();
         }
 
+        fn read(&self, path: &str) -> String {
+            fs::read_to_string(self.0.join(path)).unwrap()
+        }
+
         /// The rules that fail, with their problems.
         fn failures(&self) -> Vec<(&'static str, Vec<String>)> {
             check(&self.0)
@@ -499,20 +609,43 @@ mod tests {
                 .collect()
         }
 
-        fn fails_only(&self, rule: &str, needle: &str) {
+        fn passes(&self) {
             let failures = self.failures();
-            assert_eq!(failures.len(), 1, "{failures:?}");
-            assert_eq!(failures[0].0, rule, "{failures:?}");
-            assert!(
-                failures[0].1.iter().any(|p| p.contains(needle)),
-                "{failures:?} should mention {needle:?}"
-            );
+            assert!(failures.is_empty(), "{failures:?}");
+        }
+
+        /// Exactly `rules` fail, in report order, each with a problem that
+        /// mentions every one of `needles`.
+        fn fails_exactly(&self, rules: &[&str], needles: &[&str]) {
+            let failures = self.failures();
+            let failed: Vec<&str> = failures.iter().map(|(rule, _)| *rule).collect();
+            assert_eq!(failed, rules, "{failures:?}");
+            for (rule, problems) in &failures {
+                assert!(
+                    problems
+                        .iter()
+                        .any(|problem| needles.iter().all(|needle| problem.contains(needle))),
+                    "{rule}: {problems:?} should mention {needles:?}"
+                );
+            }
+        }
+
+        fn fails_only(&self, rule: &str, needle: &str) {
+            self.fails_exactly(&[rule], &[needle]);
         }
     }
 
     impl Drop for Fixture {
         fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
+            // On Windows the emptied directory can stay in use for a moment
+            // after Git has run in it, so removal backs off for up to about
+            // 5 s. The first try normally succeeds.
+            for attempt in 0..100 {
+                if fs::remove_dir_all(&self.0).is_ok() || !self.0.exists() {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10 * attempt.min(10)));
+            }
         }
     }
 
@@ -525,10 +658,16 @@ mod tests {
         )
     }
 
+    /// `text` with `from` replaced by `to`. `from` must occur, so that a test
+    /// cannot silently stop planting its defect.
+    fn replace(text: &str, from: &str, to: &str) -> String {
+        assert!(text.contains(from), "{from:?} is not in {text:?}");
+        text.replace(from, to)
+    }
+
     #[test]
     fn fixture_passes_every_rule() {
-        let failures = Fixture::new("clean").failures();
-        assert!(failures.is_empty(), "{failures:?}");
+        Fixture::new("clean").passes();
     }
 
     #[test]
@@ -549,6 +688,35 @@ mod tests {
             "[package]\nname = \"hash\"\npublish.workspace = true\n\n[dependencies]\nblake3.workspace = true\n",
         );
         fixture.fails_only("lints", "crates/hash");
+
+        // The inherited lint is the guard for tests, build scripts, binaries
+        // and examples, which the `unsafe` rule never reads.
+        let forbid = "[workspace.lints.rust]\nunsafe_code = \"forbid\"\n";
+        for (i, lints) in [
+            "",
+            "[workspace.lints.rust]\nunsafe_code = \"allow\"\n",
+            "[workspace.lints.rust]\nunsafe_code = \"deny\"\n",
+            "[workspace.lints.rust]\n# unsafe_code = \"forbid\"\n",
+            "[workspace.lints.clippy]\nunsafe_code = \"forbid\"\n",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = Fixture::new(&format!("lints-workspace-{i}"));
+            fixture.write("Cargo.toml", &replace(WORKSPACE, forbid, lints));
+            fixture.fails_only("lints", "unsafe_code");
+        }
+
+        let fixture = Fixture::new("lints-workspace-level");
+        fixture.write(
+            "Cargo.toml",
+            &replace(
+                WORKSPACE,
+                "unsafe_code = \"forbid\"",
+                "unsafe_code = { level = \"forbid\", priority = -1 }",
+            ),
+        );
+        fixture.passes();
     }
 
     #[test]
@@ -556,6 +724,13 @@ mod tests {
         let fixture = Fixture::new("unsafe");
         fixture.write("crates/hash/src/main.rs", "fn main() {}\n");
         fixture.fails_only("unsafe", "crates/hash/src/main.rs");
+
+        let fixture = Fixture::new("unsafe-lib");
+        fixture.write(
+            "crates/hash/src/lib.rs",
+            "//! A library without the attribute.\n",
+        );
+        fixture.fails_only("unsafe", "crates/hash/src/lib.rs");
     }
 
     #[test]
@@ -590,35 +765,110 @@ mod tests {
         );
         fixture.fails_only("publish", "crates/hash");
 
-        let fixture = Fixture::new("publish-own");
+        let fixture = Fixture::new("publish-true");
         fixture.write(
             "crates/hash/Cargo.toml",
-            "[package]\nname = \"hash\"\npublish = false\n\n[dependencies]\nblake3.workspace = true\n\n\
-             [lints]\nworkspace = true\n",
+            &replace(
+                &member("hash", "blake3.workspace = true"),
+                "publish.workspace = true",
+                "publish = true",
+            ),
         );
-        assert!(fixture.failures().is_empty(), "{:?}", fixture.failures());
+        fixture.fails_only("publish", "crates/hash");
+
+        // A member that inherits gets the workspace value, whatever it is.
+        for (i, package) in [
+            "[workspace.package]\npublish = true\n",
+            "[workspace.package]\n",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = Fixture::new(&format!("publish-workspace-{i}"));
+            fixture.write(
+                "Cargo.toml",
+                &replace(WORKSPACE, "[workspace.package]\npublish = false\n", package),
+            );
+            fixture.fails_only("publish", "crates/hash");
+        }
+
+        for (i, publish) in ["publish = false", "publish = { workspace = true }"]
+            .into_iter()
+            .enumerate()
+        {
+            let fixture = Fixture::new(&format!("publish-ok-{i}"));
+            fixture.write(
+                "crates/hash/Cargo.toml",
+                &replace(
+                    &member("hash", "blake3.workspace = true"),
+                    "publish.workspace = true",
+                    publish,
+                ),
+            );
+            fixture.passes();
+        }
     }
 
     #[test]
     fn policy_flags_direct_dependency() {
-        for table in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        for table in [
+            "dependencies",
+            "dev-dependencies",
+            "build-dependencies",
+            "dev_dependencies",
+            "build_dependencies",
+        ] {
             let fixture = Fixture::new(&format!("deps-{table}"));
             fixture.write(
                 "crates/hash/Cargo.toml",
                 &format!(
-                    "[package]\nname = \"hash\"\npublish.workspace = true\n\n[dependencies]\n\
-                     blake3.workspace = true\n\n[{table}]\nfoo = \"1\"\n\n[lints]\nworkspace = true\n"
+                    "[package]\nname = \"hash\"\npublish.workspace = true\n\n[{table}]\nfoo = \"1\"\n\n\
+                     [lints]\nworkspace = true\n"
                 ),
             );
-            fixture.fails_only("deps", "`foo`");
+            fixture.fails_exactly(&["deps"], &["crates/hash", "`foo`"]);
         }
-        let fixture = Fixture::new("deps-table");
+        for (i, (table, name)) in [
+            ("[dependencies.foo]\nversion = \"1\"\n", "`foo`"),
+            (
+                "[dependencies]\nfoo = { version = \"1\", workspace = false }\n",
+                "`foo`",
+            ),
+            (
+                "[target.'cfg(windows)'.dependencies]\nwindows-sys = \"0.59\"\n",
+                "`windows-sys`",
+            ),
+            (
+                "[target.'cfg(unix)'.build-dependencies]\ncc = \"1\"\n",
+                "`cc`",
+            ),
+            (
+                "[target.'cfg(unix)'.dev-dependencies.libc]\nversion = \"0.2\"\n",
+                "`libc`",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = Fixture::new(&format!("deps-table-{i}"));
+            fixture.write(
+                "crates/hash/Cargo.toml",
+                &format!(
+                    "[package]\nname = \"hash\"\npublish.workspace = true\n\n{table}\n[lints]\nworkspace = true\n"
+                ),
+            );
+            fixture.fails_exactly(&["deps"], &["crates/hash", name]);
+        }
+
+        let fixture = Fixture::new("deps-target-inherited");
         fixture.write(
             "crates/hash/Cargo.toml",
-            "[package]\nname = \"hash\"\npublish.workspace = true\n\n[dependencies]\nblake3.workspace = true\n\n\
-             [dependencies.foo]\nversion = \"1\"\n\n[lints]\nworkspace = true\n",
+            &format!(
+                "{}\n[target.'cfg(windows)'.dependencies]\nwindows-sys.workspace = true\n",
+                member("hash", "blake3.workspace = true")
+            ),
         );
-        fixture.fails_only("deps", "`foo`");
+        fixture.passes();
     }
 
     #[test]
@@ -633,6 +883,14 @@ mod tests {
         let fixture = Fixture::new("credits-missing");
         fixture.write("docs/prior-art.md", "Nothing credited.\n");
         fixture.fails_only("credits", "`blake3`");
+
+        // A `[workspace.dependencies.<name>]` table declares a dependency too.
+        let fixture = Fixture::new("credits-table");
+        fixture.write(
+            "Cargo.toml",
+            &format!("{WORKSPACE}\n[workspace.dependencies.zstd]\nversion = \"0.13\"\n"),
+        );
+        fixture.fails_only("credits", "`zstd`");
     }
 
     #[test]
@@ -644,6 +902,10 @@ mod tests {
             "| `blake3` | 1 | CC0-1.0 | `hash` | yes |  |",
             "| `blake3` | 1 | CC0-1.0 | `hash` | yes | `features = [\"neon\"]` |",
             "| `blake3` | 1 | CC0-1.0 | `hash` | yes | C allowed: |",
+            "| `blake3` | 1 | CC0-1.0 | `hash` | not verified | — |",
+            "| `blake3` | 1 | CC0-1.0 | `hash` | none | — |",
+            "| `blake3` | 1 | CC0-1.0 | `hash` | not checked | — |",
+            "| `blake3` | 1 | CC0-1.0 | `hash` | nope | — |",
         ];
         for (i, row) in failing.into_iter().enumerate() {
             let fixture = Fixture::new(&format!("credits-row-{i}"));
@@ -654,6 +916,9 @@ mod tests {
             "| `blake3` | 1 | CC0-1.0 | `hash` | yes | `features = [\"pure\"]` |",
             "| `blake3` | 1 | CC0-1.0 | `hash` | yes | C allowed: no pure-Rust option exists |",
             "| `blake3` | 1 | CC0-1.0 | `hash` | no | — |",
+            "| `blake3` | 1 | CC0-1.0 | `hash` | yes (its build script compiles C) | `features = [\"pure\"]` |",
+            "| `blake3` | 1 | CC0-1.0 | `hash` | no (its build script only generates tests) | — |",
+            "| `blake3` | 1 | CC0-1.0 | `hash` | no. | — |",
         ];
         for (i, row) in passing.into_iter().enumerate() {
             let fixture = Fixture::new(&format!("credits-ok-{i}"));
@@ -664,6 +929,21 @@ mod tests {
                 fixture.failures()
             );
         }
+
+        // The enabled features come from the workspace entry in any TOML form.
+        let fixture = Fixture::new("credits-features-table");
+        fixture.write(
+            "Cargo.toml",
+            &format!(
+                "{}\n[workspace.dependencies.blake3]\nversion = \"1\"\nfeatures = [\"std\"]\n",
+                replace(
+                    WORKSPACE,
+                    "blake3 = { version = \"1\", features = [\"pure\"] }\n",
+                    ""
+                )
+            ),
+        );
+        fixture.fails_only("credits", "`blake3`");
     }
 
     #[test]
@@ -675,6 +955,53 @@ mod tests {
                 &format!("disallowed-types = [{{ path = \"std::collections::{kept}\" }}]\n"),
             );
             fixture.fails_only("clippy", missing);
+        }
+
+        // Clippy reads TOML: a commented-out entry, or one under another key,
+        // disallows nothing.
+        for (name, config, missing) in [
+            (
+                "commented",
+                "disallowed-types = [\n  { path = \"std::collections::HashMap\" },\n  \
+                 # { path = \"std::collections::HashSet\" },\n]\n",
+                "HashSet",
+            ),
+            (
+                "other-key",
+                "disallowed-types = []\ndisallowed-methods = [\n  \"std::collections::HashMap\",\n  \
+                 \"std::collections::HashSet\",\n]\n",
+                "HashMap",
+            ),
+        ] {
+            let fixture = Fixture::new(&format!("clippy-{name}"));
+            fixture.write("clippy.toml", config);
+            fixture.fails_only("clippy", missing);
+        }
+
+        // Clippy reads the first config it finds walking up from a crate,
+        // preferring `.clippy.toml`, so any other config on that path wins.
+        for shadow in [
+            ".clippy.toml",
+            "crates/clippy.toml",
+            "crates/hash/clippy.toml",
+            "crates/hash/.clippy.toml",
+        ] {
+            let fixture = Fixture::new(&format!("clippy-shadow-{}", shadow.replace('/', "-")));
+            fixture.write(shadow, &fixture.read("clippy.toml"));
+            fixture.fails_only("clippy", shadow);
+        }
+
+        for (i, config) in [
+            "disallowed-types = [\"std::collections::HashMap\", \"std::collections::HashSet\"]\n",
+            "[[disallowed-types]]\npath = \"std::collections::HashMap\"\n\n\
+             [[disallowed-types]]\npath = \"std::collections::HashSet\"\n",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = Fixture::new(&format!("clippy-ok-{i}"));
+            fixture.write("clippy.toml", config);
+            fixture.passes();
         }
     }
 
@@ -699,11 +1026,39 @@ mod tests {
     fn policy_requires_binary_golden_attr() {
         let fixture = Fixture::new("golden");
         fixture.write(".gitattributes", "* text=auto eol=lf\n");
-        fixture.fails_only("golden", "*.bin");
+        fixture.fails_exactly(&["golden"], &["*.bin", "text: auto"]);
 
         let fixture = Fixture::new("golden-text");
         fixture.write(".gitattributes", "* text=auto eol=lf\n*.bin text\n");
-        fixture.fails_only("golden", "*.bin");
+        fixture.fails_exactly(&["golden"], &["*.bin", "text: set"]);
+
+        // Git lets a later line, or a deeper `.gitattributes`, override
+        // `*.bin binary`.
+        let fixture = Fixture::new("golden-later-line");
+        fixture.write(
+            ".gitattributes",
+            "* text=auto eol=lf\n*.bin binary\ncrates/codec/tests/golden/**/*.bin text eol=crlf\n",
+        );
+        fixture.fails_exactly(&["golden"], &["*.bin", "text: set"]);
+
+        let fixture = Fixture::new("golden-nested");
+        fixture.write(
+            "crates/codec/tests/golden/.gitattributes",
+            "*.bin text eol=crlf\n",
+        );
+        fixture.fails_exactly(&["golden"], &["*.bin", "text: set"]);
+
+        // When Git cannot answer, the rule fails and quotes it.
+        let fixture = Fixture::new("golden-no-repository");
+        fs::remove_dir_all(fixture.0.join(".git")).unwrap();
+        fixture.write(".git", "gitdir: nowhere\n");
+        fixture.fails_exactly(&["golden"], &["*.bin", "fatal:"]);
+
+        // Without a checkout, as in an unpacked archive, Git converts nothing.
+        let fixture = Fixture::new("golden-archive");
+        fs::remove_dir_all(fixture.0.join(".git")).unwrap();
+        fixture.write(".gitattributes", "* text=auto eol=lf\n");
+        fixture.passes();
     }
 
     #[test]
@@ -715,22 +1070,265 @@ mod tests {
         let fixture = Fixture::new("spec-section");
         fixture.write(
             "docs/spec/format-v1.md",
-            &SPEC.replace("### Object identity\n", ""),
+            &replace(SPEC, "### Object identity\n", ""),
         );
         fixture.fails_only("spec", "Object identity");
+
+        let fixture = Fixture::new("spec-algorithms");
+        fixture.write(
+            "docs/spec/format-v1.md",
+            &replace(SPEC, "| `0x01` | `blake3` | 32 | default |\n", ""),
+        );
+        fixture.fails_only("spec", "Hash algorithms");
 
         let fixture = Fixture::new("spec-kinds");
         fixture.write(
             "docs/spec/format-v1.md",
-            &SPEC.replace("| `0x01` | `blob` | defined |\n", ""),
+            &replace(SPEC, "| `0x01` | `blob` | defined |\n", ""),
         );
         fixture.fails_only("spec", "Object kinds");
 
         let fixture = Fixture::new("spec-examples");
         fixture.write(
             "docs/spec/format-v1.md",
-            &SPEC.replace("| `bool-true` | true | `01` |\n", ""),
+            &replace(SPEC, "| `bool-true` | true | `01` |\n", ""),
         );
         fixture.fails_only("spec", "Worked examples");
+
+        // A row without its status cell, or with that cell empty, is not a
+        // row; nor is a worked example without its hex.
+        let short_rows = [
+            (
+                "| `0x01` | `blake3` | 32 | default |",
+                "| `0x01` | `blake3` | 32 |",
+                "Hash algorithms",
+            ),
+            (
+                "| `0x01` | `blake3` | 32 | default |",
+                "| `0x01` | `blake3` | 32 |  |",
+                "Hash algorithms",
+            ),
+            (
+                "| `0x01` | `blob` | defined |",
+                "| `0x01` | `blob` |",
+                "Object kinds",
+            ),
+            (
+                "| `0x01` | `blob` | defined |",
+                "| `0x01` | `blob` |  |",
+                "Object kinds",
+            ),
+            (
+                "| `bool-true` | true | `01` |",
+                "| `bool-true` | true |",
+                "Worked examples",
+            ),
+        ];
+        for (i, (row, short, table)) in short_rows.into_iter().enumerate() {
+            let fixture = Fixture::new(&format!("spec-short-row-{i}"));
+            fixture.write("docs/spec/format-v1.md", &replace(SPEC, row, short));
+            fixture.fails_only("spec", &format!("\"{table}\" has no table rows"));
+        }
+
+        // Every section the T-002 clause names is required, each on its own.
+        let sections = [
+            "Conventions",
+            "Primitives",
+            "Canonical order",
+            "Hash algorithms",
+            "Objects",
+            "Object kinds",
+            "Object identity",
+            "Worked examples",
+            "Signatures (reserved)",
+            "Decoder requirements",
+            "Change control",
+        ];
+        for (i, section) in sections.into_iter().enumerate() {
+            let heading = SPEC
+                .lines()
+                .find(|line| line.trim_start_matches('#').trim() == section)
+                .unwrap();
+            let fixture = Fixture::new(&format!("spec-section-{i}"));
+            fixture.write(
+                "docs/spec/format-v1.md",
+                &replace(SPEC, &format!("{heading}\n"), ""),
+            );
+            fixture.fails_only("spec", &format!("no \"{section}\" section"));
+        }
+    }
+
+    #[test]
+    fn policy_refuses_member_patterns_it_cannot_expand() {
+        for (i, pattern) in ["crates/[ab]*", "crates/**"].into_iter().enumerate() {
+            let fixture = Fixture::new(&format!("members-pattern-{i}"));
+            fixture.write(
+                "Cargo.toml",
+                &replace(WORKSPACE, "\"crates/*\"", &format!("\"{pattern}\"")),
+            );
+            fixture.fails_only("lints", "cannot expand");
+        }
+    }
+
+    #[test]
+    fn policy_reads_manifests_as_toml() {
+        // An array may span lines, and `path=` needs no spaces.
+        let fixture = Fixture::new("toml-workspace");
+        let workspace = replace(
+            WORKSPACE,
+            "features = [\"pure\"]",
+            "features = [\n  \"std\",\n  \"pure\",\n]",
+        );
+        let workspace = replace(&workspace, "path = \"crates/hash\"", "path=\"crates/hash\"");
+        fixture.write("Cargo.toml", &workspace);
+        fixture.passes();
+
+        // Dotted keys, inline tables and tables mean the same thing.
+        for (i, manifest) in [
+            "[package]\nname = \"hash\"\npublish = { workspace = true }\n\n[dependencies]\n\
+             blake3.workspace = true\nblake3.features = [\"std\"]\n\n[lints]\nworkspace = true\n",
+            "package.name = \"hash\"\npackage.publish.workspace = true\nlints = { workspace = true }\n\
+             dependencies.blake3 = { workspace = true }\n",
+            "[package]\nname = \"hash\"\npublish.workspace = true\n\n[dependencies.blake3]\n\
+             workspace = true\n\n[lints]\nworkspace = true\n",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = Fixture::new(&format!("toml-member-{i}"));
+            fixture.write("crates/hash/Cargo.toml", manifest);
+            fixture.passes();
+        }
+    }
+
+    #[test]
+    fn policy_flags_invalid_toml() {
+        let fixture = Fixture::new("invalid-member");
+        fixture.write("crates/hash/Cargo.toml", "[package\nname = \"hash\"\n");
+        fixture.fails_exactly(
+            &["lints", "publish", "deps", "names"],
+            &["crates/hash/Cargo.toml", "not valid TOML"],
+        );
+
+        let fixture = Fixture::new("invalid-workspace");
+        fixture.write(
+            "Cargo.toml",
+            &format!("{WORKSPACE}unsafe_code = \"forbid\"\n"),
+        );
+        fixture.fails_exactly(
+            &["lints", "publish", "credits"],
+            &["Cargo.toml", "not valid TOML"],
+        );
+
+        for (rule, path) in [
+            ("toolchain", "rust-toolchain.toml"),
+            ("clippy", "clippy.toml"),
+        ] {
+            let fixture = Fixture::new(&format!("invalid-{rule}"));
+            fixture.write(path, "[toolchain\n");
+            fixture.fails_only(rule, &format!("{path} is not valid TOML"));
+        }
+    }
+
+    #[test]
+    fn policy_ignores_byte_order_marks() {
+        const BOM: &str = "\u{feff}";
+        let fixture = Fixture::new("bom");
+        for path in [
+            "Cargo.toml",
+            "rust-toolchain.toml",
+            "clippy.toml",
+            ".gitattributes",
+            "docs/prior-art.md",
+            "docs/spec/format-v1.md",
+            "crates/hash/Cargo.toml",
+            "crates/hash/src/lib.rs",
+        ] {
+            fixture.write(path, &format!("{BOM}{}", fixture.read(path)));
+        }
+        fixture.passes();
+
+        let fixture = Fixture::new("bom-deps");
+        fixture.write(
+            "crates/hash/Cargo.toml",
+            &format!(
+                "{BOM}[dependencies]\nfoo = \"1\"\n\n[package]\nname = \"hash\"\npublish.workspace = true\n\n\
+                 [lints]\nworkspace = true\n"
+            ),
+        );
+        fixture.fails_exactly(&["deps"], &["crates/hash", "`foo`"]);
+    }
+
+    #[test]
+    fn policy_finds_members_like_cargo() {
+        // A literal member outside `crates/` gets every member rule.
+        let fixture = Fixture::new("members-literal");
+        fixture.write(
+            "Cargo.toml",
+            &replace(WORKSPACE, "\"crates/*\"]", "\"crates/*\", \"fuzz\"]"),
+        );
+        fixture.write(
+            "fuzz/Cargo.toml",
+            "[package]\nname = \"peri-fuzz\"\npublish = true\n\n[dependencies]\nlibfuzzer-sys = \"0.4\"\n",
+        );
+        fixture.write("fuzz/src/main.rs", "fn main() {}\n");
+        fixture.fails_exactly(&["lints", "unsafe", "publish", "deps", "names"], &["fuzz"]);
+
+        // `?` and `*` match inside a path component; a directory without a
+        // manifest is not a member.
+        let fixture = Fixture::new("members-wildcards");
+        fixture.write(
+            "Cargo.toml",
+            &replace(WORKSPACE, "\"crates/*\"", "\"crat?s/*\""),
+        );
+        fixture.write("cratos/bad/Cargo.toml", &member("Bad", ""));
+        fixture.write("crates/notes/README.md", "Not a crate.\n");
+        fixture.fails_only("names", "cratos/bad");
+
+        // `exclude` removes a crate a pattern finds, but not one named literally.
+        let fixture = Fixture::new("members-exclude");
+        fixture.write(
+            "Cargo.toml",
+            &replace(
+                WORKSPACE,
+                "\"crates/*\"]",
+                "\"crates/*\"]\nexclude = [\"crates/old\"]",
+            ),
+        );
+        fixture.write("crates/old/Cargo.toml", &member("Old", ""));
+        fixture.passes();
+        fixture.write(
+            "Cargo.toml",
+            &replace(
+                WORKSPACE,
+                "\"crates/*\"]",
+                "\"crates/*\", \"crates/old\"]\nexclude = [\"crates/old\"]",
+            ),
+        );
+        fixture.fails_only("names", "crates/old");
+
+        // The root package is a member, and so is a path dependency inside the root.
+        let fixture = Fixture::new("members-root");
+        fixture.write(
+            "Cargo.toml",
+            &format!("[package]\nname = \"Root\"\npublish = false\n\n[lints]\nworkspace = true\n\n{WORKSPACE}"),
+        );
+        fixture.fails_only("names", "\"Root\"");
+
+        let fixture = Fixture::new("members-path");
+        fixture.write(
+            "Cargo.toml",
+            &replace(
+                WORKSPACE,
+                "hash = { path = \"crates/hash\" }",
+                "hash = { path = \"crates/hash\" }\ntool = { path = \"tools/tool\" }",
+            ),
+        );
+        fixture.write(
+            "crates/hash/Cargo.toml",
+            &member("hash", "tool.workspace = true"),
+        );
+        fixture.write("tools/tool/Cargo.toml", &member("Tool", ""));
+        fixture.fails_only("names", "tools/tool");
     }
 }

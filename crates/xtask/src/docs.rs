@@ -61,17 +61,41 @@ const OWNER_PARAGRAPHS: [&str; 2] = [
 
 const NO_FLAGS: &str = "`cargo ci`, `cargo policy` and `cargo book` take no flags.";
 
+/// Whether `text` names `name` as a whole word, with no ASCII letter or digit
+/// right before or after it, so that `JGit` does not credit Git.
+fn names(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + name.len()..].chars().next();
+        !before
+            .into_iter()
+            .chain(after)
+            .any(|c| c.is_ascii_alphanumeric())
+    })
+}
+
 #[test]
 fn prior_art_credits_every_listed_system() {
     let credits = repo_file("docs/prior-art.md");
     let missing: Vec<&str> = CREDITED
         .into_iter()
-        .filter(|name| !credits.contains(name))
+        .filter(|name| !names(&credits, name))
         .collect();
     assert!(
         missing.is_empty(),
         "docs/prior-art.md does not credit {missing:?}"
     );
+}
+
+#[test]
+fn credited_names_are_whole_words() {
+    assert!(!names("Histogram diff from [JGit](url)", "Git"));
+    assert!(names("[JGit](url) and [Git](url)", "Git"));
+    assert!(names("Git", "Git"));
+    assert!(names("Git's object model", "Git"));
+    assert!(!names("Gitea", "Git"));
+    assert!(!names("Lean 40", "Lean 4"));
+    assert!(names("[Lean 4](url)", "Lean 4"));
 }
 
 #[test]
