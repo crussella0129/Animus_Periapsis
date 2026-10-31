@@ -39,11 +39,14 @@ the bare content. A reserved kind (a kind the registry names but whose body is
 not yet specified) is rejected with its own error, distinct from an unassigned
 kind.
 
-Freezing happens in stages. An encoding is frozen once a golden file pins it.
-Sprint 0 freezes the primitives, `HashRef`, the envelope header and the blob
-body. Format v1 as a whole is frozen at the Phase 1 exit gate, once every
-object kind's body and the storage representation (INT-0007, INT-0008) are
-specified.
+Freezing happens in stages. The spec states the exact bytes of every golden
+value as a worked example, so golden files are checked against the spec
+rather than only against the encoder that wrote them. An encoding becomes
+frozen when the owner signs off the spec section that defines it (AC-6), not
+when a golden file is first committed. Sprint 0 covers the primitives,
+`HashRef`, the envelope header and the blob body. Format v1 as a whole is
+frozen at the Phase 1 exit gate, once every object kind's body and the storage
+representation (INT-0007, INT-0008) are specified.
 
 Boundaries: this intent owns the logical encoding and hashing. How bytes are
 laid out on disk is [INT-0007](INT-0007-crash-safe-storage.md) and
@@ -56,7 +59,7 @@ laid out on disk is [INT-0007](INT-0007-crash-safe-storage.md) and
 - **AC-2** `necessary` `formal` — Hash agility: every `HashRef` carries its algorithm id; decoding an unknown id, or a digest whose length does not match its algorithm, is an error; two `HashRef`s are equal only when algorithm and digest are both equal.
   - Obligation: `unstated`.
   - Proxy: unit tests.
-- **AC-3** `necessary` `empirical` — Golden files: the encodings of a fixed object corpus are committed, and CI fails on Windows and Linux whenever an encoding changes without a format-version change.
+- **AC-3** `necessary` `empirical` — Golden files: the encodings of a fixed object corpus are committed, and the canonical suite (`cargo ci`, run locally and in the GitHub matrix) fails on Windows and Linux whenever an encoding changes without a format-version change.
 - **AC-4** `necessary` `empirical` — The BLAKE3-256 implementation matches the official BLAKE3 test vectors, including the empty input.
   - Threshold: 100% of the vectors used.
 - **AC-5** `necessary` `formal` — Decoders are total: `decode` never panics on any input; it returns a value or an error.
@@ -98,4 +101,4 @@ laid out on disk is [INT-0007](INT-0007-crash-safe-storage.md) and
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §3.1 as slimmed by R3 §5).
-- 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-002 to T-005: spec first, then hashes, canonical encoding, golden corpus). After the first plan critique: object identity as the hash of the whole envelope, the reserved-kind error, and staged freezing (what Sprint 0 freezes versus the Phase 1 freeze of format v1) recorded in Intent.
+- 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-002 to T-005: spec first, then hashes, canonical encoding, golden corpus). After the first plan critique: object identity as the hash of the whole envelope, the reserved-kind error, and staged freezing (what Sprint 0 freezes versus the Phase 1 freeze of format v1) recorded in Intent. After the second plan critique: AC-3's "CI" defined as the canonical suite, locally and in the GitHub matrix; golden values carried as worked examples in the spec; freezing takes effect at the owner's AC-6 sign-off.

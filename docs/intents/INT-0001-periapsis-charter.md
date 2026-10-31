@@ -105,6 +105,11 @@ Intent map (dependency order, no timelines):
   release (INT-0025).
 - The plan runs in dependency order with no timelines: Phase 0 specification
   and scaffolding, then Phases 1–5 as in the intent map (I.5).
+- The figures that child intents quote from the R1 to R5 prototypes and
+  experiments are targets, not established results: that code is not in this
+  repository. Each owning intent's sprint re-implements the measurement and
+  records its own figure before a criterion that cites one can be certified.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 Part I and the root README).
+- 2026-10-31: revised while `proposed`, after the Sprint 0 plan critique: research-report risk recorded in Consequences — quoted prototype figures are targets until re-measured.

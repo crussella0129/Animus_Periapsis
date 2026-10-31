@@ -118,7 +118,14 @@ a second lifecycle — chapters keep Sprint Loops' seven states.
   Loops as well; until then AC-2 is checked by review.
 - Changing a criterion's polarity or modality, or removing it, is a semantic
   revision with a Transition history entry.
+- The validator sees one version of a chapter, so it can reject a duplicate
+  `AC-n` but not a number reused after a criterion was removed. Until
+  INT-0017's event records make history mechanical, "never reused" is enforced
+  by review and by the Transition history entry that every removal requires.
+- Strength needs evidence tiers (INT-0018, INT-0020) to tell a kernel-checked
+  `formal` criterion from one held only by its proxy, so the Sprint 0
+  validator reports grammar and counts, not strength.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; grammar derived from Master Report v6 R5 Part B and R4).
-- 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-006, T-007). Clarified before planning: claims may wrap onto continuation lines, and a Book declares the contract with `typed-acceptance: 1` in its marker instead of the checker taking a mode flag (owner direction: no flags on idempotent commands). After the first plan critique: an empty criteria list is Undetermined, and a declared Book with a criterion-less chapter is in violation.
+- 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-006, T-007). Clarified before planning: claims may wrap onto continuation lines, and a Book declares the contract with `typed-acceptance: 1` in its marker instead of the checker taking a mode flag (owner direction: no flags on idempotent commands). After the first plan critique: an empty criteria list is Undetermined, and a declared Book with a criterion-less chapter is in violation. After the second plan critique: how "never reused" is enforced, and why strength is not computed yet, recorded in Consequences.

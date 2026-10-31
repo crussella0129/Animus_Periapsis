@@ -20,8 +20,8 @@ Every acceptance criterion in this Book is typed with a **polarity** and a
   `supporting` criteria are sufficiency evidence: one failing leaves the
   intent **undetermined**.
 - Modalities, strongest first: `formal` > `empirical` > `preference` >
-  `judged` > `asserted`. An intent's strength is its weakest satisfied
-  criterion; a `formal` criterion checked only by its proxy counts as
+  `judged` > `asserted`. An intent's strength is the weakest modality among its
+  criteria, where a `formal` criterion supported only by its proxy counts as
   `empirical` until its obligation is kernel-checked.
 - `AC-n` numbers are never reused. Removing, weakening or retyping a criterion
   is a revision recorded in the chapter's Transition history.

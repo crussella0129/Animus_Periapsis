@@ -41,14 +41,15 @@ and the independent mrustc bootstrap are C++, so that claim is not achievable
 - **AC-4** `necessary` `empirical` — `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings` pass in CI on Windows and Linux.
 - **AC-5** `necessary` `asserted` — `docs/prior-art.md` credits every adopted design with its source system and licence, and a reviewer confirms that no code was copied from another VCS project.
   - Signers: project owner or a human reviewer.
-- **AC-6** `supporting` `empirical` — Every dependency able to compile C or assembly (each crate that has `cc` as a build-dependency, per `cargo tree -e build -i cc`) is either built with its pure-Rust option (for example `blake3` with `features = ["pure"]`) or listed with a justification in `docs/prior-art.md`.
+- **AC-6** `supporting` `empirical` — Every dependency able to compile C or assembly (each crate that depends on `cc`, per `cargo tree --workspace --target all -e normal,build -i cc`) is either built with its pure-Rust option (for example `blake3` with `features = ["pure"]`) or listed with a justification in `docs/prior-art.md`.
 - **AC-7** `supporting` `asserted` — Before any crate is published, its `peri-`-prefixed package name is reserved on crates.io; bare `periapsis` and `peri` are taken (R1 #22).
   - Signers: project owner (publishing is an owner action).
-- **AC-8** `necessary` `formal` — Every workspace package name is a single lowercase ASCII word matching `[a-z][a-z0-9]*`.
+- **AC-8** `necessary` `formal` — Every unpublished (`publish = false`) workspace package name is a single lowercase ASCII word matching `[a-z][a-z0-9]*`.
   - Obligation: `unstated`.
   - Proxy: the `names` rule of `cargo policy`.
 - **AC-9** `necessary` `empirical` — The tooling commands `cargo ci`, `cargo policy` and `cargo book` are idempotent and take no flags: each rejects any argument starting with `-` with exit code 2, and two consecutive runs leave the working tree unchanged.
   - Threshold: 100% of tooling commands.
+- **AC-10** `supporting` `empirical` — The README keeps the owner's original statement, links the Book, and documents every tooling command (`cargo ci`, `cargo policy`, `cargo book`, `cargo deny check`) and that none takes flags.
 
 ## Rationale
 - "Reproducible and bootstrappable" is the honest target: trusting-trust risk,
@@ -85,12 +86,17 @@ and the independent mrustc bootstrap are C++, so that claim is not achievable
   whole suite. A green local `cargo ci` therefore says nothing about AC-3; the
   deny job does.
 - AC-2, AC-3 and AC-4 are claims about CI, so they hold only once a GitHub
-  Actions run on the work branch is recorded, which happens at each sprint's
-  checkpoint push.
+  Actions run on the work branch is recorded. That run starts at a sprint's
+  checkpoint, which opens only after the sprint closes, so each sprint's CI
+  evidence is recorded by the next sprint as a carried-forward task.
+- Publishing a crate would give it a `peri-` package name, which AC-8's rule
+  rejects. AC-8 therefore covers unpublished packages only; when a crate first
+  becomes publishable, the `names` rule gains a `peri-[a-z][a-z0-9]*` form for
+  it, as a recorded revision of this chapter.
 - The repository LICENSE is the GPL-3.0 text, but `GPL-3.0-only` versus
   `GPL-3.0-or-later` is not stated. Crate metadata uses `GPL-3.0-only`, the
   narrower grant, until the owner decides.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 I.5 Phase 0 and the Biblio report §5).
-- 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-001, T-007, T-008). Revised before planning on owner direction: single-word crate names and flagless idempotent tooling (AC-8 and AC-9 added, AC-7 reworded for publication only). After the first plan critique: cargo-deny's place outside `cargo ci`, and the CI-dependence of AC-2 to AC-4, recorded in Consequences.
+- 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-001, T-007, T-008). Revised before planning on owner direction: single-word crate names and flagless idempotent tooling (AC-8 and AC-9 added, AC-7 reworded for publication only). After the first plan critique: cargo-deny's place outside `cargo ci`, and the CI-dependence of AC-2 to AC-4, recorded in Consequences. After the second plan critique: AC-6's audit command corrected to `cargo tree --workspace --target all -e normal,build -i cc` (`-e build` alone never reaches a normal dependency such as `blake3`); AC-8 limited to unpublished packages, with the publication path in Consequences; AC-10 added for the README; CI evidence recorded by the next sprint.

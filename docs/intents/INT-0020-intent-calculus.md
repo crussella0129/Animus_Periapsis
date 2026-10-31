@@ -20,7 +20,7 @@ kernel semantics behind the Markdown grammar of
 ```
 Spec   ::= formal P | empirical E | preference R | judged J | asserted k W
 Intent ::= ⟨id, prose, necessary : List Spec, supporting : List Spec⟩
-Certified L c I := (∀ s ∈ I.necessary, ⟦s⟧) ∧ (∀ s ∈ I.supporting, ⟦s⟧)
+Certified L c I := I.necessary ++ I.supporting ≠ [] ∧ (∀ s ∈ I.necessary, ⟦s⟧) ∧ (∀ s ∈ I.supporting, ⟦s⟧)
 Refuted   L c I := ∃ s ∈ I.necessary, ¬⟦s⟧
 ```
 
@@ -82,3 +82,4 @@ the panel, which the Book records as attributed, signed facts.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 Part VIII §B).
+- 2026-10-31: revised while `proposed`, after the Sprint 0 plan critique: `Certified` requires a non-empty spec list, so an intent with no criteria is never vacuously certified, in line with INT-0002's Semantics.
