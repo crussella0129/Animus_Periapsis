@@ -38,4 +38,4 @@
 - **Completed:** 2026-10-31T21:11:01Z
 - **Files modified:** .gitattributes, crates/xtask/src/policy.rs, crates/codec/tests/golden.rs, crates/codec/tests/golden/v1/*.bin (23 files), crates/codec/tests/spec.rs, docs/intents/INT-0004-windows-and-linux.md
 - **Evidence:** Windows 11 host, rustc 1.99.1. Golden files created once with `PERI_GOLDEN_CREATE=1 cargo test -p codec --test golden golden_v1_corpus_matches`; later runs compare only. `spec_examples_match_golden_files` passed on its first run: all 23 hand-derived worked-example hex strings in the spec equal the encoder output, the encoder's independent check. `spec_registries_match_code` passed (hash and kind tables, reserved rows included). Golden tests 5 passed: corpus matches; one changed byte fails, naming only that file; a missing file fails without create mode; create mode never overwrites; `create_mode` true only for "1". `git check-attr` reports the .bin files as binary. `cargo policy` → 11 rules PASS, including the new `golden` rule (`policy_requires_binary_golden_attr`).
-- **Commit:** PENDING
+- **Commit:** `8f75733232dc44de4d6776a903ced35ddc6e3afd`
