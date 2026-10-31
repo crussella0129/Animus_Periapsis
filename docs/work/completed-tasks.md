@@ -23,3 +23,11 @@
 - **Files modified:** Cargo.toml, Cargo.lock, docs/prior-art.md, crates/hash/Cargo.toml, crates/hash/src/lib.rs, crates/hash/tests/vectors.rs
 - **Evidence:** Windows 11 host, rustc 1.99.1. `cargo test -p hash` → 11 passed (35 official BLAKE3 vectors, SHA-256 FIPS vectors, registry ids 0..=255, `hash_registry_is_complete`, digest lengths, cross-algorithm order, binary and text round trips and rejections, chunked = one-shot). `cargo tree --workspace --target all -e normal,build -i cc --depth 1` → `cc` ← `blake3` only, the single C-build `yes` row. `cargo tree --workspace -e features -i blake3` → `blake3 feature "pure"`. `cargo policy` → 10 rules PASS. `cargo deny check` → advisories ok, bans ok, licenses ok, sources ok. deny.toml needed no change.
 - **Commit:** `0fdb12a3c769dbaeecee195aba3ecbbfee1c75f8`
+
+## T-004 (sprint 0)
+- **Description:** Canonical binary encoding in the codec crate
+- **Intent:** [INT-0006](../intents/INT-0006-format-v1.md)
+- **Completed:** 2026-10-31T21:09:14Z
+- **Files modified:** Cargo.toml, Cargo.lock, crates/codec/Cargo.toml, crates/codec/src/lib.rs, crates/codec/src/error.rs, crates/codec/src/wire.rs, crates/codec/src/envelope.rs, crates/codec/tests/properties.rs, crates/codec/tests/mutants.rs
+- **Evidence:** Windows 11 host, rustc 1.99.1. `cargo test -p codec` → 38 passed in 6.4 s: 13 round-trip and 13 mutation properties at 10,000 cases each (u64, u32, bool, String, Bytes, HashRef, Option, Vec, BTreeSet, BTreeMap, pair, nested map, blob envelope); `decode_is_total_on_random_bytes` (100,000 cases, every type and the envelope); `exhaustive_mutants_reencode` (every single-byte substitution, insertion and deletion of one value per type, at least one decoding mutant each); known varint encodings; non-canonical varints, bad bool, option tag and UTF-8, and `u64::MAX` length and count prefixes all rejected at offset 2 (UTF-8 at the first content byte, 3); `u32` range; strictly increasing keys; trailing bytes; reserved versus unknown kinds; whole-envelope object id; kind registry. No new third-party dependency; `cargo policy` 10 PASS; `cargo deny check` ok.
+- **Commit:** PENDING
