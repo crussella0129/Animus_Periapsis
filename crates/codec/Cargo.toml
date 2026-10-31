@@ -12,6 +12,7 @@ publish.workspace = true
 hash.workspace = true
 
 [dev-dependencies]
+allocation-counter.workspace = true
 proptest.workspace = true
 
 [lints]

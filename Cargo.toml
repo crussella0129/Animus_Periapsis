@@ -17,6 +17,9 @@ publish = false
 blake3 = { version = "1.8.7", default-features = false, features = ["std", "pure"] }
 sha2 = { version = "0.11.1", default-features = false }
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
+pulldown-cmark = { version = "0.13.6", default-features = false }
+toml_edit = { version = "0.25.17", default-features = false, features = ["parse"] }
+allocation-counter = "0.8.1"
 hash = { path = "crates/hash" }
 book = { path = "crates/book" }
 
