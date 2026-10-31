@@ -17,7 +17,7 @@ Reference queries:
 
 - `resolved_by(human) & conflicted()`
 - `rr(dev) & ready() & intent("INT-log-*") & ~rollup(never)`
-- `rr(dev) & module(peri-merge) & tier(>=tested)`
+- `rr(dev) & module(merge) & tier(>=tested)`
 - `rr(dev) & lane(agent-7) & since(op:<id>)`
 
 ## Acceptance criteria

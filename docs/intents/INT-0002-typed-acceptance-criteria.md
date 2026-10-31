@@ -2,8 +2,8 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0002
-- **State:** proposed
-- **Work evidence:** none
+- **State:** planned
+- **Work evidence:** [T-006 build plan](../sprints/s0/sprint-plans/build-plan.md#t-006-typed-acceptance-validator-in-the-book-crate), [T-007 build plan](../sprints/s0/sprint-plans/build-plan.md#t-007-canonical-suite-runner-and-ci-workflow)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none
@@ -42,10 +42,20 @@ item, optionally followed by indented detail items:
   - `asserted` — a sign-off by a named class of non-author principals
     (`Signers:`).
 - Other detail keys: `Evidence:` (current verification link) and `Note:`.
+- A claim may wrap onto indented continuation lines that do not begin with
+  `- `.
+
+Declaration: a Book opts into this contract with the line
+`typed-acceptance: 1` in its `docs/.sprint-loop-book` marker. In a declared
+Book every criterion must be typed; an undeclared Book is read with the port
+rule below. The Book itself says which rule applies, so checking it needs no
+flags.
 
 Semantics:
 - **Certified** — every criterion holds with evidence. **Refuted** — some
-  `necessary` criterion fails. **Undetermined** — neither.
+  `necessary` criterion fails. **Undetermined** — neither. An intent with no
+  criteria is Undetermined, never vacuously Certified, and in a declared Book a
+  chapter without criteria is a grammar violation.
 - **Strength** — the weakest modality among the criteria, ordered `formal` >
   `empirical` > `preference` > `judged` > `asserted`. A `formal` criterion
   supported only by its proxy counts as `empirical` until its obligation is
@@ -111,3 +121,4 @@ a second lifecycle — chapters keep Sprint Loops' seven states.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; grammar derived from Master Report v6 R5 Part B and R4).
+- 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-006, T-007). Clarified before planning: claims may wrap onto continuation lines, and a Book declares the contract with `typed-acceptance: 1` in its marker instead of the checker taking a mode flag (owner direction: no flags on idempotent commands). After the first plan critique: an empty criteria list is Undetermined, and a declared Book with a criterion-less chapter is in violation.

@@ -2,24 +2,29 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0003
-- **State:** proposed
-- **Work evidence:** none
+- **State:** planned
+- **Work evidence:** [T-001 build plan](../sprints/s0/sprint-plans/build-plan.md#t-001-workspace-guardrails-policy-checker-and-credits), [T-007 build plan](../sprints/s0/sprint-plans/build-plan.md#t-007-canonical-suite-runner-and-ci-workflow), [T-008 build plan](../sprints/s0/sprint-plans/build-plan.md#t-008-readme-and-documentation-checks)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none
 - **Documentation evidence:** none
 
 ## Intent
-Periapsis's own code is 100% Rust in one Cargo workspace whose crates use the
-`peri-` prefix (the binary is `peri`). Every crate forbids `unsafe` code; the
-toolchain is pinned in `rust-toolchain.toml`; `Cargo.lock` is committed and CI
-builds `--locked`; dependency licences, advisories and bans are enforced with
+Periapsis's own code is 100% Rust in one Cargo workspace. Crates have the
+simplest names that say what they do — single lowercase words such as `hash`,
+`codec`, `book` and `xtask` (the user-facing binary is `peri`). Project tooling
+is just as plain: `cargo ci`, `cargo policy` and `cargo book` are idempotent,
+so they take no flags. Every crate forbids `unsafe` code; the toolchain is
+pinned in `rust-toolchain.toml`; `Cargo.lock` is committed and CI builds
+`--locked`; dependency licences, advisories and bans are enforced with
 cargo-deny; formatting and Clippy are clean with warnings denied. Designs
 borrowed from other systems are credited in `docs/prior-art.md`, and no code is
 copied from them. Pure-Rust dependencies are preferred wherever one exists.
 
-Boundaries: this intent covers the workspace, its guardrails and its
-dependency policy. Reproducible, attested releases are
+Boundaries: this intent covers the workspace, its naming, its guardrails and
+its dependency policy. Workspace crates are `publish = false`; a crate that is
+ever published goes to crates.io under a `peri-` prefixed package name,
+because the bare words are taken there. Reproducible, attested releases are
 [INT-0029](INT-0029-reproducible-releases.md).
 
 Non-goal: "100% Rust, verifiable down to the compiler". rustc's LLVM backend
@@ -37,8 +42,13 @@ and the independent mrustc bootstrap are C++, so that claim is not achievable
 - **AC-5** `necessary` `asserted` — `docs/prior-art.md` credits every adopted design with its source system and licence, and a reviewer confirms that no code was copied from another VCS project.
   - Signers: project owner or a human reviewer.
 - **AC-6** `supporting` `empirical` — Every dependency able to compile C or assembly (each crate that has `cc` as a build-dependency, per `cargo tree -e build -i cc`) is either built with its pure-Rust option (for example `blake3` with `features = ["pure"]`) or listed with a justification in `docs/prior-art.md`.
-- **AC-7** `supporting` `asserted` — Crate names under the `peri-` prefix are reserved on crates.io before first publication; bare `periapsis` and `peri` are taken (R1 #22).
+- **AC-7** `supporting` `asserted` — Before any crate is published, its `peri-`-prefixed package name is reserved on crates.io; bare `periapsis` and `peri` are taken (R1 #22).
   - Signers: project owner (publishing is an owner action).
+- **AC-8** `necessary` `formal` — Every workspace package name is a single lowercase ASCII word matching `[a-z][a-z0-9]*`.
+  - Obligation: `unstated`.
+  - Proxy: the `names` rule of `cargo policy`.
+- **AC-9** `necessary` `empirical` — The tooling commands `cargo ci`, `cargo policy` and `cargo book` are idempotent and take no flags: each rejects any argument starting with `-` with exit code 2, and two consecutive runs leave the working tree unchanged.
+  - Threshold: 100% of tooling commands.
 
 ## Rationale
 - "Reproducible and bootstrappable" is the honest target: trusting-trust risk,
@@ -51,7 +61,10 @@ and the independent mrustc bootstrap are C++, so that claim is not achievable
 - Credit from day one: the Scion/Mononoke attribution dispute shows the cost of
   not doing it (II §2.3, corrected by R1 #21).
 - Crate names: `periapsis` and `peri` are taken on crates.io; `peri-*` and
-  `animus-periapsis` were free when checked (R1 #22).
+  `animus-periapsis` were free when checked (R1 #22). Inside the workspace the
+  owner asked for the simplest names possible and for flags only where a command
+  is not idempotent (2026-10-31), so internal names stay bare and only a
+  publication would need the prefix.
 - Sources: [Master Report v6](../sprints/s0/sprint-research/master-report-v6.md)
   I.3 principles 8–9, II §4 Phase 0; [Biblio report](../sprints/s0/sprint-research/biblio-report.md) §5.
 
@@ -67,9 +80,17 @@ and the independent mrustc bootstrap are C++, so that claim is not achievable
 - Some pure-Rust implementations are slower or less mature than their C
   counterparts. The known tension is zstd (INT-0008): the reference library is
   C, so the storage work may need a recorded AC-6 exception.
+- cargo-deny runs as its own command (`cargo deny check`) and its own CI job,
+  not as a `cargo ci` step, so a machine without cargo-deny can still run the
+  whole suite. A green local `cargo ci` therefore says nothing about AC-3; the
+  deny job does.
+- AC-2, AC-3 and AC-4 are claims about CI, so they hold only once a GitHub
+  Actions run on the work branch is recorded, which happens at each sprint's
+  checkpoint push.
 - The repository LICENSE is the GPL-3.0 text, but `GPL-3.0-only` versus
   `GPL-3.0-or-later` is not stated. Crate metadata uses `GPL-3.0-only`, the
   narrower grant, until the owner decides.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 I.5 Phase 0 and the Biblio report §5).
+- 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-001, T-007, T-008). Revised before planning on owner direction: single-word crate names and flagless idempotent tooling (AC-8 and AC-9 added, AC-7 reworded for publication only). After the first plan critique: cargo-deny's place outside `cargo ci`, and the CI-dependence of AC-2 to AC-4, recorded in Consequences.

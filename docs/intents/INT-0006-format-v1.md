@@ -2,8 +2,8 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0006
-- **State:** proposed
-- **Work evidence:** none
+- **State:** planned
+- **Work evidence:** [T-002 build plan](../sprints/s0/sprint-plans/build-plan.md#t-002-format-v1-specification), [T-003 build plan](../sprints/s0/sprint-plans/build-plan.md#t-003-algorithm-tagged-hashes-in-the-hash-crate), [T-004 build plan](../sprints/s0/sprint-plans/build-plan.md#t-004-canonical-binary-encoding-in-the-codec-crate), [T-005 build plan](../sprints/s0/sprint-plans/build-plan.md#t-005-golden-corpus-and-spec-consistency)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none
@@ -31,6 +31,19 @@ index are derived ([INT-0013](INT-0013-derived-data.md)).
 
 Removed from v1: a HEAD/pointer file, separate evolution-marker objects, CRDT
 record operations, and chunk lists in core (R3 §4.1).
+
+Object identity: an object's id is the `HashRef` of its whole envelope,
+`format_version ‖ kind ‖ body`, so the same body under two kinds or versions
+has two ids. A blob's id is therefore the hash of `01 ‖ 01 ‖ content`, not of
+the bare content. A reserved kind (a kind the registry names but whose body is
+not yet specified) is rejected with its own error, distinct from an unassigned
+kind.
+
+Freezing happens in stages. An encoding is frozen once a golden file pins it.
+Sprint 0 freezes the primitives, `HashRef`, the envelope header and the blob
+body. Format v1 as a whole is frozen at the Phase 1 exit gate, once every
+object kind's body and the storage representation (INT-0007, INT-0008) are
+specified.
 
 Boundaries: this intent owns the logical encoding and hashing. How bytes are
 laid out on disk is [INT-0007](INT-0007-crash-safe-storage.md) and
@@ -85,3 +98,4 @@ laid out on disk is [INT-0007](INT-0007-crash-safe-storage.md) and
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §3.1 as slimmed by R3 §5).
+- 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-002 to T-005: spec first, then hashes, canonical encoding, golden corpus). After the first plan critique: object identity as the hash of the whole envelope, the reserved-kind error, and staged freezing (what Sprint 0 freezes versus the Phase 1 freeze of format v1) recorded in Intent.

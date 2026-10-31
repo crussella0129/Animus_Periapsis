@@ -11,17 +11,25 @@
 
 ## Intent
 One engine, two faces. `peri` is the human CLI (later a TUI): calm, readable
-output. `peri --json` and `peri-mcp` are for agents: they never prompt, return
-structured results and structured errors with stable codes, support sparse or
-API-only workspaces, and expose every operation the human CLI has, because both
-are generated from one command registry. Human output quality is held to typed
-criteria — the R5 worked example for `peri log` is adopted here with its
-thresholds fixed in advance.
+output. `peri mcp` serves agents over the Model Context Protocol: it never
+prompts, returns structured results and structured errors with stable codes,
+supports sparse or API-only workspaces, and exposes every operation the human
+CLI has, because both are generated from one command registry.
+
+Command names are the simplest words that say what they do. A command is
+**idempotent** when running it again changes nothing (`status`, `log`, `diff`);
+idempotent commands take no flags, so their default behaviour is their only
+behaviour. Flags exist only on non-idempotent commands, where they make a state
+change explicit. The project's own tooling follows the same rule
+([INT-0003](INT-0003-engineering-baseline.md) AC-9).
+
+Human output quality is held to typed criteria — the R5 worked example for
+`peri log` is adopted here with its thresholds fixed in advance.
 
 ## Acceptance criteria
-- **AC-1** `necessary` `empirical` — Every command in `--json` mode completes with stdin closed and no TTY.
+- **AC-1** `necessary` `empirical` — Every operation served by `peri mcp` completes without a TTY and without prompting.
   - Threshold: 0 prompts across the command corpus.
-- **AC-2** `necessary` `empirical` — Every `--json` response and error validates against a published JSON schema, and error codes are stable across releases.
+- **AC-2** `necessary` `empirical` — Every `peri mcp` response and error validates against a published JSON schema, and error codes are stable across releases.
 - **AC-3** `necessary` `formal` — Parity: the operations exposed through JSON/MCP equal the human CLI's operations.
   - Obligation: `unstated`.
   - Proxy: a test that compares both surfaces against the single registry.
@@ -33,6 +41,11 @@ thresholds fixed in advance.
   - Threshold: preference > ½. Error: δ = 1/20. Note: the rubric is registered before the change.
 - **AC-7** `supporting` `judged` — Design rubric for `peri log` (calm, scannable, consistent): at least 2 of 3 designers score it 4 or more out of 5.
   - Quorum: 2 of 3 non-author designers.
+- **AC-8** `necessary` `formal` — No command that the registry classifies as idempotent declares a flag.
+  - Obligation: `unstated`.
+  - Proxy: a registry test over every command.
+- **AC-9** `necessary` `empirical` — Running any idempotent command twice in a row leaves repository state unchanged and prints identical output.
+  - Threshold: 100% of idempotent commands in the corpus, on Windows and Linux.
 
 ## Rationale
 - Agents need commands that cannot hang on a prompt, outputs a program can
@@ -54,8 +67,13 @@ thresholds fixed in advance.
 ## Consequences
 - JSON schemas and error codes become a compatibility surface that needs
   versioning.
+- Machine-readable output for shell scripts cannot be a `--json` flag on
+  idempotent commands. Whether scripts use `peri mcp`, an environment setting
+  or separate structured commands is open, to be decided when this intent is
+  planned.
 - Qualitative criteria need real panels (INT-0020 AC-5) before they can be
   certified.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §4 Phase 3 and R5 §B.4).
+- 2026-10-31: revised while `proposed`, on owner direction: simplest command names, flags only on non-idempotent commands, and agents served by `peri mcp` instead of a `--json` flag (AC-1 and AC-2 reworded; AC-8 and AC-9 added).

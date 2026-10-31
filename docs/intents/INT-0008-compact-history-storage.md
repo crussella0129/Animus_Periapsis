@@ -25,13 +25,13 @@ identity is [INT-0006](INT-0006-format-v1.md); durability is
 ## Acceptance criteria
 - **AC-1** `necessary` `empirical` — On the helix editor's history of `.rs` blobs (9,170 versions, 370 MB raw), total stored size at the default compression level is at most 4.4 MB and below a Git delta pack of the same blobs.
   - Note: R2-E27b measured 4.35 MB at zstd level 3, 3.48 MB at level 19, and 8.49 MB for the Git pack.
-- **AC-2** `necessary` `formal` — Storage is lossless: reading any stored version returns exactly the bytes whose BLAKE3 digest is its `HashRef`.
+- **AC-2** `necessary` `formal` — Storage is lossless: reading any stored version returns exactly the content of the blob whose object id ([INT-0006](INT-0006-format-v1.md): the hash of the blob's whole envelope) is its `HashRef`.
   - Obligation: `unstated`.
   - Proxy: round-trip property tests and `fsck`.
 - **AC-3** `necessary` `empirical` — Reading any version applies at most 50 deltas.
 - **AC-4** `supporting` `empirical` — Large binaries: a 64 MiB semi-structured file with 160 changed 4 KiB pages and a 1 KiB insertion stores its new version in at most 1 MB.
   - Note: R3-C measured 0.73 MB, against 2.31 MB for 8 KiB CDC.
-- **AC-5** `supporting` `empirical` — Random-access latency, repacking cost and rename behaviour are measured and published before format v1 is frozen.
+- **AC-5** `supporting` `empirical` — Random-access latency, repacking cost and rename behaviour are measured and published before the storage representation is frozen at the Phase 1 exit gate.
 
 ## Rationale
 - On real source history, predecessor-dictionary zstd beat every alternative:
@@ -59,3 +59,4 @@ identity is [INT-0006](INT-0006-format-v1.md); durability is
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 R2 §3 and R3-C).
+- 2026-10-31: revised while `proposed`, after the Sprint 0 plan critique. AC-2 names the object id of INT-0006 (hash of the whole blob envelope) rather than a bare-content digest. AC-5's deadline is the freezing of the storage representation at the Phase 1 exit gate, not Sprint 0's freezing of logical encodings.
