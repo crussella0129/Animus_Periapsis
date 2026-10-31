@@ -1,0 +1,48 @@
+# Summary
+- [Project Book](README.md)
+- [Intents](intents/README.md)
+  - Charter and foundations
+    - [INT-0001 Periapsis charter](intents/INT-0001-periapsis-charter.md)
+    - [INT-0002 Typed acceptance criteria](intents/INT-0002-typed-acceptance-criteria.md)
+    - [INT-0003 Engineering baseline](intents/INT-0003-engineering-baseline.md)
+    - [INT-0004 Windows and Linux](intents/INT-0004-windows-and-linux.md)
+    - [INT-0005 Deterministic simulation testing](intents/INT-0005-deterministic-simulation-testing.md)
+  - Reversible single-user core
+    - [INT-0006 Format v1](intents/INT-0006-format-v1.md)
+    - [INT-0007 Crash-safe storage](intents/INT-0007-crash-safe-storage.md)
+    - [INT-0008 Compact history storage](intents/INT-0008-compact-history-storage.md)
+    - [INT-0009 Reversible by default](intents/INT-0009-reversible-by-default.md)
+    - [INT-0013 Derived data](intents/INT-0013-derived-data.md)
+    - [INT-0014 Working copy and workspaces](intents/INT-0014-working-copy-and-workspaces.md)
+  - Rewriting and conflicts
+    - [INT-0010 Lock-free concurrency](intents/INT-0010-lock-free-concurrency.md)
+    - [INT-0011 Change identity and rewriting](intents/INT-0011-change-identity-and-rewriting.md)
+    - [INT-0012 Conflicts and merge](intents/INT-0012-conflicts-and-merge.md)
+    - [INT-0023 Query language](intents/INT-0023-query-language.md)
+  - Agent-native layer
+    - [INT-0015 Phases and confirmation](intents/INT-0015-phases-and-confirmation.md)
+    - [INT-0016 Actors and agent lifecycle](intents/INT-0016-actors-and-agent-lifecycle.md)
+    - [INT-0017 Event records and the Book view](intents/INT-0017-event-records-and-book-view.md)
+    - [INT-0018 Proof-pairing certificates](intents/INT-0018-proof-pairing-certificates.md)
+    - [INT-0019 Cheat-resistant verifier](intents/INT-0019-cheat-resistant-verifier.md)
+    - [INT-0020 Intent calculus](intents/INT-0020-intent-calculus.md)
+    - [INT-0021 Lanes and review requests](intents/INT-0021-lanes-and-review-requests.md)
+    - [INT-0022 Agent and human interfaces](intents/INT-0022-agent-and-human-interfaces.md)
+    - [INT-0026 Sprint Loops on Periapsis](intents/INT-0026-sprint-loops-on-periapsis.md)
+    - [INT-0027 Porting Sprint Loops projects](intents/INT-0027-port-sprint-loops-projects.md)
+  - Distribution
+    - [INT-0024 Staged sync](intents/INT-0024-staged-sync.md)
+    - [INT-0025 Git bridge](intents/INT-0025-git-bridge.md)
+  - Scale and assurance
+    - [INT-0029 Reproducible releases](intents/INT-0029-reproducible-releases.md)
+    - [INT-0030 Optional scale mode](intents/INT-0030-optional-scale-mode.md)
+  - Identity
+    - [INT-0031 Visual identity](intents/INT-0031-visual-identity.md)
+  - Abandoned
+    - [INT-0028 Entropy layer](intents/INT-0028-entropy-layer.md)
+- [Tasks](work/tasks.md)
+- [Completed tasks](work/completed-tasks.md)
+- [Sprint 0](sprints/s0/sprint-meta.md)
+  - [Research report](sprints/s0/sprint-research/research-report.md)
+  - [Master Report v6 (research artifact)](sprints/s0/sprint-research/master-report-v6.md)
+  - [Biblio report (research artifact)](sprints/s0/sprint-research/biblio-report.md)
