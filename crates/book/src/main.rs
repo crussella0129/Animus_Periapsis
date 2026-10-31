@@ -5,6 +5,7 @@
 //! marker says whether the strict or the port rule applies.
 
 use std::env;
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -13,10 +14,11 @@ use book::{Rule, check};
 const USAGE: &str = "usage: book [BOOK_DIR]   (default: docs; no flags: checking is idempotent)";
 
 fn main() -> ExitCode {
-    let args: Vec<String> = env::args().skip(1).collect();
+    // A Book path need not be Unicode, so arguments are read as `OsString`.
+    let args: Vec<OsString> = env::args_os().skip(1).collect();
     let dir = match args.as_slice() {
         [] => PathBuf::from("docs"),
-        [dir] if !dir.starts_with('-') => PathBuf::from(dir),
+        [dir] if !dir.as_encoded_bytes().starts_with(b"-") => PathBuf::from(dir),
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);

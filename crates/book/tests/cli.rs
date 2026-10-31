@@ -1,5 +1,6 @@
 //! Exit-code contract of the `book` binary (INT-0002 AC-2, INT-0003 AC-9).
 
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -43,7 +44,11 @@ fn cli_exit_codes() {
     let chapters = fs::read_dir(repo_root().join("docs/intents"))
         .unwrap()
         .filter_map(Result::ok)
-        .filter(|e| e.file_name().to_string_lossy().starts_with("INT-"))
+        .filter(|e| {
+            // The chapters the checker reads: every `.md` but `README.md`.
+            let name = e.file_name().to_string_lossy().into_owned();
+            name.ends_with(".md") && name != "README.md"
+        })
         .count();
     let counted = stdout.lines().filter(|l| l.ends_with(" criteria")).count();
     assert_eq!(counted, chapters, "one counted line per chapter: {stdout}");
@@ -88,6 +93,66 @@ fn cli_exit_codes() {
     }
 
     for dir in [violating, future, unmarked] {
-        fs::remove_dir_all(dir).unwrap();
+        let _ = fs::remove_dir_all(dir);
     }
+}
+
+/// book-11: a non-Unicode argument is a Book path like any other, so a
+/// missing one is refused with exit 2 rather than a panic.
+#[test]
+fn non_unicode_argument_is_a_book_path() {
+    let output = book().arg(non_unicode_name()).output().unwrap();
+    assert_usage_error(&output, "a non-Unicode missing directory");
+}
+
+/// `n` followed by a lone surrogate, which no Unicode string holds.
+#[cfg(windows)]
+fn non_unicode_name() -> OsString {
+    use std::os::windows::ffi::OsStringExt;
+    OsString::from_wide(&[0x6e, 0xD800])
+}
+
+/// `n` followed by a byte that is not UTF-8.
+#[cfg(unix)]
+fn non_unicode_name() -> OsString {
+    use std::os::unix::ffi::OsStringExt;
+    OsString::from_vec(b"n\xff".to_vec())
+}
+
+/// book-8: a marker that declares typed-acceptance twice is refused, in
+/// either order.
+#[test]
+fn repeated_declaration_exits_2() {
+    for (name, first, second) in [("twice-12", 1, 2), ("twice-21", 2, 1)] {
+        let marker =
+            format!("schema-version: 2\ntyped-acceptance: {first}\ntyped-acceptance: {second}\n");
+        let dir = temp_book(
+            name,
+            Some(&marker),
+            "# INT-0001 — X\n\n## Acceptance criteria\n- **AC-1** `necessary` `asserted` — x\n",
+        );
+        let output = book().arg(&dir).output().unwrap();
+        let _ = fs::remove_dir_all(&dir);
+        assert_usage_error(&output, &marker);
+    }
+}
+
+/// book-3: an undeclared Book whose items carry `AC-n` labels but no type
+/// tags is clean, because the port rule lifts those items.
+#[test]
+fn undeclared_labels_are_lifted() {
+    let dir = temp_book(
+        "labels",
+        Some("schema-version: 2\nsubstrate-version: 4\n"),
+        "# INT-0001 — X\n\n## Acceptance criteria\n\
+         - **AC-1:** Users can sign in.\n- **AC-2** Users can sign out.\n",
+    );
+    let output = book().arg(&dir).output().unwrap();
+    let _ = fs::remove_dir_all(&dir);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    assert!(
+        stdout.contains("1 chapters, 2 criteria, 0 violations"),
+        "{stdout}"
+    );
 }
