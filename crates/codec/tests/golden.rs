@@ -160,7 +160,7 @@ fn golden_changed_file_fails() {
         failures.iter().all(|f| f.starts_with("string-ascii.bin:")),
         "only the changed file may fail: {failures:?}"
     );
-    fs::remove_dir_all(&dir).unwrap();
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -182,7 +182,7 @@ fn golden_missing_file_fails_without_create_mode() {
         0,
         "nothing may be written"
     );
-    fs::remove_dir_all(&dir).unwrap();
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -209,7 +209,7 @@ fn golden_create_mode_never_overwrites() {
             case.bytes
         );
     }
-    fs::remove_dir_all(&dir).unwrap();
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
