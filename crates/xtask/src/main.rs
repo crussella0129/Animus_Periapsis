@@ -1,8 +1,9 @@
 #![forbid(unsafe_code)]
-//! Project tooling behind the `cargo policy` alias.
+//! Project tooling behind the `cargo ci` and `cargo policy` aliases.
 //!
 //! Every command here is idempotent, so none takes flags (INT-0003 AC-9).
 
+mod ci;
 mod policy;
 
 use std::env;
@@ -10,13 +11,14 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: cargo policy   (no flags: the command is idempotent)";
+const USAGE: &str = "usage: cargo ci | cargo policy   (no flags: both commands are idempotent)";
 
 /// Runs one command and returns its exit code: 0 clean, 1 problems found,
 /// 2 for a usage error. Output goes to the given writers, so tests need no
 /// subprocess.
 fn cli(args: &[String], root: &Path, out: &mut dyn Write, err: &mut dyn Write) -> u8 {
     match args {
+        [command] if command == "ci" => ci::run(root, out),
         [command] if command == "policy" => {
             let mut clean = true;
             for result in policy::check(root) {
@@ -74,6 +76,13 @@ mod tests {
         )
     }
 
+    fn assert_usage_error(args: &[&str]) {
+        let (code, out, err) = run(args);
+        assert_eq!(code, 2, "{args:?}");
+        assert!(!err.trim().is_empty(), "{args:?} must explain its usage");
+        assert!(out.is_empty(), "{args:?} must not run the command");
+    }
+
     #[test]
     fn policy_rejects_extra_arguments() {
         for args in [
@@ -83,10 +92,19 @@ mod tests {
             &["--policy"],
             &[],
         ] {
-            let (code, out, err) = run(args);
-            assert_eq!(code, 2, "{args:?}");
-            assert!(!err.trim().is_empty(), "{args:?} must explain its usage");
-            assert!(out.is_empty(), "{args:?} must not run the command");
+            assert_usage_error(args);
+        }
+    }
+
+    #[test]
+    fn ci_rejects_extra_arguments() {
+        for args in [
+            &["ci", "--fast"][..],
+            &["ci", "-q"],
+            &["ci", "x"],
+            &["--ci"],
+        ] {
+            assert_usage_error(args);
         }
     }
 
