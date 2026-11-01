@@ -1,10 +1,10 @@
 # Sprint 0 Integration Test Results
 
-- **Tested head:** `94f736378f5643701f8bd3d1ced4e1346a5dd691` on `dev`, committed. `git status --porcelain` printed nothing in the Windows working checkout before and after the runs; the WSL runs check their own clone. The head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques. Later commits change only the Book.
+- **Tested head:** `df52b9db0381fc230f7e07391bc16adb10f6ee3a` on `dev`, committed. `git status --porcelain` printed nothing in the Windows working checkout before and after the runs; the WSL runs check their own clone. The head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques. Later commits change only the Book.
 - **Canonical runner:** `cargo ci` (steps fmt, clippy, test, policy, book). `cargo deny check` (cargo-deny 0.20.2) runs beside it.
 - **Raw output:** [test-matrix-log.md](test-matrix-log.md). It holds the final run, which produced every result below except the two task-boundary deny runs, and the scripts that ran it.
 - **Toolchain:** rustc 1.99.1 (58cf8f9c3 2026-10-13), LLVM 23.1.1, installed from `rust-toolchain.toml` on each host. Git 2.56.0.windows.3 on Windows, Git 2.53.0 in WSL.
-- **Environment:** before running, each host printed which of `PROPTEST_*`, `PERI_*`, `CLIPPY_CONF_DIR`, `CARGO_TARGET_DIR`, `CARGO_BUILD_TARGET_DIR` and `GIT_*` it sets. WSL sets none. Windows sets only `GIT_EDITOR`, which the session sets; the golden rule removes it like any other `GIT_*` variable. Neither host has a Cargo config file above the checkouts. `int_ci_ignores_hostile_environment` and `int_policy_reports_failures` set such variables on purpose, to show that the tools ignore them.
+- **Environment:** before running, each host printed which of `PROPTEST_*`, `PERI_*`, `CLIPPY_CONF_DIR`, `CARGO_TARGET_DIR`, `CARGO_BUILD_TARGET_DIR` and `GIT_*` it sets. WSL sets none. Windows sets only `GIT_EDITOR`, which the session sets; the golden rule removes it like any other `GIT_*` variable. For every checkout it builds in, the matrix prints the `.cargo/config` and `.cargo/config.toml` files in every directory above it and in `CARGO_HOME`: there are none, on either host. `int_ci_ignores_hostile_environment` and `int_policy_reports_failures` set such variables on purpose, to show that the tools ignore them.
 - **Target directories:** every checkout builds into its own `target/`, and each run prints its target directory. No run shares one with another checkout, which [code-review.md](code-review.md) records as a known limit.
 
 | Host | OS release | `rustc -Vv` host | Checkout |
@@ -24,7 +24,7 @@
 ### `int_ci_windows`
 - **Intents:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-4 (local half), [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-1, [INT-0006](../../../intents/INT-0006-format-v1.md) AC-3 (local half), [INT-0002](../../../intents/INT-0002-typed-acceptance-criteria.md) AC-2
 - **Run:** `cargo ci` in the Windows working checkout.
-- **Observed:** `PASS fmt`, `PASS clippy`, `PASS test`, `PASS policy`, `PASS book`, then `ci: all 5 steps passed`; exit 0. A separate `cargo test --workspace --locked` in the same checkout listed 153 tests passed ([unit-tests.md](unit-tests.md)).
+- **Observed:** `PASS fmt`, `PASS clippy`, `PASS test`, `PASS policy`, `PASS book`, then `ci: all 5 steps passed`; exit 0. A separate `cargo test --workspace --locked` in the same checkout listed 154 tests passed ([unit-tests.md](unit-tests.md)).
 - **Result:** pass
 
 ### `int_ci_reports_failures` (added in the Test phase)
@@ -78,16 +78,16 @@
 ### `int_deny_windows`
 - **Intent:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-3 (local half)
 - **Run:** `cargo deny check` on the Windows host at the tested head.
-- **Observed:** "advisories ok, bans ok, licenses ok, sources ok"; exit 0. The licences `deny.toml` allows are themselves checked against a GPL-3.0-compatible list by `deny_allows_only_gpl3_compatible_licences` ([unit-tests.md](unit-tests.md), T-001). The RustSec advisory database was `advisory-db-3157b0e258782691` at `2295466c4e9df26647fd67d8fa1c705ac2fc7f81` (2026-10-30).
+- **Observed:** "advisories ok, bans ok, licenses ok, sources ok"; exit 0. Dev-dependencies' licences are checked too (`include-dev = true`). The licences `deny.toml` allows are themselves checked against a GPL-3.0-compatible list by `deny_allows_only_gpl3_compatible_licences` ([unit-tests.md](unit-tests.md), T-001). The RustSec advisory database was `advisory-db-3157b0e258782691` at `2295466c4e9df26647fd67d8fa1c705ac2fc7f81` (2026-10-30).
 - **Result:** pass
 
 ### `int_ci_wsl`
 - **Intents:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-4 (local half), [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-1, [INT-0006](../../../intents/INT-0006-format-v1.md) AC-3 (local half)
 - **Run:** clone the committed `dev` head into the WSL ext4 home directory, install the pinned toolchain, run `cargo ci`, then list the tests with `cargo test --workspace --locked`.
 - **Observed:**
-  - The clone's head is `94f7363` and `df` reports ext4.
+  - The clone's head is `df52b9d` and `df` reports ext4.
   - `cargo ci` printed `PASS` for all five steps, then `ci: all 5 steps passed`; exit 0.
-  - 153 tests passed on Linux, the same count as on Windows.
+  - 154 tests passed on Linux, the same count as on Windows.
   - The golden test ran inside the `test` step, so the 23 `.bin` files matched the Linux encoder byte for byte.
   - `PASS policy` includes the golden rule: Git, run against the rule's private repository in this fresh clone, gave all 23 `.bin` files and the `probe.bin` path `text: unset` and no filter, `ident` or working-tree encoding.
 - **Result:** pass
@@ -122,7 +122,7 @@
   3. Run `cargo clippy --workspace --all-targets -- -D warnings`, building into the clone's own target directory.
   4. Delete the clone.
 - **Observed:**
-  - HashMap clone (at `94f7363`, 1 file changed): "error: use of a disallowed type `std::collections::HashMap`", exit 101.
-  - HashSet clone (at `94f7363`, 1 file changed): "error: use of a disallowed type `std::collections::HashSet`", exit 101.
+  - HashMap clone (at `df52b9d`, 1 file changed): "error: use of a disallowed type `std::collections::HashMap`", exit 101.
+  - HashSet clone (at `df52b9d`, 1 file changed): "error: use of a disallowed type `std::collections::HashSet`", exit 101.
   - Both clones were removed.
 - **Result:** pass

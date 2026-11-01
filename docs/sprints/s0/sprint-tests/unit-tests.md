@@ -1,8 +1,8 @@
 # Sprint 0 Unit Test Results
 
-- **Tested head:** `94f736378f5643701f8bd3d1ced4e1346a5dd691` on `dev`, committed, with a clean working tree. Later commits change only the Book. This head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques ([round 1](critique-round1.md), [round 2](critique-round2.md), [round 3](critique-round3.md), [round 4](critique-round4.md), [round 5](critique-round5.md)).
+- **Tested head:** `df52b9db0381fc230f7e07391bc16adb10f6ee3a` on `dev`, committed, with a clean working tree. Later commits change only the Book. This head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques ([round 1](critique-round1.md), [round 2](critique-round2.md), [round 3](critique-round3.md), [round 4](critique-round4.md), [round 5](critique-round5.md), [round 6](critique-round6.md)).
 - **Runner:** the `test` step of `cargo ci`, which runs `cargo test --workspace --locked`. The listing below comes from running that command directly in the Windows working checkout, as recorded in [integration-tests.md](integration-tests.md).
-- **Result:** 153 passed, 0 failed, 0 ignored, on the Windows 11 working checkout and in the WSL Ubuntu 26.04.1 ext4 clone. The `test` step also passed in the fresh `core.autocrlf=true` Windows clone ([e2e-tests.md](e2e-tests.md)). No test is platform-gated or `#[ignore]`d: `cfg(windows)` and `cfg(unix)` mark only helper pairs (`non_unicode_name` and its xtask counterpart), each with both variants. Both systems ran the same 153 tests.
+- **Result:** 154 passed, 0 failed, 0 ignored, on the Windows 11 working checkout and in the WSL Ubuntu 26.04.1 ext4 clone. The `test` step also passed in the fresh `core.autocrlf=true` Windows clone ([e2e-tests.md](e2e-tests.md)). No test is platform-gated or `#[ignore]`d: `cfg(windows)` and `cfg(unix)` mark only helper pairs (`non_unicode_name` and its xtask counterpart), each with both variants. Both systems ran the same 154 tests.
 - **Toolchain:** rustc 1.99.1 (58cf8f9c3 2026-10-13), LLVM 23.1.1, on `x86_64-pc-windows-msvc` and `x86_64-unknown-linux-gnu`.
 - **Randomness:** property tests use proptest 1.12 with fixed case counts: 10,000 cases per property in `hash`, `codec` and `book`, and 100,000 for decoder totality.
   - The seed is random on each run. proptest stores a failing seed under `proptest-regressions/` and replays it first next time; `PROPTEST_RNG_SEED` replays any seed.
@@ -12,7 +12,7 @@
 
 | Target | Tests |
 |--------|-------|
-| `xtask` unit tests (`policy`, `attributes`, `ci`, `deny`, `workflow`, `workspace`, `docs`, front end) | 49 |
+| `xtask` unit tests (`policy`, `attributes`, `ci`, `deny`, `workflow`, `workspace`, `docs`, front end) | 50 |
 | `hash` `tests/vectors.rs` | 13 |
 | `codec` `tests/properties.rs` | 40 |
 | `codec` `tests/alloc.rs` | 3 |
@@ -21,7 +21,7 @@
 | `codec` `tests/spec.rs` | 2 |
 | `book` `tests/book.rs` | 33 |
 | `book` `tests/cli.rs` | 4 |
-| **Total** | **153** |
+| **Total** | **154** |
 
 Each table below maps one task's EARS clauses (from the locked [build plan](../sprint-plans/build-plan.md)) to the tests that assert them. Where a clause is verified by an integration or E2E run, the table names that run instead. Tests added for code-review findings sit beside the clause they strengthen. [code-review.md](code-review.md) maps each finding to its regression test.
 
@@ -35,7 +35,7 @@ Each table below maps one task's EARS clauses (from the locked [build plan](../s
 | a rule fails → `cargo policy` prints `FAIL <rule>: <problem>` for each problem in its rule's place, nothing on stderr, exit 1 | `policy_command_fails_naming_each_failing_rule` compares the whole output: one failing rule, two failing rules, and one rule with two problems. `int_policy_reports_failures` (integration, Windows and WSL) | pass |
 | a member that does not resolve to `publish = false` → FAIL `publish`, naming the crate | `policy_requires_unpublished_members`: both accepted forms pass; a workspace `publish = true` and a missing workspace value each fail | pass |
 | no `[lints] workspace = true` → FAIL `lints`, naming the crate; the workspace lint must forbid `unsafe_code` | `policy_flags_missing_workspace_lints`: a member without `[lints]` fails. A root `unsafe_code` that is missing, `allow`, `deny`, commented out, or in the wrong table also fails | pass |
-| a crate root without `#![forbid(unsafe_code)]` → FAIL `unsafe`, naming the file | `policy_flags_missing_forbid_unsafe` (`src/main.rs` and `src/lib.rs`) | pass |
+| a crate root without `#![forbid(unsafe_code)]` → FAIL `unsafe`, naming the file | `policy_flags_missing_forbid_unsafe` (`src/main.rs` and `src/lib.rs`). The attribute counts only among the crate root's leading lines: inside a block comment or a nested module it fails `unsafe`; after a doc comment and another attribute it passes | pass |
 | a toolchain channel that is not an exact `X.Y.Z` → FAIL `toolchain` | `policy_requires_exact_toolchain` (`stable`, `1.99`, `nightly-2026-10-01` and `1.99.1-beta` fail; `1.99.1` passes) | pass |
 | no `Cargo.lock` → FAIL `lockfile` | `policy_requires_lockfile` | pass |
 | a direct dependency (normal, dev or build, or a `[dependencies.<name>]` table) → FAIL `deps`, naming crate and dependency | `policy_flags_direct_dependency`: every form, including `[target.'cfg(...)'.*]` tables, fails naming crate, dependency and table; an inherited target dependency passes | pass |
@@ -44,7 +44,7 @@ Each table below maps one task's EARS clauses (from the locked [build plan](../s
 | a member uses `HashMap` or `HashSet` → Clippy fails on `disallowed_types` | `int_disallowed_types_probe` (integration: `HashMap` and `HashSet`, each in its own clone) | pass |
 | a package name outside `[a-z][a-z0-9]*` → FAIL `names`, for any workspace package | `policy_requires_single_word_names` (`peri-hash`, `Hash`, `hash_ref` and `9hash` fail; `hash` and `sha256` pass). `policy_finds_members_like_cargo`: a member outside `crates/*` is checked. `policy_refuses_member_patterns_it_cannot_expand` covers `[...]` and `**` | pass |
 | any argument besides the command → exit 2, usage on stderr | `policy_rejects_extra_arguments`, `non_unicode_arguments_are_usage_errors` (both also assert empty stdout) | pass |
-| `cargo deny check` at the task boundary → four checks ok, recorded | `int_deny_at_t001` (integration). The licences `deny.toml` allows are themselves all GPL-3.0-compatible (INT-0003 AC-3): `deny_allows_only_gpl3_compatible_licences`, and `incompatible_licences_are_named` for the main list, both forms of per-crate exception, an identifier that only starts with an allowed one, and an unreadable policy. `deny.toml` may not hide crates from cargo-deny through `[graph] exclude` or `[licenses] clarify` (`settings_that_hide_licences_are_named`) | pass |
+| `cargo deny check` at the task boundary → four checks ok, recorded | `int_deny_at_t001` (integration). The licences `deny.toml` allows are themselves all GPL-3.0-compatible (INT-0003 AC-3): `deny_allows_only_gpl3_compatible_licences`, and `incompatible_licences_are_named` for the main list, both forms of per-crate exception, an identifier that only starts with an allowed one, and an unreadable policy. `deny.toml` may not hide crates from cargo-deny through `[graph] exclude` or `[licenses] clarify`, and must check dev-dependencies' licences (`include-dev = true`): `settings_that_hide_licences_are_named` | pass |
 | (all rules) manifests are read as Cargo reads them | `policy_reads_manifests_as_toml`: multi-line arrays, `path="…"`, dotted keys, `publish = { workspace = true }`. Also `policy_flags_invalid_toml`, `policy_ignores_byte_order_marks`, `wildcards_match_within_a_component` and `paths_resolve_inside_the_root` | pass |
 
 ## T-002: Format v1 specification
@@ -137,7 +137,7 @@ The validator reads chapters as CommonMark (pulldown-cmark), the way GitHub rend
 | the `test` step → `PERI_GOLDEN_CREATE` removed from its environment | `test_step_removes_golden_create` (and `PROPTEST_CASES`, `CLIPPY_CONF_DIR`); `proptest_variables_are_never_inherited`; `int_ci_ignores_hostile_environment` (integration: a deleted golden file is not recreated) | pass |
 | `cargo ci` on the three checkouts → all PASS, exit 0, OS and `rustc -Vv` recorded | `int_ci_windows`, `int_ci_wsl`, `e2e_fresh_clone_windows` | pass |
 | `cargo ci`, `cargo policy` and `cargo book` twice each → exit 0, one counted line per chapter, clean tree | `int_tooling_is_idempotent` | pass |
-| the workflow file → push on `dev` and `main`, `pull_request`, the two-OS matrix running `cargo ci`, a `deny` job, no swallowed failures | `workflow_matches_ci_contract`: each point is checked on its own job, and 19 mutants fail. The deny job must run every check on this workspace: eleven narrowed deny steps must not count and three full forms must. `workflow_forms_read_alike` | pass |
+| the workflow file → push on `dev` and `main`, `pull_request`, the two-OS matrix running `cargo ci`, a `deny` job, no swallowed failures | `workflow_matches_ci_contract`: each point is checked on its own job, and 19 mutants fail. No trigger may be filtered (`paths`, `paths-ignore`, `branches-ignore`, `types`, an inline `pull_request`, a `pull_request` branch list without dev and main), and each such form must fail. The deny job must run every check on this workspace, as a step whose inputs the rule reads and whose place and shell nothing changes: its narrowed forms must not count and three full forms must. `workflow_forms_read_alike` | pass |
 
 ## T-008: README and documentation checks
 - **Intent:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-5 (supporting), AC-10
@@ -145,4 +145,4 @@ The validator reads chapters as CommonMark (pulldown-cmark), the way GitHub rend
 | EARS clause (WHEN → SHALL) | Test | Result |
 |----------------------------|------|--------|
 | prior-art names every listed system, project and test-data source | `prior_art_credits_every_listed_system` (36 names, each matched as a whole word); `credited_names_are_whole_words` | pass |
-| the README keeps both owner paragraphs verbatim, links `docs/SUMMARY.md`, documents the four commands and states the no-flags sentence exactly | `readme_keeps_statement_and_links_book` | pass |
+| the README keeps both owner paragraphs verbatim, links `docs/SUMMARY.md`, documents the four commands and states the no-flags sentence exactly | `readme_keeps_statement_and_links_book`: `cargo ci` and `cargo deny check` as fenced command lines, and a line besides the no-flags sentence on what `cargo policy` and `cargo book` do. `readme_must_document_each_command`: four READMEs that only mention the commands fail | pass |

@@ -1,6 +1,6 @@
 # Sprint 0 Test Matrix Log
 
-The raw output of the final test-matrix run at `94f7363`, produced by the scripts reproduced at the end of this page: `test_matrix.sh`, its WSL leg `wsl_ci.sh`, and `port_corpus.py`. [integration-tests.md](integration-tests.md) and [e2e-tests.md](e2e-tests.md) summarize it.
+The raw output of the final test-matrix run at `df52b9d`, produced by the scripts reproduced at the end of this page: `test_matrix.sh`, its WSL leg `wsl_ci.sh`, and `port_corpus.py`. [integration-tests.md](integration-tests.md) and [e2e-tests.md](e2e-tests.md) summarize it.
 
 ```text
 
@@ -16,9 +16,9 @@ LLVM version: 23.1.1
 cargo-deny 0.20.2
 git version 2.56.0.windows.3
 PROPTEST_*, PERI_*, CLIPPY_CONF_DIR, CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR or GIT_* set: GIT_EDITOR 
-cargo config files above the checkouts: 
-head 94f736378f5643701f8bd3d1ced4e1346a5dd691 on dev; uncommitted paths: 0
+head df52b9db0381fc230f7e07391bc16adb10f6ee3a on dev; uncommitted paths: 0
 target directory: C:\Users\charl\Animus_Periapsis\target
+cargo config files above the working checkout or in CARGO_HOME: none
 
 ==== int_ci_windows (working checkout, NTFS)
 PASS fmt
@@ -40,31 +40,31 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
      Running unittests src\main.rs
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests\book.rs
-test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.92s
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.90s
      Running tests\cli.rs
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
      Running unittests src\lib.rs
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests\alloc.rs
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests\golden.rs
 test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
      Running tests\mutants.rs
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
      Running tests\properties.rs
-test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.75s
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.61s
      Running tests\spec.rs
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running unittests src\lib.rs
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests\vectors.rs
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.66s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.71s
      Running unittests src\main.rs
-test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.24s
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.03s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-tests passed: 153
+tests passed: 154
 
 ==== int_cc_build_dependency_audit
 cc v1.10.0
@@ -77,13 +77,15 @@ C-build yes rows:
   `blake3` 
 
 ==== int_disallowed_types_probe (two scratch clones, discarded)
--- planted std::collections::HashMap at 94f7363:  1 file changed, 5 insertions(+)
+-- planted std::collections::HashMap at df52b9d:  1 file changed, 5 insertions(+)
 target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
+cargo config files above the clone or in CARGO_HOME: none
 error: use of a disallowed type `std::collections::HashMap`
 clippy exit 101 (non-zero required)
 scratch clone removed: yes
--- planted std::collections::HashSet at 94f7363:  1 file changed, 5 insertions(+)
+-- planted std::collections::HashSet at df52b9d:  1 file changed, 5 insertions(+)
 target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
+cargo config files above the clone or in CARGO_HOME: none
 error: use of a disallowed type `std::collections::HashSet`
 clippy exit 101 (non-zero required)
 scratch clone removed: yes
@@ -91,6 +93,7 @@ scratch clone removed: yes
 ==== int_ci_reports_failures (Windows scratch clone: one golden byte changed, one fmt violation)
 changed:  M crates/codec/src/lib.rs  M crates/codec/tests/golden/v1/string-ascii.bin 
 target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
+cargo config files above the clone or in CARGO_HOME: none
 FAIL fmt: cargo fmt --all --check exited with exit code: 1
 PASS clippy
 FAIL test: cargo test --workspace --locked exited with exit code: 101
@@ -105,6 +108,7 @@ scratch clone removed: yes
 ==== int_ci_reports_book_violation (Windows scratch clone: one untyped criterion)
 changed:  M docs/intents/INT-0031-visual-identity.md 
 target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
+cargo config files above the clone or in CARGO_HOME: none
 PASS fmt
 PASS clippy
 FAIL test: cargo test --workspace --locked exited with exit code: 101
@@ -119,6 +123,7 @@ scratch clone removed: yes
 ==== int_ci_ignores_hostile_environment (Windows scratch clone: HashMap planted, a golden file deleted)
 changed:  M crates/codec/src/lib.rs  D crates/codec/tests/golden/v1/uvarint-0.bin 
 target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
+cargo config files above the clone or in CARGO_HOME: none
 PASS fmt
 FAIL clippy: cargo clippy --workspace --all-targets --locked -- -D warnings exited with exit code: 101
 FAIL test: cargo test --workspace --locked exited with exit code: 101
@@ -135,6 +140,7 @@ scratch clone removed: yes
 ==== int_policy_reports_failures (Windows scratch clone: .gitattributes emptied, so nothing marks *.bin binary)
 changed:  M .gitattributes 
 target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
+cargo config files above the clone or in CARGO_HOME: none
 -- the caller's environment as is
 PASS lints
 PASS unsafe
@@ -166,17 +172,18 @@ cargo policy exit 1 (1 required)
 scratch clone removed: yes
 
 ==== e2e_fresh_clone_windows (core.autocrlf=true)
-clone head 94f736378f5643701f8bd3d1ced4e1346a5dd691, core.autocrlf=true
+clone head df52b9db0381fc230f7e07391bc16adb10f6ee3a, core.autocrlf=true
 target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\e2e-autocrlf\target
+cargo config files above the clone or in CARGO_HOME: none
 golden: all 23 .bin files byte-identical to the original
-tracked files: 127; with CRLF or mixed line ends in the working tree: 0
+tracked files: 128; with CRLF or mixed line ends in the working tree: 0
 PASS fmt
 PASS clippy
 PASS test
 PASS policy
 PASS book
 ci: all 5 steps passed
-cargo ci exit 0 (cold build, 46 s)
+cargo ci exit 0 (cold build, 47 s)
 
 ==== e2e_port_rule_sprint_loops_book
 Animus_Sprint_Loops head e8c3a58018e1627a145759fdac1f089c6236ba36, uncommitted paths: 0
@@ -243,7 +250,7 @@ markdown-it-py 4.0.0
 port_corpus exit 0
   Animus_Amalgam: 7a6786b3e1, docs/intents uncommitted: 0
   Animus_Ferric: 508edfd, docs/intents uncommitted: 0
-  Animus_Periapsis: 94f7363, docs/intents uncommitted: 0
+  Animus_Periapsis: df52b9d, docs/intents uncommitted: 0
   Animus_Sprint_Loops: e8c3a58, docs/intents uncommitted: 0
   Animus_Unitarity: 4f82372, docs/intents uncommitted: 0
   CubiKan: 77642b4, docs/intents uncommitted: 0
@@ -272,9 +279,8 @@ Linux 6.6.114.1-microsoft-standard-WSL2 x86_64
 PRETTY_NAME="Ubuntu 26.04.1 LTS"
 git version 2.53.0
 PROPTEST_*, PERI_*, CLIPPY_CONF_DIR, CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR or GIT_* set: none
-cargo config files above the checkouts: 
 == clone
-head 94f736378f5643701f8bd3d1ced4e1346a5dd691
+head df52b9db0381fc230f7e07391bc16adb10f6ee3a
 checkout on ext4
 rustc 1.99.1 (58cf8f9c3 2026-10-13)
 binary: rustc
@@ -284,6 +290,7 @@ host: x86_64-unknown-linux-gnu
 release: 1.99.1
 LLVM version: 23.1.1
 target directory: /home/charles/periapsis-s0-test/target
+cargo config files above the clone or in CARGO_HOME: none
 == int_ci_wsl: cargo ci
 PASS fmt
 PASS clippy
@@ -292,7 +299,7 @@ PASS policy
 PASS book
 ci: all 5 steps passed
 cargo ci exit 0
-tests passed on Linux: 153
+tests passed on Linux: 154
 == int_tooling_is_idempotent
 run 1 cargo ci: exit 0, dirty files 0
 run 1 cargo policy: exit 0, dirty files 0
@@ -304,6 +311,7 @@ chapters in docs/intents: 31
 == int_ci_reports_failures: one golden byte changed, one fmt violation
 changed:  M crates/codec/src/lib.rs  M crates/codec/tests/golden/v1/string-ascii.bin 
 target directory: /home/charles/periapsis-s0-probe/target
+cargo config files above the clone or in CARGO_HOME: none
 FAIL fmt: cargo fmt --all --check exited with exit status: 1
 PASS clippy
 FAIL test: cargo test --workspace --locked exited with exit status: 101
@@ -359,7 +367,7 @@ wsl exit 0
 
 ==== after
 working checkout uncommitted paths: 0
-tested head 94f736378f5643701f8bd3d1ced4e1346a5dd691
+tested head df52b9db0381fc230f7e07391bc16adb10f6ee3a
 ```
 
 ## Scripts
@@ -388,6 +396,25 @@ target_dir() {
     python -X utf8 -c "import json, sys; print(json.load(sys.stdin)['target_directory'])"
 }
 
+# The Cargo configuration files that a build in checkout "$1" would read
+# besides the checkout's own: `.cargo/config` and `.cargo/config.toml` in
+# every directory above it, and in CARGO_HOME.
+configs_above() {
+  local dir found=""
+  dir=$(dirname "$(cygpath -u "$1")")
+  while :; do
+    for file in "$dir/.cargo/config" "$dir/.cargo/config.toml"; do
+      [ -f "$file" ] && found="$found $file"
+    done
+    [ "$(dirname "$dir")" = "$dir" ] && break
+    dir=$(dirname "$dir")
+  done
+  for file in "${CARGO_HOME:-$HOME/.cargo}/config" "${CARGO_HOME:-$HOME/.cargo}/config.toml"; do
+    [ -f "$file" ] && found="$found $file"
+  done
+  echo "${found:- none}"
+}
+
 # A fresh clone of the committed head in a new scratch directory.
 fresh_clone() {
   rm -rf "$1"
@@ -412,11 +439,11 @@ cargo deny --version
 git --version
 set_vars=$(env | grep -E '^(PROPTEST_|PERI_|CLIPPY_CONF_DIR|CARGO_TARGET_DIR|CARGO_BUILD_TARGET_DIR|GIT_)' | cut -d= -f1 | tr '\n' ' ')
 echo "PROPTEST_*, PERI_*, CLIPPY_CONF_DIR, CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR or GIT_* set: ${set_vars:-none}"
-echo "cargo config files above the checkouts: $(ls C:/Users/charl/.cargo/config.toml C:/Users/charl/.cargo/config C:/Users/.cargo/config.toml C:/.cargo/config.toml 2>/dev/null | tr '\n' ' ')"
 cd "$REPO" || exit 10
 HEAD_SHA=$(git rev-parse HEAD)
 echo "head $HEAD_SHA on $(git branch --show-current); uncommitted paths: $(git status --porcelain | wc -l)"
 echo "target directory: $(target_dir)"
+echo "cargo config files above the working checkout or in CARGO_HOME:$(configs_above "$REPO")"
 
 section "int_ci_windows (working checkout, NTFS)"
 cargo ci 2>&1 | grep -E '^(PASS|FAIL|ci:)'
@@ -449,6 +476,7 @@ for type in "std::collections::HashMap::<u8, u8>" "std::collections::HashSet::<u
     name=${type%%::<*}
     echo "-- planted $name at $(git rev-parse --short HEAD): $(git diff --stat | tail -1)"
     echo "target directory: $(target_dir)"
+    echo "cargo config files above the clone or in CARGO_HOME:$(configs_above "$PWD")"
     cargo clippy --workspace --all-targets -- -D warnings > "$S/probe.out" 2>&1
     code=$?
     grep -E "disallowed type \`$name\`" "$S/probe.out" | head -1
@@ -466,6 +494,7 @@ fresh_clone "$P"
   printf '\npub fn  badly_formatted( ) {}\n' >> crates/codec/src/lib.rs
   echo "changed: $(git status --porcelain | tr '\n' ' ')"
   echo "target directory: $(target_dir)"
+  echo "cargo config files above the clone or in CARGO_HOME:$(configs_above "$PWD")"
   cargo ci > "$S/probe.out" 2>&1
   code=$?
   grep -E '^(PASS|FAIL|ci:)' "$S/probe.out"
@@ -483,6 +512,7 @@ fresh_clone "$P"
   sed -i '/^## Acceptance criteria$/a - An untyped probe criterion.' docs/intents/INT-0031-visual-identity.md
   echo "changed: $(git status --porcelain | tr '\n' ' ')"
   echo "target directory: $(target_dir)"
+  echo "cargo config files above the clone or in CARGO_HOME:$(configs_above "$PWD")"
   cargo ci > "$S/probe.out" 2>&1
   code=$?
   grep -E '^(PASS|FAIL|ci:)' "$S/probe.out"
@@ -501,6 +531,7 @@ mkdir -p "$S/empty-clippy-conf"
   rm crates/codec/tests/golden/v1/uvarint-0.bin
   echo "changed: $(git status --porcelain | tr '\n' ' ')"
   echo "target directory: $(target_dir)"
+  echo "cargo config files above the clone or in CARGO_HOME:$(configs_above "$PWD")"
   PROPTEST_CASES=1 PERI_GOLDEN_CREATE=1 CLIPPY_CONF_DIR="$S/empty-clippy-conf" \
     cargo ci > "$S/probe.out" 2>&1
   code=$?
@@ -523,6 +554,7 @@ printf '*.bin binary\n' > "$S/hostile-attributes"
   : > .gitattributes
   echo "changed: $(git status --porcelain | tr '\n' ' ')"
   echo "target directory: $(target_dir)"
+  echo "cargo config files above the clone or in CARGO_HOME:$(configs_above "$PWD")"
   echo "-- the caller's environment as is"
   cargo policy > "$S/probe.out" 2>&1
   code=$?
@@ -551,6 +583,7 @@ git clone --quiet -c core.autocrlf=true --branch dev "$REPO" "$W"
   cd "$W" || exit 14
   echo "clone head $(git rev-parse HEAD), core.autocrlf=$(git config core.autocrlf)"
   echo "target directory: $(target_dir)"
+  echo "cargo config files above the clone or in CARGO_HOME:$(configs_above "$PWD")"
   (cd crates/codec/tests/golden/v1 && sha256sum ./*.bin) > "$S/clone.sha"
   (cd "$REPO/crates/codec/tests/golden/v1" && sha256sum ./*.bin) > "$S/orig.sha"
   if diff -q "$S/clone.sha" "$S/orig.sha" >/dev/null; then
@@ -619,13 +652,31 @@ target_dir() {
     python3 -c "import json, sys; print(json.load(sys.stdin)['target_directory'])"
 }
 
+# The Cargo configuration files that a build in checkout "$1" would read
+# besides the checkout's own: `.cargo/config` and `.cargo/config.toml` in
+# every directory above it, and in CARGO_HOME.
+configs_above() {
+  local dir found=""
+  dir=$(dirname "$1")
+  while :; do
+    for file in "$dir/.cargo/config" "$dir/.cargo/config.toml"; do
+      [ -f "$file" ] && found="$found $file"
+    done
+    [ "$(dirname "$dir")" = "$dir" ] && break
+    dir=$(dirname "$dir")
+  done
+  for file in "${CARGO_HOME:-$HOME/.cargo}/config" "${CARGO_HOME:-$HOME/.cargo}/config.toml"; do
+    [ -f "$file" ] && found="$found $file"
+  done
+  echo "${found:- none}"
+}
+
 echo "== host"
 uname -srm
 grep PRETTY_NAME /etc/os-release
 git --version
 set_vars=$(env | grep -E '^(PROPTEST_|PERI_|CLIPPY_CONF_DIR|CARGO_TARGET_DIR|CARGO_BUILD_TARGET_DIR|GIT_)' | cut -d= -f1 | tr '\n' ' ')
 echo "PROPTEST_*, PERI_*, CLIPPY_CONF_DIR, CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR or GIT_* set: ${set_vars:-none}"
-echo "cargo config files above the checkouts: $(ls "$HOME"/.cargo/config.toml "$HOME"/.cargo/config /home/.cargo/config.toml /.cargo/config.toml 2>/dev/null | tr '\n' ' ')"
 echo "== clone"
 rm -rf "$DEST"
 git clone --quiet --branch dev "$SRC" "$DEST" || exit 10
@@ -635,6 +686,7 @@ echo "checkout on $(df --output=fstype . | tail -1)"
 rustup toolchain install >/dev/null 2>&1
 rustc -Vv
 echo "target directory: $(target_dir)"
+echo "cargo config files above the clone or in CARGO_HOME:$(configs_above "$PWD")"
 echo "== int_ci_wsl: cargo ci"
 cargo ci 2>&1 | grep -E '^(PASS|FAIL|ci:)'
 echo "cargo ci exit ${PIPESTATUS[0]}"
@@ -660,6 +712,7 @@ printf 's' | dd of=crates/codec/tests/golden/v1/string-ascii.bin bs=1 seek=3 cou
 printf '\npub fn  badly_formatted( ) {}\n' >> crates/codec/src/lib.rs
 echo "changed: $(git status --porcelain | tr '\n' ' ')"
 echo "target directory: $(target_dir)"
+echo "cargo config files above the clone or in CARGO_HOME:$(configs_above "$PWD")"
 out=$(cargo ci 2>&1)
 code=$?
 printf '%s\n' "$out" | grep -E '^(PASS|FAIL|ci:)'

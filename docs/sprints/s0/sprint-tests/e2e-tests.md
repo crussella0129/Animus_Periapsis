@@ -1,7 +1,7 @@
 # Sprint 0 End-to-End Test Results
 
 - **Status:** possible. Both planned scenarios ran, plus one added scenario, `e2e_port_rule_local_books`.
-- **Tested head:** `94f736378f5643701f8bd3d1ced4e1346a5dd691` on `dev`, committed. The head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques. Later commits change only the Book.
+- **Tested head:** `df52b9db0381fc230f7e07391bc16adb10f6ee3a` on `dev`, committed. The head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques. Later commits change only the Book.
 - **Host:** Microsoft Windows 11 Pro 10.0.26300; rustc 1.99.1 (58cf8f9c3 2026-10-13), `x86_64-pc-windows-msvc`, LLVM 23.1.1.
 - **Raw output:** [test-matrix-log.md](test-matrix-log.md).
 
@@ -9,10 +9,10 @@
 - **Intents:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-4 (local half), [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-1, [INT-0006](../../../intents/INT-0006-format-v1.md) AC-3 (local half)
 - **Input:** `git clone -c core.autocrlf=true --branch dev` of the committed head into a new Windows temp directory. This is the line-ending setting most likely to corrupt files on Windows.
 - **Observed:**
-  - the clone's head is `94f7363`, with `core.autocrlf=true`, and it builds into its own `target/`;
+  - the clone's head is `df52b9d`, with `core.autocrlf=true`, and it builds into its own `target/`;
   - `sha256sum` over the 23 `crates/codec/tests/golden/v1/*.bin` files matches the original checkout's;
-  - `git ls-files --eol` lists none of the 127 tracked files with CRLF or mixed line endings in the working tree, because `.gitattributes` (`* text=auto eol=lf`) overrides `core.autocrlf`;
-  - `cargo ci` from a cold build printed `PASS` for fmt, clippy, test, policy and book, then `ci: all 5 steps passed`; exit 0, in 46 s.
+  - `git ls-files --eol` lists none of the 128 tracked files with CRLF or mixed line endings in the working tree, because `.gitattributes` (`* text=auto eol=lf`) overrides `core.autocrlf`;
+  - `cargo ci` from a cold build printed `PASS` for fmt, clippy, test, policy and book, then `ci: all 5 steps passed`; exit 0, in 47 s.
   - its `policy` step ran the golden rule in the clone: the clone's `core.autocrlf` is not among the settings the rule reads, and the workspace's own `.gitattributes` kept every `.bin` file binary.
 - **Result:** pass
 
@@ -86,7 +86,7 @@
   - the GitHub Actions run of the checkpoint: head SHA, both matrix legs with their golden and `cargo ci` results, the `deny` job, and the runner OS and `rustc`. This is the GitHub half of INT-0003 AC-2 to AC-4 and of INT-0006 AC-3;
   - the owner's checkpoint sign-offs: INT-0001 AC-1, INT-0002 AC-1, INT-0003 AC-5 and INT-0006 AC-6.
   - Neither can happen inside Sprint 0, because the checkpoint PR opens only after `close-sprint.sh`.
-- **To the backlog, as `T-010 (backlog) [intent: INT-0003]`:** make xtask, and the tests that read workspace files through `CARGO_MANIFEST_DIR`, refuse to run for a checkout other than the one they were built for, so that a target directory shared between checkouts cannot make `cargo ci`, `cargo policy` or a test check the wrong one (the shared-target-directory limit in [code-review.md](code-review.md)).
+- **To the backlog, as `T-010 (backlog) [intent: INT-0003]`:** make `cargo ci` refuse a target directory outside the workspace root (as `cargo metadata` reports it), where another checkout could share it, and make xtask refuse to run for a checkout other than the one it was built for, so that no binary or library built for another checkout can be reused (the shared-target-directory limit in [code-review.md](code-review.md)).
 - The Loop phase appends T-009 and T-010 to `docs/work/tasks.md`.
 - **Optional, not run:** `cargo ci` on the Debian host Nighthawk, whose Tailscale SSH check needs the owner's approval in a browser. Sprint 0 loses no coverage, because the WSL Ubuntu leg covers Linux.
 - **Not yet possible:** the INT-0004 AC-6 scenarios on Nighthawk (multi-peer sync, crash and restart) need sync and storage code. The first sprint that plans INT-0007 or INT-0024 scenarios unlocks them.
