@@ -154,11 +154,35 @@ fn golden_changed_file_fails() {
     bytes[3] ^= 0x01;
     fs::write(&changed, &bytes).unwrap();
 
+    // The file no longer matches the encoder, and no longer holds the value.
     let failures = check_golden(&dir, &cases, false);
-    assert!(!failures.is_empty(), "a changed byte must fail the run");
+    assert_eq!(failures.len(), 2, "{failures:?}");
     assert!(
-        failures.iter().all(|f| f.starts_with("string-ascii.bin:")),
-        "only the changed file may fail: {failures:?}"
+        failures[0].starts_with("string-ascii.bin: encoding changed"),
+        "{failures:?}"
+    );
+    assert!(
+        failures[1].starts_with("string-ascii.bin: file does not decode"),
+        "{failures:?}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn golden_encoder_change_fails() {
+    // The encoder's output changed while the committed file still decodes to
+    // the value, so only the byte comparison can catch it.
+    let dir = scratch_dir("encoder");
+    assert!(check_golden(&dir, &corpus(), true).is_empty());
+    let mut changed = corpus();
+    let case = changed
+        .iter_mut()
+        .find(|case| case.name == "uvarint-0")
+        .unwrap();
+    case.bytes = vec![0x01];
+    assert_eq!(
+        check_golden(&dir, &changed, false),
+        ["uvarint-0.bin: encoding changed (file 1 bytes, encoder 1 bytes)"]
     );
     let _ = fs::remove_dir_all(&dir);
 }
