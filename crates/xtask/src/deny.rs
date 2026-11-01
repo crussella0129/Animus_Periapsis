@@ -1,8 +1,9 @@
 //! The licence policy in `deny.toml` (INT-0003 AC-3). `cargo deny check`
 //! proves that every dependency's licence is on the policy's `allow` lists,
-//! provided the policy hides no crate from it; these tests prove that it hides
-//! none, dev-dependencies included, and that every licence on those lists is
-//! compatible with GPL-3.0.
+//! provided the policy hides no crate from it. These tests check that every
+//! licence on those lists is compatible with GPL-3.0, and that the settings
+//! they name, which would hide a crate, are absent; `pins` requires the whole
+//! file to be the reviewed one, so no other setting can be added unseen.
 
 use std::fs;
 use std::path::Path;

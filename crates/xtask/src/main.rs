@@ -76,9 +76,15 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use std::ffi::OsString;
+    use std::path::Path;
+    use std::process::{Command, ExitCode};
 
     use super::{cli, workspace_root};
+
+    const USAGE_LINE: &str =
+        "usage: cargo ci | cargo policy   (no flags: both commands are idempotent)\n";
 
     fn run(args: &[OsString]) -> (u8, String, String) {
         let (mut out, mut err) = (Vec::new(), Vec::new());
@@ -94,10 +100,19 @@ mod tests {
         args.iter().map(OsString::from).collect()
     }
 
+    /// `cli` rejects `args` as a usage error. It runs on a root where nothing
+    /// can run, so a command that wrongly takes `args` fails at once rather
+    /// than running the real suite.
     fn assert_usage_error(args: &[OsString]) {
-        let (code, out, err) = run(args);
+        let nowhere = Path::new(env!("CARGO_MANIFEST_DIR")).join("no-such-workspace");
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = cli(args, &nowhere, &mut out, &mut err);
         assert_eq!(code, 2, "{args:?}");
-        assert!(!err.trim().is_empty(), "{args:?} must explain its usage");
+        assert_eq!(
+            String::from_utf8(err).unwrap(),
+            USAGE_LINE,
+            "{args:?} must explain its usage"
+        );
         assert!(out.is_empty(), "{args:?} must not run the command");
     }
 
@@ -125,6 +140,8 @@ mod tests {
             &["policy", "--fix"][..],
             &["policy", "-v"],
             &["policy", "x"],
+            &["policy", "--"],
+            &["policy", ""],
             &["--policy"],
             &[],
         ] {
@@ -138,9 +155,45 @@ mod tests {
             &["ci", "--fast"][..],
             &["ci", "-q"],
             &["ci", "x"],
+            &["ci", "--"],
+            &["ci", ""],
             &["--ci"],
         ] {
             assert_usage_error(&os_args(args));
+        }
+    }
+
+    /// `main` drops no argument after the command name. A child copy of this
+    /// test binary starts as `policy --exact <the child half>`: libtest reads
+    /// `policy` as a filter that names no test, while `main` must reject
+    /// `policy` with two more arguments instead of running the rules. That
+    /// `main` skips exactly the program name, and exits 0 for a valid command,
+    /// is shown where `cargo policy` and `cargo ci` run for real: the
+    /// integration probes in docs/sprints/s0/sprint-tests.
+    #[test]
+    fn main_passes_every_argument_to_cli() {
+        let child = Command::new(env::current_exe().unwrap())
+            .args(["policy", "--exact", "tests::main_rejects_extra_arguments"])
+            .env("XTASK_MAIN_CHILD", "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&child.stdout);
+        let stderr = String::from_utf8_lossy(&child.stderr);
+        assert!(
+            child.status.success()
+                && stdout.contains("test tests::main_rejects_extra_arguments ... ok"),
+            "{stdout}{stderr}"
+        );
+        assert_eq!(stderr, USAGE_LINE);
+    }
+
+    /// The child half of `main_passes_every_argument_to_cli`: `main` itself,
+    /// with this process's arguments. Run on its own, without
+    /// `XTASK_MAIN_CHILD`, it does nothing.
+    #[test]
+    fn main_rejects_extra_arguments() {
+        if env::var_os("XTASK_MAIN_CHILD").is_some() {
+            assert_eq!(super::main(), ExitCode::from(2));
         }
     }
 

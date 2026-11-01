@@ -90,6 +90,7 @@ fn prior_art_credits_every_listed_system() {
 #[test]
 fn credited_names_are_whole_words() {
     assert!(!names("Histogram diff from [JGit](url)", "Git"));
+    assert!(!names("[JGit](url)", "Git"));
     assert!(names("[JGit](url) and [Git](url)", "Git"));
     assert!(names("Git", "Git"));
     assert!(names("Git's object model", "Git"));
@@ -146,17 +147,54 @@ fn fenced_lines(text: &str) -> Vec<&str> {
     lines
 }
 
+/// The README passes, and each change to what it must keep fails with that
+/// problem alone: the Book named but not linked, either owner paragraph
+/// extended or trimmed (the second loses only its trailing space), and the
+/// no-flags sentence reworded.
 #[test]
 fn readme_keeps_statement_and_links_book() {
     assert_eq!(
         readme_problems(&repo_file("README.md")),
         Vec::<String>::new()
     );
+
+    let readme = repo_file("README.md").replace("\r\n", "\n");
+    let replace = |from: &str, to: &str| {
+        assert!(readme.contains(from), "{from:?} is not in README.md");
+        readme.replace(from, to)
+    };
+    let unlinked = replace("[`docs/SUMMARY.md`](docs/SUMMARY.md)", "`docs/SUMMARY.md`");
+    assert_eq!(readme_problems(&unlinked), ["README must link the Book"]);
+
+    let [first, second] = OWNER_PARAGRAPHS;
+    let extended = replace(&format!("{first}\n"), &format!("{first} (edited)\n"));
+    assert_eq!(
+        readme_problems(&extended),
+        [format!(
+            "the owner's paragraph must stay verbatim: {first:?}"
+        )]
+    );
+    let trimmed = replace(&format!("{second}\n"), &format!("{}\n", second.trim_end()));
+    assert_eq!(
+        readme_problems(&trimmed),
+        [format!(
+            "the owner's paragraph must stay verbatim: {second:?}"
+        )]
+    );
+
+    let reworded = replace(
+        &format!("{NO_FLAGS}\n"),
+        "`cargo ci` and `cargo policy` take no flags.\n",
+    );
+    assert_eq!(
+        readme_problems(&reworded),
+        [format!("README must say exactly: {NO_FLAGS}")]
+    );
 }
 
 /// READMEs that only mention the commands fail: the build section cut to
-/// the no-flags sentence, a narrowed or changed command line, and no line
-/// on what `cargo policy` and `cargo book` do.
+/// the no-flags sentence, a narrowed, changed or unfenced command line, and
+/// no line on what `cargo policy` and `cargo book` do.
 #[test]
 fn readme_must_document_each_command() {
     let readme = repo_file("README.md").replace("\r\n", "\n");
@@ -164,17 +202,14 @@ fn readme_must_document_each_command() {
         assert!(readme.contains(from), "{from:?} is not in README.md");
         readme.replace(from, to)
     };
-    let ci = "README must show `cargo ci` as a command line".to_owned();
-    let deny = "README must show `cargo deny check` as a command line".to_owned();
-    let described = "README must say what `cargo policy` and `cargo book` do".to_owned();
+    let ci = "README must show `cargo ci` as a command line";
+    let deny = "README must show `cargo deny check` as a command line";
+    let described = "README must say what `cargo policy` and `cargo book` do";
 
     let (head, rest) = readme.split_once("Requires rustup").unwrap();
     let (_, tail) = rest.split_once("Designs borrowed").unwrap();
     let cut = format!("{head}{NO_FLAGS}\nNever run `cargo deny check`.\n\nDesigns borrowed{tail}");
-    assert_eq!(
-        readme_problems(&cut),
-        [ci.clone(), deny.clone(), described.clone()]
-    );
+    assert_eq!(readme_problems(&cut), [ci, deny, described]);
 
     let narrowed = replace(
         "```bash\ncargo deny check\n```",
@@ -183,6 +218,8 @@ fn readme_must_document_each_command() {
     assert_eq!(readme_problems(&narrowed), [deny]);
     let changed = replace("```bash\ncargo ci\n```", "```bash\ncargo ci --fast\n```");
     assert_eq!(readme_problems(&changed), [ci]);
+    let unfenced = replace("```bash\ncargo ci\n```", "cargo ci");
+    assert_eq!(readme_problems(&unfenced), [ci]);
     let undescribed = replace(
         "`cargo policy` and `cargo book` run those last two checks on their own.\n",
         "",

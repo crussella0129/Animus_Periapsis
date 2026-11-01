@@ -63,7 +63,7 @@ starts with `C allowed:` and gives the reason.
 | `blake3` | 1.8.7 | CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception | `hash` | yes (its build script compiles C and assembly SIMD backends through `cc`) | `features = ["pure"]`: Rust implementations only, including Rust SIMD |
 | `sha2` | 0.11.1 | MIT OR Apache-2.0 | `hash` | no | default features off; pure Rust |
 | `proptest` | 1.12.0 | MIT OR Apache-2.0 | tests only | no | `default-features = false, features = ["std"]` |
-| `pulldown-cmark` | 0.13.6 | MIT | `book` | no (its build script only generates tests, behind the `gen-tests` feature) | `default-features = false`: the CommonMark parser without the HTML renderer and command-line options |
+| `pulldown-cmark` | 0.13.6 | MIT | `book`, `xtask`; tests (`codec`) | no (its build script only generates tests, behind the `gen-tests` feature) | `default-features = false`: the CommonMark parser without the HTML renderer and command-line options |
 | `toml_edit` | 0.25.17 | MIT OR Apache-2.0 | `xtask` | no | `default-features = false, features = ["parse"]`: the parser only |
 | `allocation-counter` | 0.8.1 | MIT OR Apache-2.0 | tests only (`codec`) | no | as published; it installs a counting global allocator, so only `crates/codec/tests/alloc.rs` uses it |
 

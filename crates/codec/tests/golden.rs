@@ -6,19 +6,25 @@
 //! turns create mode on: missing files are written, existing ones are never
 //! overwritten, and a differing file still fails.
 
+use std::any::type_name;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fmt::Debug;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use codec::{Bytes, Decode, Encode, ObjectKind, blob, decode_envelope, from_slice, to_vec};
-use hash::HashAlg;
+use codec::{
+    Bytes, Decode, Encode, Envelope, ObjectKind, blob, decode_envelope, from_slice, to_vec,
+};
+use hash::{HashAlg, HashRef};
 
 type Check = Box<dyn Fn(&[u8]) -> Result<(), String>>;
 
 struct Case {
     name: &'static str,
+    /// The value's type. Values of different types can share an encoding, so
+    /// the bytes alone do not pin it.
+    ty: &'static str,
     bytes: Vec<u8>,
     decodes: Check,
 }
@@ -32,6 +38,7 @@ fn case<T: Encode + Decode + PartialEq + Debug + 'static>(name: &'static str, va
     });
     Case {
         name,
+        ty: type_name::<T>(),
         bytes,
         decodes,
     }
@@ -42,6 +49,7 @@ fn corpus() -> Vec<Case> {
     let blob_content = b"Periapsis\n".to_vec();
     let blob_case = Case {
         name: "blob-envelope",
+        ty: type_name::<Envelope<'static>>(),
         bytes: blob(&blob_content),
         decodes: Box::new(move |file| match decode_envelope(file) {
             Ok(env) if env.kind == ObjectKind::Blob && env.body == blob_content => Ok(()),
@@ -139,12 +147,87 @@ fn scratch_dir(name: &str) -> PathBuf {
     dir
 }
 
+/// The committed golden files.
+fn golden_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/v1")
+}
+
 #[test]
 fn golden_v1_corpus_matches() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/v1");
-    let create = create_mode(std::env::var_os("PERI_GOLDEN_CREATE").as_deref());
-    let failures = check_golden(&dir, &corpus(), create);
+    let value = std::env::var_os("PERI_GOLDEN_CREATE");
+    let create = create_mode(value.as_deref());
+    // The mode follows the variable, so a plain run fails on a missing file
+    // instead of writing it.
+    assert_eq!(
+        create,
+        value.as_deref() == Some(OsStr::new("1")),
+        "create mode must follow PERI_GOLDEN_CREATE"
+    );
+    let failures = check_golden(&golden_dir(), &corpus(), create);
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// A committed file with no case would pin nothing: no test would compare it
+/// with the encoder. (`golden_v1_corpus_matches` shows the other direction,
+/// that each case has a file; checking it here too would fail create mode,
+/// which writes a missing file while this test lists them.)
+#[test]
+fn every_golden_file_is_a_corpus_case() {
+    let cases: BTreeSet<String> = corpus()
+        .iter()
+        .map(|case| format!("{}.bin", case.name))
+        .collect();
+    let strays: Vec<String> = fs::read_dir(golden_dir())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "bin"))
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+        .filter(|name| !cases.contains(name))
+        .collect();
+    assert!(
+        strays.is_empty(),
+        "golden files with no corpus case: {strays:?}"
+    );
+}
+
+/// Each value has the type its worked example names: `uvarint` is `u64`,
+/// `seq` is `Vec`, `set` is `BTreeSet`, `map` is `BTreeMap` and `pair` is a
+/// tuple. The bytes cannot show it: `u64::from(u32::MAX)` encodes exactly like
+/// `u32::MAX`.
+#[test]
+fn golden_corpus_has_the_spec_types() {
+    let types: Vec<(&str, &str)> = corpus().iter().map(|case| (case.name, case.ty)).collect();
+    assert_eq!(
+        types,
+        [
+            ("uvarint-0", type_name::<u64>()),
+            ("uvarint-127", type_name::<u64>()),
+            ("uvarint-128", type_name::<u64>()),
+            ("uvarint-300", type_name::<u64>()),
+            ("uvarint-max", type_name::<u64>()),
+            ("u32-max", type_name::<u32>()),
+            ("bool-false", type_name::<bool>()),
+            ("bool-true", type_name::<bool>()),
+            ("bytes-empty", type_name::<Bytes>()),
+            ("bytes-short", type_name::<Bytes>()),
+            ("string-empty", type_name::<String>()),
+            ("string-ascii", type_name::<String>()),
+            ("string-utf8", type_name::<String>()),
+            ("hashref-blake3", type_name::<HashRef>()),
+            ("hashref-sha256", type_name::<HashRef>()),
+            ("option-none", type_name::<Option<u64>>()),
+            ("option-some", type_name::<Option<String>>()),
+            ("seq-u64", type_name::<Vec<u64>>()),
+            ("set-string", type_name::<BTreeSet<String>>()),
+            ("map-string-u64", type_name::<BTreeMap<String, u64>>()),
+            (
+                "map-nested",
+                type_name::<BTreeMap<String, BTreeMap<u64, Option<Bytes>>>>()
+            ),
+            ("pair", type_name::<(String, bool)>()),
+            ("blob-envelope", type_name::<Envelope<'static>>()),
+        ]
+    );
 }
 
 #[test]
@@ -169,21 +252,26 @@ fn golden_changed_file_fails() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// The corpus with the encoder's output for two cases changed while their
+/// The corpus with the encoder's output for four cases changed while their
 /// committed files still decode to the values: only the byte comparison can
-/// catch it, once with equal lengths and once without.
-fn changed_encoder() -> (Vec<Case>, [&'static str; 2]) {
+/// catch it. The new output has the file's length, is longer, is the file's
+/// bytes and one more, and is the file's bytes less the last.
+fn changed_encoder() -> (Vec<Case>, [&'static str; 4]) {
     let mut cases = corpus();
     for case in &mut cases {
         match case.name {
             "uvarint-0" => case.bytes = vec![0x01],
             "uvarint-127" => case.bytes = vec![0xff, 0x00],
+            "uvarint-128" => case.bytes = vec![0x80, 0x01, 0x00],
+            "uvarint-300" => case.bytes = vec![0xac],
             _ => {}
         }
     }
     let failures = [
         "uvarint-0.bin: encoding changed (file 1 bytes, encoder 1 bytes)",
         "uvarint-127.bin: encoding changed (file 1 bytes, encoder 2 bytes)",
+        "uvarint-128.bin: encoding changed (file 2 bytes, encoder 3 bytes)",
+        "uvarint-300.bin: encoding changed (file 2 bytes, encoder 1 bytes)",
     ];
     (cases, failures)
 }
@@ -207,25 +295,56 @@ fn golden_encoder_change_fails_in_create_mode() {
     assert_eq!(check_golden(&dir, &changed, true), failures);
     assert_eq!(fs::read(dir.join("uvarint-0.bin")).unwrap(), [0x00]);
     assert_eq!(fs::read(dir.join("uvarint-127.bin")).unwrap(), [0x7f]);
+    assert_eq!(fs::read(dir.join("uvarint-128.bin")).unwrap(), [0x80, 0x01]);
+    assert_eq!(fs::read(dir.join("uvarint-300.bin")).unwrap(), [0xac, 0x02]);
     let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn golden_undecodable_file_fails() {
-    // The encoder and the file agree on bytes that do not decode: only the
-    // decode check can catch it.
-    let dir = scratch_dir("undecodable");
-    let mut cases = corpus();
-    cases.retain(|case| case.name == "uvarint-0");
-    cases[0].bytes = vec![0x80];
-    assert!(check_golden(&dir, &cases, true).is_empty());
-    assert_eq!(
-        check_golden(&dir, &cases, false),
-        [
-            "uvarint-0.bin: file does not decode to its value: value at byte 0 is truncated; 1 more bytes needed"
-        ]
-    );
-    let _ = fs::remove_dir_all(&dir);
+    // The encoder and the file agree on bytes that are not the value: only
+    // the decode check can catch it. A typed case must use the whole file, and
+    // the blob case must hold a blob with the corpus content.
+    let undecodable: [(&str, Vec<u8>, &str); 4] = [
+        (
+            "uvarint-0",
+            vec![0x80],
+            "value at byte 0 is truncated; 1 more bytes needed",
+        ),
+        (
+            "uvarint-0",
+            vec![0x00, 0x00],
+            "1 unexpected bytes after the value, from byte 1",
+        ),
+        // The blob's worked example without its final newline.
+        (
+            "blob-envelope",
+            vec![
+                0x01, 0x01, 0x50, 0x65, 0x72, 0x69, 0x61, 0x70, 0x73, 0x69, 0x73,
+            ],
+            "decoded Envelope { kind: Blob, body: [80, 101, 114, 105, 97, 112, 115, 105, 115] }",
+        ),
+        // A reserved kind, which fails to decode.
+        (
+            "blob-envelope",
+            vec![0x01, 0x02],
+            "object kind 0x02 is reserved and not yet specified",
+        ),
+    ];
+    for (name, bytes, failure) in undecodable {
+        let dir = scratch_dir("undecodable");
+        let mut cases = corpus();
+        cases.retain(|case| case.name == name);
+        cases[0].bytes = bytes;
+        assert!(check_golden(&dir, &cases, true).is_empty());
+        assert_eq!(
+            check_golden(&dir, &cases, false),
+            [format!(
+                "{name}.bin: file does not decode to its value: {failure}"
+            )]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
 
 #[test]
@@ -278,9 +397,26 @@ fn golden_create_mode_never_overwrites() {
 }
 
 #[test]
+fn golden_create_mode_makes_a_missing_directory() {
+    // A new golden directory does not exist until create mode writes its
+    // first file.
+    let parent = scratch_dir("new-dir");
+    let dir = parent.join("v1");
+    let cases = corpus();
+    assert!(check_golden(&dir, &cases, true).is_empty());
+    for case in &cases {
+        assert_eq!(
+            fs::read(dir.join(format!("{}.bin", case.name))).unwrap(),
+            case.bytes
+        );
+    }
+    let _ = fs::remove_dir_all(&parent);
+}
+
+#[test]
 fn create_mode_is_exactly_one() {
     assert!(create_mode(Some(OsStr::new("1"))));
-    for value in ["0", "true", "", " 1", "1 ", "01", "10", "yes"] {
+    for value in ["0", "2", "true", "", " 1", "1 ", "01", "10", "yes"] {
         assert!(!create_mode(Some(OsStr::new(value))), "{value:?}");
     }
     assert!(!create_mode(None));

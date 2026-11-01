@@ -76,34 +76,75 @@ impl Drop for TempBook {
     }
 }
 
+/// The port rule types an item whose label is followed by a type tag
+/// (book-3), so a malformed one is reported there as under the strict rule.
 #[test]
 fn typed_line_violations_are_reported() {
-    let cases = [
+    let both_rules = |criteria: &str, expected: &[(Kind, usize)]| {
+        for rule in [Rule::Strict, Rule::Port] {
+            assert_eq!(
+                kinds(&chapter(criteria), rule),
+                expected,
+                "{rule:?}: {criteria}"
+            );
+        }
+    };
+    let tagged = [
         ("- **AC-1** `essential` `formal` — x", Kind::Polarity),
-        ("- **AC-1** — x", Kind::Polarity),
         ("- **AC-1** `necessary` `vibes` — x", Kind::Modality),
         ("- **AC-1** `necessary` — x", Kind::Modality),
+        // The claim follows ` — `, an em dash between single spaces: not a
+        // hyphen, an en dash (U+2013) or a dash without its spaces.
         ("- **AC-1** `necessary` `formal` - x", Kind::Claim),
+        ("- **AC-1** `necessary` `formal` \u{2013} x", Kind::Claim),
+        ("- **AC-1** `necessary` `formal`—x", Kind::Claim),
+        ("- **AC-1** `necessary` `formal` —x", Kind::Claim),
         ("- **AC-1** `necessary` `formal` — ", Kind::Claim),
         ("- **AC-x** `necessary` `formal` — x", Kind::Number),
-        ("- **AC-1 `necessary` `formal` — x", Kind::Number),
         ("- **AC-0** `necessary` `formal` — x", Kind::Number),
     ];
-    for (line, kind) in cases {
+    for (line, kind) in tagged {
+        both_rules(line, &[(kind, 7)]);
+    }
+    // Type words match exactly, letter case and spaces included.
+    for word in ["Necessary", "necessary ", "Supporting", "supporting "] {
+        let line = format!("- **AC-1** `{word}` `formal` — x");
+        both_rules(&line, &[(Kind::Polarity, 7)]);
+    }
+    for word in [
+        "Formal",
+        "formal ",
+        "Empirical",
+        "empirical ",
+        "Preference",
+        "preference ",
+        "Judged",
+        "judged ",
+        "Asserted",
+        "asserted ",
+    ] {
+        let line = format!("- **AC-1** `necessary` `{word}` — x");
+        both_rules(&line, &[(Kind::Modality, 7)]);
+    }
+    // With no type tag after a whole label, only the strict rule types these.
+    let untagged = [
+        ("- **AC-1** — x", Kind::Polarity),
+        ("- **AC-1 `necessary` `formal` — x", Kind::Number),
+        ("- **AC-1", Kind::Number),
+    ];
+    for (line, kind) in untagged {
         assert_eq!(kinds(&chapter(line), Rule::Strict), [(kind, 7)], "{line}");
     }
 
+    // A repeated number is reported where it repeats, next to the first or not.
     let duplicate = "- **AC-1** `necessary` `formal` — x\n- **AC-1** `supporting` `asserted` — y";
-    assert_eq!(
-        kinds(&chapter(duplicate), Rule::Strict),
-        [(Kind::Duplicate, 8)]
-    );
+    both_rules(duplicate, &[(Kind::Duplicate, 8)]);
+    let apart = "- **AC-1** `necessary` `formal` — x\n- **AC-2** `necessary` `formal` — y\n\
+                 - **AC-1** `supporting` `asserted` — z";
+    both_rules(apart, &[(Kind::Duplicate, 9)]);
 
     let bad_detail = "- **AC-1** `necessary` `empirical` — x\n  - Signers: owner\n  - no colon";
-    assert_eq!(
-        kinds(&chapter(bad_detail), Rule::Strict),
-        [(Kind::Detail, 8), (Kind::Detail, 9)]
-    );
+    both_rules(bad_detail, &[(Kind::Detail, 8), (Kind::Detail, 9)]);
 }
 
 /// Each modality allows the detail keys the T-006 Notes give it, and every
@@ -166,11 +207,11 @@ fn detail_keys_follow_each_modality() {
     }
 }
 
-/// book-7: `<n>` is ASCII digits with no sign or leading zero, from 1 up to
-/// `u32::MAX`.
+/// book-7: `<n>` is ASCII digits with no sign, space or leading zero, from 1
+/// up to `u32::MAX`.
 #[test]
 fn numbers_are_plain_digits() {
-    for label in ["+1", "02", "00", "4294967296"] {
+    for label in ["+1", "02", "0", "00", " 1", "1 ", "4294967296"] {
         let text = chapter(&format!("- **AC-{label}** `necessary` `formal` — x"));
         assert_eq!(
             kinds(&text, Rule::Strict),
@@ -191,6 +232,22 @@ fn missing_criteria_are_reported() {
     // The port rule reads legacy Books as they are: no criteria is no error.
     assert!(kinds(&missing, Rule::Port).is_empty());
     assert!(kinds(&empty, Rule::Port).is_empty());
+
+    // Only a level-2 heading reading exactly `Acceptance criteria` opens the
+    // section, so items under any other heading leave the chapter without one.
+    for heading in [
+        "## Acceptance Criteria",
+        "## Acceptance criteria (retired)",
+        "# Acceptance criteria",
+        "### Acceptance criteria",
+    ] {
+        let text = format!("{CHAPTER_HEAD}{heading}\n- **AC-1** `necessary` `asserted` — x\n");
+        assert_eq!(
+            kinds(&text, Rule::Strict),
+            [(Kind::Missing, 1)],
+            "{heading}"
+        );
+    }
 }
 
 /// A violation of each rule prints the whole path it was read from, its
@@ -232,11 +289,46 @@ fn printed_violations_name_file_line_and_rule() {
             printed.starts_with(&prefix),
             "{printed:?} must start with {prefix:?}"
         );
+        // CRLF and a lone CR give the same violation.
+        assert_eq!(
+            kinds(&text, Rule::Strict),
+            [(violation.kind, line)],
+            "{rule}"
+        );
     }
 }
 
 #[test]
 fn typed_criteria_parse_with_details() {
+    // Each type word reads as its own polarity or modality.
+    let polarities = [
+        ("necessary", Polarity::Necessary),
+        ("supporting", Polarity::Supporting),
+    ];
+    let modalities = [
+        ("formal", Modality::Formal),
+        ("empirical", Modality::Empirical),
+        ("preference", Modality::Preference),
+        ("judged", Modality::Judged),
+        ("asserted", Modality::Asserted),
+    ];
+    for (polarity_word, polarity) in polarities {
+        for (modality_word, modality) in modalities {
+            let text = chapter(&format!(
+                "- **AC-1** `{polarity_word}` `{modality_word}` — x"
+            ));
+            let types: Vec<(Polarity, Modality)> = criteria(&text, Rule::Strict)
+                .iter()
+                .map(|c| (c.polarity, c.modality))
+                .collect();
+            assert_eq!(
+                types,
+                [(polarity, modality)],
+                "{polarity_word} {modality_word}"
+            );
+        }
+    }
+
     let text = chapter(
         "- **AC-2** `supporting` `preference` — Judges prefer the new layout   \n  over the old one.\n  - Panel: 12 judges\n  - Error: δ = 1/20",
     );
@@ -292,7 +384,9 @@ fn wrapped_details_keep_their_lines() {
 }
 
 /// A block quote inside a criterion joins its claim without its `>` markers,
-/// and a code block inside it never does.
+/// and a code block inside it never does. A list in the quote is the quote's,
+/// not one of the criterion's details. Links, emphasis and images are claim
+/// text like any other.
 #[test]
 fn quotes_join_a_claim_and_code_does_not() {
     let text = chapter(
@@ -300,15 +394,26 @@ fn quotes_join_a_claim_and_code_does_not() {
             "- **AC-1** `necessary` `asserted` — The report reads:",
             "  > Exports finish",
             "  > in 2 s.",
+            "  > - Note: a quoted list item",
             "  ```text",
             "  - **AC-2** `bogus` `bogus` — sample output",
             "  ```",
         ]
         .join("\n"),
     );
+    let parsed = criteria(&text, Rule::Strict);
     assert_eq!(
-        claims(&criteria(&text, Rule::Strict)),
+        claims(&parsed),
         ["The report reads: Exports finish in 2 s."]
+    );
+    assert!(parsed[0].details.is_empty(), "{parsed:?}");
+
+    let inline = chapter(
+        "- **AC-1** `necessary` `asserted` — See [the spec](spec.md), *never*\n  ![ok](ok.png) lost.",
+    );
+    assert_eq!(
+        claims(&criteria(&inline, Rule::Strict)),
+        ["See [the spec](spec.md), *never* ![ok](ok.png) lost."]
     );
 }
 
@@ -478,13 +583,20 @@ fn declared_book_rejects_untyped_items() {
     let text = chapter("- Users can export a CSV report.");
     assert_eq!(kinds(&text, Rule::Strict), [(Kind::Untyped, 7)]);
 
+    // The chapters are the `.md` files but `README.md`: neither the index
+    // nor a merge backup beside a chapter is read.
     let book = TempBook::new(
         "declared",
         Some("schema-version: 2\ntyped-acceptance: 1\n"),
-        &[("INT-0001-a.md", &text)],
+        &[
+            ("INT-0001-a.md", &text),
+            ("INT-0001-a.md.orig", &text),
+            ("README.md", "# Intents\n"),
+        ],
     );
     let report = check(&book.0).unwrap();
     assert_eq!(report.rule, Rule::Strict);
+    assert_eq!(report.chapters.len(), 1);
     assert_eq!(report.violations.len(), 1);
     assert_eq!(report.violations[0].kind, Kind::Untyped);
     assert_eq!(
@@ -554,6 +666,13 @@ fn undeclared_book_lifts_untagged_labels() {
     };
     assert_eq!((violation.kind, violation.line), (Kind::Polarity, 7));
     assert_eq!(violation.path, book.0.join("intents").join("INT-0002-b.md"));
+
+    // A code span later in the claim is no type tag.
+    let code_later = chapter("- **AC-1** Users run `cargo test`.");
+    assert_eq!(
+        claims(&criteria(&code_later, Rule::Port)),
+        ["**AC-1** Users run `cargo test`."]
+    );
 }
 
 /// book-5: every CommonMark list marker starts a criterion, indented by up to

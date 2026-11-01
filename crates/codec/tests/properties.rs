@@ -36,8 +36,19 @@ fn any_hash() -> impl Strategy<Value = HashRef> {
         .prop_map(|(alg, digest)| HashRef::new(alg, &digest).unwrap())
 }
 
+/// Half uniform, which almost always takes nine or ten bytes, and half shifted
+/// right at random, so every varint length from one to ten bytes is drawn.
+fn any_u64() -> impl Strategy<Value = u64> {
+    prop_oneof![
+        any::<u64>(),
+        (any::<u64>(), 0..64u32).prop_map(|(value, shift)| value >> shift),
+    ]
+}
+
+/// Up to 400 bytes: most lengths take a two-byte prefix, and some do not fit
+/// in a byte.
 fn any_bytes() -> impl Strategy<Value = Bytes> {
-    prop::collection::vec(any::<u8>(), 0..64).prop_map(Bytes)
+    prop::collection::vec(any::<u8>(), 0..400).prop_map(Bytes)
 }
 
 fn any_nested() -> impl Strategy<Value = Nested> {
@@ -114,19 +125,20 @@ macro_rules! canonical_properties {
 }
 
 canonical_properties! {
-    round_trip_u64, mutants_u64: u64 = any::<u64>();
+    round_trip_u64, mutants_u64: u64 = any_u64();
     round_trip_u32, mutants_u32: u32 = any::<u32>();
     round_trip_bool, mutants_bool: bool = any::<bool>();
-    round_trip_string, mutants_string: String = ".{0,24}";
+    // Up to 300 characters, so many lengths take two bytes and pass 255.
+    round_trip_string, mutants_string: String = ".{0,300}";
     round_trip_bytes, mutants_bytes: Bytes = any_bytes();
     round_trip_hash_ref, mutants_hash_ref: HashRef = any_hash();
-    round_trip_option, mutants_option: Option<u64> = prop::option::of(any::<u64>());
+    round_trip_option, mutants_option: Option<u64> = prop::option::of(any_u64());
     round_trip_vec, mutants_vec: Vec<u32> = prop::collection::vec(any::<u32>(), 0..8);
     round_trip_set, mutants_set: BTreeSet<HashRef> = prop::collection::btree_set(any_hash(), 0..4);
     round_trip_map, mutants_map: BTreeMap<String, bool> =
         prop::collection::btree_map(".{0,8}", any::<bool>(), 0..6);
     round_trip_pair, mutants_pair: (String, Option<u64>) =
-        (".{0,8}", prop::option::of(any::<u64>()));
+        (".{0,8}", prop::option::of(any_u64()));
     round_trip_nested, mutants_nested: Nested = any_nested();
 }
 
@@ -134,7 +146,7 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(CASES))]
 
     #[test]
-    fn round_trip_envelope(body in prop::collection::vec(any::<u8>(), 0..128)) {
+    fn round_trip_envelope(body in prop::collection::vec(any::<u8>(), 0..400)) {
         let envelope = blob(&body);
         let decoded = decode_envelope(&envelope).unwrap();
         prop_assert_eq!(decoded.kind, ObjectKind::Blob);
@@ -144,7 +156,7 @@ proptest! {
 
     #[test]
     fn mutants_envelope(
-        body in prop::collection::vec(any::<u8>(), 0..128),
+        body in prop::collection::vec(any::<u8>(), 0..400),
         op in any::<u8>(),
         index in any::<prop::sample::Index>(),
         byte in any::<u8>(),
@@ -160,8 +172,9 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(TOTALITY_CASES))]
 
     #[test]
-    fn decode_is_total_on_random_bytes(bytes in prop::collection::vec(any::<u8>(), 0..256)) {
-        // Each call must return, Ok or Err, without panicking.
+    fn decode_is_total_on_random_bytes(bytes in prop::collection::vec(any::<u8>(), 0..=256)) {
+        // Lengths 0 to 256, both included. Each call must return, Ok or Err,
+        // without panicking.
         let _ = from_slice::<u64>(&bytes);
         let _ = from_slice::<u32>(&bytes);
         let _ = from_slice::<bool>(&bytes);
@@ -194,6 +207,18 @@ fn varint_known_encodings() {
         assert_eq!(to_vec(&value), bytes, "{value}");
         assert_eq!(from_slice::<u64>(bytes), Ok(value));
     }
+    // Both ends of every length: 2^7k is k bytes of `80` then `01`, and
+    // 2^7k - 1 is k - 1 bytes of `ff` then `7f`.
+    for k in 1..=9 {
+        let mut smallest = vec![0x80; k];
+        smallest.push(0x01);
+        let mut largest = vec![0xff; k - 1];
+        largest.push(0x7f);
+        for (value, bytes) in [(1u64 << (7 * k), smallest), ((1 << (7 * k)) - 1, largest)] {
+            assert_eq!(to_vec(&value), bytes, "{value}");
+            assert_eq!(from_slice::<u64>(&bytes), Ok(value));
+        }
+    }
 }
 
 /// A two-element `Vec` whose first element is `first` and whose second
@@ -206,10 +231,17 @@ fn second_element(first: u8, second: &[u8]) -> Vec<u8> {
 
 #[test]
 fn varint_rejects_non_canonical() {
-    assert_eq!(
-        from_slice::<Vec<u64>>(&second_element(0x01, &[0x80, 0x00])),
-        Err(DecodeError::NonMinimalVarint { at: 2 })
-    );
+    // A redundant zero group, after one, two or nine continuation bytes, is
+    // reported where the varint starts.
+    let mut ten = [0x80u8; 10];
+    ten[9] = 0x00;
+    for redundant in [&[0x80, 0x00][..], &[0x80, 0x80, 0x00], &ten] {
+        assert_eq!(
+            from_slice::<Vec<u64>>(&second_element(0x01, redundant)),
+            Err(DecodeError::NonMinimalVarint { at: 2 }),
+            "{redundant:02x?}"
+        );
+    }
     assert_eq!(
         from_slice::<Vec<u64>>(&second_element(0x01, &[0xff; 11])),
         Err(DecodeError::VarintOverflow { at: 2 })
@@ -264,6 +296,20 @@ fn decode_rejects_invalid_primitives() {
         from_slice::<Vec<Option<u64>>>(&second_element(0x00, &[0x02, 0x00])),
         Err(DecodeError::InvalidOptionTag { at: 2, byte: 2 })
     );
+    // A bad byte other than 02, or a bad tag at another offset, keeps the
+    // offset and the byte apart: `01 05` is Some(5), so the next tag is at 3.
+    assert_eq!(
+        from_slice::<Vec<bool>>(&second_element(0x00, &[0xff])),
+        Err(DecodeError::InvalidBool { at: 2, byte: 0xff })
+    );
+    assert_eq!(
+        from_slice::<Vec<Option<u64>>>(&second_element(0x00, &[0xff])),
+        Err(DecodeError::InvalidOptionTag { at: 2, byte: 0xff })
+    );
+    assert_eq!(
+        from_slice::<Vec<Option<u64>>>(&[0x02, 0x01, 0x05, 0x02]),
+        Err(DecodeError::InvalidOptionTag { at: 3, byte: 2 })
+    );
     // The second string's length prefix is at 2, its first content byte at 3.
     assert_eq!(
         from_slice::<Vec<String>>(&second_element(0x00, &[0x01, 0xff])),
@@ -285,6 +331,56 @@ fn decode_rejects_invalid_primitives() {
     );
 }
 
+/// `value` encodes to exactly `expected`, and `expected` decodes to `value`.
+fn known_answer<T: Encode + Decode + PartialEq + Debug>(value: T, expected: &[u8]) {
+    let name = std::any::type_name::<T>();
+    assert_eq!(to_vec(&value), expected, "{name}");
+    assert_eq!(from_slice::<T>(expected), Ok(value), "{name}");
+}
+
+/// Every length and count is a `uvarint`: from 128 (`80 01`) it takes two
+/// bytes, and 300 (`ac 02`) does not fit in one.
+#[test]
+fn lengths_and_counts_are_varints() {
+    let prefixed = |prefix: [u8; 2], content: &[u8]| [&prefix[..], content].concat();
+    // 0 to 127 each encode as the one byte equal to the value.
+    let small: Vec<u8> = (0..128).collect();
+    known_answer(
+        (0..128u64).collect::<Vec<_>>(),
+        &prefixed([0x80, 0x01], &small),
+    );
+    known_answer(
+        (0..128u64).collect::<BTreeSet<_>>(),
+        &prefixed([0x80, 0x01], &small),
+    );
+    let entries: Vec<u8> = (0..128u8)
+        .flat_map(|key| [key, u8::from(key % 2 == 0)])
+        .collect();
+    known_answer(
+        (0..128u64)
+            .map(|key| (key, key % 2 == 0))
+            .collect::<BTreeMap<_, _>>(),
+        &prefixed([0x80, 0x01], &entries),
+    );
+    known_answer(
+        Bytes(vec![0xab; 128]),
+        &prefixed([0x80, 0x01], &[0xab; 128]),
+    );
+    // "é" is `c3 a9`, so 64 of them take 128 bytes.
+    known_answer(
+        "é".repeat(64),
+        &prefixed([0x80, 0x01], &[0xc3u8, 0xa9].repeat(64)),
+    );
+    known_answer("a".repeat(300), &prefixed([0xac, 0x02], &[b'a'; 300]));
+    known_answer(
+        Bytes(vec![b'a'; 300]),
+        &prefixed([0xac, 0x02], &[b'a'; 300]),
+    );
+    // The spec's example, `"é"` → `02 c3 a9`, through `str` as well as `String`.
+    assert_eq!(to_vec("é"), [0x02, 0xc3, 0xa9]);
+    known_answer("é".to_owned(), &[0x02, 0xc3, 0xa9]);
+}
+
 #[test]
 fn oversize_prefixes_rejected_without_allocation() {
     // The second element's length or count is the ten-byte varint for
@@ -294,11 +390,11 @@ fn oversize_prefixes_rejected_without_allocation() {
     let mut oversize = vec![0xff; 9];
     oversize.extend_from_slice(&[0x01, 0x61, 0x62, 0x63]);
     let input = second_element(0x00, &oversize);
+    // All but the three bytes present are missing (saturating where `usize`
+    // is narrower than `u64`).
+    let needed = usize::try_from(u64::MAX - 3).unwrap_or(usize::MAX);
     let at_prefix = |result: Result<(), DecodeError>| {
-        assert!(
-            matches!(result, Err(DecodeError::UnexpectedEnd { at: 2, .. })),
-            "{result:?}"
-        );
+        assert_eq!(result, Err(DecodeError::UnexpectedEnd { at: 2, needed }));
     };
     at_prefix(from_slice::<Vec<Bytes>>(&input).map(drop));
     at_prefix(from_slice::<Vec<String>>(&input).map(drop));
@@ -321,13 +417,35 @@ fn overrun_reports_bytes_still_needed() {
         from_slice::<Vec<Bytes>>(&second_element(0x00, &[0x05, 0x01])),
         Err(DecodeError::UnexpectedEnd { at: 2, needed: 4 })
     );
-    // `take` from offset 1 with two bytes left: three of its five are missing.
-    let mut dec = Decoder::new(&[0x01, 0x02, 0x03]);
-    dec.byte().unwrap();
-    assert_eq!(
-        dec.take(5),
-        Err(DecodeError::UnexpectedEnd { at: 1, needed: 3 })
-    );
+    // A prefix of 2 with one byte after it, and of 5 (the whole input's
+    // length) with two: the prefix is checked against what follows it, so
+    // the error is at the prefix, before any element is read.
+    for (second, needed) in [(&[0x02, 0x61][..], 1), (&[0x05, 0x07, 0x08], 3)] {
+        let input = second_element(0x00, second);
+        for result in [
+            from_slice::<Vec<Bytes>>(&input).map(drop),
+            from_slice::<Vec<String>>(&input).map(drop),
+            from_slice::<Vec<Vec<u64>>>(&input).map(drop),
+            from_slice::<Vec<BTreeSet<u64>>>(&input).map(drop),
+            from_slice::<Vec<BTreeMap<u64, u64>>>(&input).map(drop),
+        ] {
+            assert_eq!(
+                result,
+                Err(DecodeError::UnexpectedEnd { at: 2, needed }),
+                "{input:02x?}"
+            );
+        }
+    }
+    // `take` from offset 1 with two bytes left: all but two of `len` are
+    // missing, up to the largest `len`.
+    for (len, needed) in [(5, 3), (usize::MAX, usize::MAX - 2)] {
+        let mut dec = Decoder::new(&[0x01, 0x02, 0x03]);
+        dec.byte().unwrap();
+        assert_eq!(
+            dec.take(len),
+            Err(DecodeError::UnexpectedEnd { at: 1, needed })
+        );
+    }
 }
 
 #[test]
@@ -343,10 +461,31 @@ fn maps_and_sets_require_strictly_increasing_keys() {
         from_slice::<BTreeMap<String, bool>>(&duplicate),
         Err(DecodeError::UnsortedOrDuplicateKey { at: 4 })
     );
+    // The key is checked before its value is read, so a bad or missing value
+    // after it does not hide it.
+    for descending in [
+        &[0x02, 0x01, b'b', 0x00, 0x01, b'a', 0x02][..],
+        &[0x02, 0x01, b'b', 0x00, 0x01, b'a'],
+    ] {
+        assert_eq!(
+            from_slice::<BTreeMap<String, bool>>(descending),
+            Err(DecodeError::UnsortedOrDuplicateKey { at: 4 }),
+            "{descending:02x?}"
+        );
+    }
     let set = [0x02, 0x05, 0x05];
     assert_eq!(
         from_slice::<BTreeSet<u64>>(&set),
         Err(DecodeError::UnsortedOrDuplicateKey { at: 2 })
+    );
+    // Byte strings order by content, not by length: `01 00` comes before `02`.
+    let bytes = BTreeSet::from([Bytes(vec![0x02]), Bytes(vec![0x01, 0x00])]);
+    let canonical = [0x02, 0x02, 0x01, 0x00, 0x01, 0x02];
+    assert_eq!(to_vec(&bytes), canonical);
+    assert_eq!(from_slice::<BTreeSet<Bytes>>(&canonical), Ok(bytes));
+    assert_eq!(
+        from_slice::<BTreeSet<Bytes>>(&[0x02, 0x01, 0x02, 0x02, 0x01, 0x00]),
+        Err(DecodeError::UnsortedOrDuplicateKey { at: 3 })
     );
 }
 
@@ -361,69 +500,100 @@ fn trailing_bytes_rejected() {
             remaining: 1,
         })
     );
+    // `at` is the first trailing byte and `remaining` their count: here three
+    // bytes follow the two-byte varint for 128.
+    assert_eq!(
+        from_slice::<u64>(&[0x80, 0x01, 0xaa, 0xbb, 0xcc]),
+        Err(DecodeError::TrailingBytes {
+            at: 2,
+            remaining: 3,
+        })
+    );
 }
 
-/// Every version and kind byte, each with an empty and a one-byte body. The
-/// expected results are the spec's version rule and kind table written out by
-/// hand, not taken from the code they check, and the class counts fail a
-/// sweep that skips ids.
+/// The spec's version rule and kind table, written out by hand rather than
+/// taken from the code they check: what an envelope with this header decodes
+/// to, and its class. The version comes first: under another version the kind
+/// byte has no v1 meaning, so a version other than 1 is rejected whatever the
+/// kind.
+fn expected_header(version: u8, kind: u8) -> (&'static str, Result<ObjectKind, DecodeError>) {
+    match (version, kind) {
+        (0x01, 0x01) => ("defined", Ok(ObjectKind::Blob)),
+        (0x01, 0x02..=0x05) => ("reserved", Err(DecodeError::ReservedObjectKind { kind })),
+        // 0x00 is invalid and 0x06 to 0xff are unassigned.
+        (0x01, _) => ("unknown", Err(DecodeError::UnknownObjectKind { kind })),
+        _ => (
+            "unsupported",
+            Err(DecodeError::UnsupportedFormatVersion { version }),
+        ),
+    }
+}
+
+/// Every (version, kind) pair, each with an empty, a one-byte and a two-byte
+/// body, against `expected_header`; the class counts fail a sweep that skips
+/// pairs. Input too short for a header reports truncation, whatever its byte.
 #[test]
 fn envelope_rejects_unknown_version_and_kind() {
-    let blob = blob(b"content");
-    assert_eq!(decode_envelope(&blob).unwrap().kind, ObjectKind::Blob);
-    assert_eq!(decode_envelope(&blob).unwrap().body, b"content");
+    // A blob body has no length prefix, so any length decodes.
+    for content in [&b"content"[..], &[b'a'; 300]] {
+        let envelope = blob(content);
+        let decoded = decode_envelope(&envelope).unwrap();
+        assert_eq!((decoded.kind, decoded.body), (ObjectKind::Blob, content));
+    }
 
-    let mut versions = BTreeMap::new();
+    let bodies: [&[u8]; 3] = [&[], &[0x00], &[0x61, 0x62]];
+    let mut classes = BTreeMap::new();
     for version in 0..=u8::MAX {
-        let (class, expected) = match version {
-            0x01 => ("supported", Ok(ObjectKind::Blob)),
-            _ => (
-                "unsupported",
-                Err(DecodeError::UnsupportedFormatVersion { version }),
-            ),
-        };
-        for envelope in [&[version, 0x01][..], &[version, 0x01, 0x00]] {
-            let decoded = decode_envelope(envelope).map(|envelope| envelope.kind);
-            assert_eq!(
-                decoded, expected,
-                "version {version:#04x}, envelope {envelope:02x?}"
-            );
+        for kind in 0..=u8::MAX {
+            let (class, expected) = expected_header(version, kind);
+            for body in bodies {
+                let envelope = [&[version, kind][..], body].concat();
+                let decoded = decode_envelope(&envelope).map(|envelope| envelope.kind);
+                assert_eq!(decoded, expected, "envelope {envelope:02x?}");
+            }
+            *classes.entry(class).or_insert(0) += 1;
         }
-        *versions.entry(class).or_insert(0) += 1;
     }
     assert_eq!(
-        versions,
-        BTreeMap::from([("supported", 1), ("unsupported", 255)])
+        classes,
+        BTreeMap::from([
+            ("defined", 1),
+            ("reserved", 4),
+            ("unknown", 251),
+            ("unsupported", 255 * 256),
+        ])
     );
 
     // `from_id` is the lookup the decoder uses, so it must agree id for id.
-    let mut kinds = BTreeMap::new();
     for kind in 0..=u8::MAX {
-        let (class, expected) = match kind {
-            0x01 => ("defined", Ok(ObjectKind::Blob)),
-            0x02..=0x05 => ("reserved", Err(DecodeError::ReservedObjectKind { kind })),
-            // 0x00 is invalid and 0x06 to 0xff are unassigned.
-            _ => ("unknown", Err(DecodeError::UnknownObjectKind { kind })),
-        };
-        for envelope in [&[0x01, kind][..], &[0x01, kind, 0x00]] {
-            let decoded = decode_envelope(envelope).map(|envelope| envelope.kind);
-            assert_eq!(
-                decoded, expected,
-                "kind {kind:#04x}, envelope {envelope:02x?}"
-            );
-        }
+        let (_, expected) = expected_header(0x01, kind);
         assert_eq!(ObjectKind::from_id(kind), expected, "from_id({kind:#04x})");
-        *kinds.entry(class).or_insert(0) += 1;
     }
-    assert_eq!(
-        kinds,
-        BTreeMap::from([("defined", 1), ("reserved", 4), ("unknown", 251)])
-    );
 
-    assert!(matches!(
-        decode_envelope(&[0x01]),
-        Err(DecodeError::UnexpectedEnd { .. })
-    ));
+    // `at` is the first missing field (the version at 0, the kind at 1) and
+    // `needed` the bytes missing. One byte is truncation even when it is not
+    // version 1 (the locked test plan; code review codec-4).
+    assert_eq!(
+        decode_envelope(&[]),
+        Err(DecodeError::UnexpectedEnd { at: 0, needed: 2 })
+    );
+    for byte in 0..=u8::MAX {
+        assert_eq!(
+            decode_envelope(&[byte]),
+            Err(DecodeError::UnexpectedEnd { at: 1, needed: 1 }),
+            "{byte:#04x}"
+        );
+    }
+
+    // Each header error says which rule failed: a reserved kind never reads
+    // as an unknown one.
+    let message = |envelope: &[u8]| decode_envelope(envelope).unwrap_err().to_string();
+    assert_eq!(message(&[0x02, 0x01]), "unsupported format version 2");
+    assert_eq!(
+        message(&[0x01, 0x03]),
+        "object kind 0x03 is reserved and not yet specified"
+    );
+    assert_eq!(message(&[0x01, 0x06]), "unknown object kind 0x06");
 }
 
 #[test]
@@ -436,6 +606,21 @@ fn object_id_hashes_whole_envelope() {
             alg.hash(b"hello\n"),
             "the version and kind bytes are part of the identity"
         );
+    }
+    // Long envelopes that differ only in their last byte: every byte is part
+    // of the identity, however far in.
+    for len in [100, 10_000] {
+        let long = blob(&vec![b'a'; len]);
+        let mut changed = long.clone();
+        *changed.last_mut().unwrap() = b'b';
+        for alg in HashAlg::ALL {
+            assert_eq!(object_id(alg, &long), alg.hash(&long));
+            assert_ne!(
+                object_id(alg, &long),
+                object_id(alg, &changed),
+                "{len}-byte blob"
+            );
+        }
     }
 }
 

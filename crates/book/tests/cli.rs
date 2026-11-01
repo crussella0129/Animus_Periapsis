@@ -13,8 +13,8 @@ fn repo_root() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
 }
 
-/// A Book directory under the OS temp directory, removed when dropped, so a
-/// failing assertion leaves nothing behind.
+/// A Book directory, or a directory of Books, under the OS temp directory,
+/// removed when dropped, so a failing assertion leaves nothing behind.
 struct TempBook(PathBuf);
 
 impl Drop for TempBook {
@@ -23,16 +23,28 @@ impl Drop for TempBook {
     }
 }
 
-/// A Book directory under the OS temp directory with one chapter.
-fn temp_book(name: &str, marker: Option<&str>, chapter: &str) -> TempBook {
+/// An empty directory under the OS temp directory.
+fn temp_dir(name: &str) -> TempBook {
     let root = std::env::temp_dir().join(format!("book-cli-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    TempBook(root)
+}
+
+/// Writes a Book with one chapter at `root`.
+fn write_book(root: &Path, marker: Option<&str>, chapter: &str) {
     fs::create_dir_all(root.join("intents")).unwrap();
     if let Some(marker) = marker {
         fs::write(root.join(".sprint-loop-book"), marker).unwrap();
     }
     fs::write(root.join("intents/INT-0001-x.md"), chapter).unwrap();
-    TempBook(root)
+}
+
+/// A Book directory under the OS temp directory with one chapter.
+fn temp_book(name: &str, marker: Option<&str>, chapter: &str) -> TempBook {
+    let dir = temp_dir(name);
+    write_book(&dir.0, marker, chapter);
+    dir
 }
 
 fn assert_usage_error(output: &Output, what: &str) {
@@ -63,29 +75,51 @@ fn cli_exit_codes() {
     let counted = stdout.lines().filter(|l| l.ends_with(" criteria")).count();
     assert_eq!(counted, chapters, "one counted line per chapter: {stdout}");
 
+    // Each chapter's line gives that chapter's own count: here two, then one.
+    let counts = temp_book(
+        "counts",
+        Some("schema-version: 2\ntyped-acceptance: 1\n"),
+        "# INT-0001 — X\n\n## Acceptance criteria\n\
+         - **AC-1** `necessary` `asserted` — x\n- **AC-2** `necessary` `asserted` — y\n",
+    );
+    fs::write(
+        counts.0.join("intents/INT-0002-y.md"),
+        "# INT-0002 — Y\n\n## Acceptance criteria\n- **AC-1** `necessary` `asserted` — z\n",
+    )
+    .unwrap();
+    let output = book().arg(&counts.0).output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    for line in ["  INT-0001-x.md: 2 criteria", "  INT-0002-y.md: 1 criteria"] {
+        let printed = stdout.lines().filter(|l| *l == line);
+        assert_eq!(printed.count(), 1, "one line must read {line:?}: {stdout}");
+    }
+
     // A clean Book named explicitly.
     let explicit = book().arg(repo_root().join("docs")).output().unwrap();
     assert_eq!(explicit.status.code(), Some(0));
 
-    // Violations: a declared Book with an untyped criterion at line 4. The
-    // violation names the chapter by the path the binary read it at, the Book
-    // argument joined with `intents` and the file name.
+    // Violations: a declared Book with untyped criteria at lines 4 and 5.
+    // Each violation is printed, naming the chapter by the path the binary
+    // read it at, the Book argument joined with `intents` and the file name.
     let violating = temp_book(
         "violating",
         Some("schema-version: 2\ntyped-acceptance: 1\n"),
-        "# INT-0001 — X\n\n## Acceptance criteria\n- Untyped claim.\n",
+        "# INT-0001 — X\n\n## Acceptance criteria\n- Untyped claim.\n- Another.\n",
     );
     let output = book().arg(&violating.0).output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(output.status.code(), Some(1), "{stdout}");
     let chapter = violating.0.join("intents").join("INT-0001-x.md");
-    let untyped = format!("{}:4: untyped: ", chapter.display());
-    let printed = stdout.lines().filter(|line| line.starts_with(&untyped));
-    assert_eq!(
-        printed.count(),
-        1,
-        "one line must start with {untyped:?}: {stdout}"
-    );
+    for line in [4, 5] {
+        let untyped = format!("{}:{line}: untyped: ", chapter.display());
+        let printed = stdout.lines().filter(|l| l.starts_with(&untyped));
+        assert_eq!(
+            printed.count(),
+            1,
+            "one line must start with {untyped:?}: {stdout}"
+        );
+    }
 
     // Usage and refusal errors: exit 2, a message on stderr, nothing on stdout.
     let future = temp_book(
@@ -107,9 +141,27 @@ fn cli_exit_codes() {
         &book().arg(&unmarked.0).output().unwrap(),
         "a Book without a marker",
     );
-    for args in [&["--strict"][..], &["-v"], &["docs", "docs"]] {
-        let output = book().current_dir(repo_root()).args(args).output().unwrap();
+
+    // Flags and a second argument. Each argument also names a clean Book
+    // here, as does the default `docs`, so reading one as a Book, or checking
+    // `docs` in its place, would print a report.
+    let beside = temp_dir("flags");
+    for name in ["docs", "--strict", "-v", "--"] {
+        write_book(
+            &beside.0.join(name),
+            Some("schema-version: 2\ntyped-acceptance: 1\n"),
+            "# INT-0001 — X\n\n## Acceptance criteria\n- **AC-1** `necessary` `asserted` — x\n",
+        );
+    }
+    for args in [&["--strict"][..], &["-v"], &["--"], &["docs", "docs"]] {
+        let output = book().current_dir(&beside.0).args(args).output().unwrap();
         assert_usage_error(&output, &format!("{args:?}"));
+    }
+    // Control: the same Books are checked when named without a leading `-`.
+    for args in [&[][..], &["./--strict"], &["./-v"], &["./--"]] {
+        let output = book().current_dir(&beside.0).args(args).output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(output.status.code(), Some(0), "{args:?}: {stdout}");
     }
 }
 

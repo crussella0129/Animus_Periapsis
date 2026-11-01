@@ -90,6 +90,7 @@ dependencies = [
  "allocation-counter",
  "hash",
  "proptest",
+ "pulldown-cmark",
 ]
 
 [[package]]
@@ -409,5 +410,6 @@ name = "xtask"
 version = "0.0.0"
 dependencies = [
  "book",
+ "pulldown-cmark",
  "toml_edit",
 ]

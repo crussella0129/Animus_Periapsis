@@ -214,6 +214,7 @@ fn execute_with(root: &Path, step: &Step, cargo: impl Fn(&[&str]) -> Command) ->
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::collections::BTreeSet;
     use std::ffi::{OsStr, OsString};
     use std::fs;
@@ -221,7 +222,7 @@ mod tests {
     use std::process::{Command, Stdio};
 
     use super::{
-        Action, Outcome, STEPS, Step, cargo_command, execute_with, finish, run_with, scrubbed,
+        Action, Outcome, STEPS, Step, cargo_command, execute_with, finish, run, run_with, scrubbed,
     };
     use crate::workflow;
 
@@ -241,7 +242,74 @@ mod tests {
         text.replace(from, to)
     }
 
-    /// The exact commands of the T-007 clause, in order.
+    /// The clean workspace's one crate. Its one test fails if a variable that
+    /// no step may inherit reaches the `test` step.
+    const PROBE: &str = r#"#![forbid(unsafe_code)]
+
+#[test]
+fn inherits_no_stripped_variable() {
+    for name in [
+        "PERI_GOLDEN_CREATE",
+        "PROPTEST_CASES",
+        "PROPTEST_RNG_SEED",
+        "CLIPPY_CONF_DIR",
+    ] {
+        assert_eq!(std::env::var_os(name), None, "{name}");
+    }
+}
+"#;
+
+    /// A workspace at `root` that every step passes: one crate, `PROBE`, with
+    /// no dependencies; this repository's toolchain pin, Clippy configuration,
+    /// attributes, credits and format spec; and a Book with no chapters.
+    fn clean_workspace(root: &Path) {
+        let write = |path: &str, text: &str| {
+            let path = root.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        };
+        for path in [
+            "rust-toolchain.toml",
+            "clippy.toml",
+            ".gitattributes",
+            "docs/prior-art.md",
+            "docs/spec/format-v1.md",
+        ] {
+            write(path, &repo_file(path));
+        }
+        write(
+            "Cargo.toml",
+            "[package]\nname = \"probe\"\nversion = \"0.0.0\"\nedition = \"2024\"\npublish = false\n\n\
+             [lints]\nworkspace = true\n\n[workspace]\n\n[workspace.lints.rust]\nunsafe_code = \"forbid\"\n",
+        );
+        write(
+            "Cargo.lock",
+            "version = 4\n\n[[package]]\nname = \"probe\"\nversion = \"0.0.0\"\n",
+        );
+        write("src/lib.rs", PROBE);
+        write(
+            "docs/.sprint-loop-book",
+            "schema-version: 2\ntyped-acceptance: 1\n",
+        );
+        fs::create_dir_all(root.join("docs/intents")).unwrap();
+    }
+
+    /// Removes `dir` and everything in it. On Windows the emptied directory
+    /// can stay in use for a moment after Git has run in it (the `golden`
+    /// rule runs Git), so removal backs off for up to about 9.5 s. The first
+    /// try normally succeeds.
+    fn remove_all(dir: &Path) {
+        for attempt in 0..100 {
+            if fs::remove_dir_all(dir).is_ok() || !dir.exists() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10 * attempt.min(10)));
+        }
+    }
+
+    /// The exact commands of the T-007 clause, in order. Each cargo step runs
+    /// its command as written: `execute_with` hands on every argument, and
+    /// `cargo_command` runs them all with the given cargo at the root.
     #[test]
     fn ci_steps_are_ordered_and_locked() {
         let expected = [
@@ -275,6 +343,43 @@ mod tests {
             },
         ];
         assert_eq!(STEPS, expected);
+
+        let root = repo_root();
+        let owned = |args: &[&str]| args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        for step in expected {
+            let Action::Cargo(args) = step.action else {
+                continue;
+            };
+            let command = cargo_command(OsStr::new("probe-cargo"), &root, args);
+            assert_eq!(
+                (
+                    command.get_program(),
+                    command.get_args().collect::<Vec<_>>(),
+                    command.get_current_dir()
+                ),
+                (
+                    OsStr::new("probe-cargo"),
+                    args.iter().map(OsStr::new).collect(),
+                    Some(root.as_path())
+                ),
+                "{}",
+                step.name
+            );
+            let handed = RefCell::new(Vec::new());
+            let outcome = execute_with(&root, &step, |passed| {
+                handed.borrow_mut().push(owned(passed));
+                // A command that passes, so only the arguments are at stake.
+                let mut version = Command::new(env!("CARGO"));
+                version.arg("--version").stdout(Stdio::null());
+                version
+            });
+            assert_eq!(
+                (outcome, handed.into_inner()),
+                (Outcome::Pass, vec![owned(args)]),
+                "{}",
+                step.name
+            );
+        }
     }
 
     /// Each kind of step really runs: cargo as a child process, policy and
@@ -311,6 +416,18 @@ mod tests {
             Outcome::Fail(format!(
                 "cargo no-such-subcommand --locked exited with {status}"
             ))
+        );
+
+        // Exit status 1, as `cargo fmt --check` gives for unformatted code.
+        const BAD_FLAG: &[&str] = &["--no-such-flag"];
+        let status = cargo_command(OsStr::new(cargo), &root, BAD_FLAG)
+            .output()
+            .expect("cargo runs")
+            .status;
+        assert_eq!(status.code(), Some(1), "cargo must exit 1 on {BAD_FLAG:?}");
+        assert_eq!(
+            execute_with(&root, &step(Action::Cargo(BAD_FLAG)), quiet(cargo)),
+            Outcome::Fail(format!("cargo --no-such-flag exited with {status}"))
         );
 
         let missing = execute_with(&root, &version, quiet("no-such-cargo-program"));
@@ -376,6 +493,39 @@ mod tests {
         );
     }
 
+    /// A workspace with policy problems fails the `policy` step with their
+    /// count, whichever rules find them: `.gitattributes` without
+    /// `*.bin binary` gives one `golden` problem (T-005), and a missing
+    /// `Cargo.lock` one `lockfile` problem more (T-001).
+    #[test]
+    fn policy_step_fails_on_a_problem() {
+        let root = std::env::temp_dir().join(format!("xtask-ci-{}-policy", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        clean_workspace(&root);
+        let policy = Step {
+            name: "policy",
+            action: Action::Policy,
+        };
+        let execute = || execute_with(&root, &policy, |_| panic!("the policy step runs no cargo"));
+        let mut outcomes = vec![execute()];
+        fs::write(root.join(".gitattributes"), "* text=auto eol=lf\n").unwrap();
+        outcomes.push(execute());
+        fs::remove_file(root.join("Cargo.lock")).unwrap();
+        outcomes.push(execute());
+        remove_all(&root);
+        assert_eq!(
+            outcomes,
+            [
+                Outcome::Pass,
+                Outcome::Fail("1 policy problems; run `cargo policy`".to_owned()),
+                Outcome::Fail("2 policy problems; run `cargo policy`".to_owned()),
+            ]
+        );
+    }
+
+    /// Two failures, one a tool that is not installed, among passing steps
+    /// and before a last one: every step runs and prints its own line, in
+    /// order, and the summary names both failures.
     #[test]
     fn ci_failures_do_not_stop_later_steps() {
         let steps = [
@@ -395,6 +545,10 @@ mod tests {
                 name: "four",
                 action: Action::Cargo(&["fmt"]),
             },
+            Step {
+                name: "five",
+                action: Action::Policy,
+            },
         ];
         let mut ran = Vec::new();
         let mut out = Vec::new();
@@ -406,39 +560,115 @@ mod tests {
                 _ => Outcome::Pass,
             }
         });
-        assert_eq!(ran, ["one", "two", "three", "four"], "every step runs");
+        assert_eq!(
+            ran,
+            ["one", "two", "three", "four", "five"],
+            "every step runs"
+        );
         assert_eq!(failed, ["two", "four"]);
         assert_eq!(finish(&failed, &mut out), 1, "a failure exits non-zero");
-        let printed = String::from_utf8(out).unwrap();
-        assert!(printed.contains("PASS one\n") && printed.contains("PASS three\n"));
-        assert!(printed.contains("FAIL two: ") && printed.contains("FAIL four: "));
-        assert!(printed.ends_with("ci: failed: two, four\n"), "{printed}");
-        assert_eq!(finish(&[], &mut Vec::new()), 0);
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "PASS one\nFAIL two: could not run cargo-no-such-tool\nPASS three\n\
+             FAIL four: cargo fmt exited with 1\nPASS five\nci: failed: two, four\n"
+        );
+        let mut out = Vec::new();
+        assert_eq!(finish(&[], &mut out), 0);
+        assert_eq!(String::from_utf8(out).unwrap(), "ci: all 5 steps passed\n");
     }
 
+    /// No cargo step inherits a variable that creates golden files, cuts
+    /// proptest's case counts, lifts Clippy's bans, or changes how code is
+    /// compiled or which toolchain compiles it.
     #[test]
     fn test_step_removes_golden_create() {
-        let Action::Cargo(args) = STEPS[2].action else {
-            panic!("test runs cargo");
-        };
-        let command = cargo_command(OsStr::new("cargo"), Path::new("."), args);
-        for name in [
-            "PERI_GOLDEN_CREATE",
-            "PROPTEST_CASES",
-            "CLIPPY_CONF_DIR",
-            "RUSTFLAGS",
-            "RUSTDOCFLAGS",
-            "RUSTC",
-            "RUSTDOC",
-            "RUSTC_WRAPPER",
-            "RUSTC_WORKSPACE_WRAPPER",
-            "RUSTUP_TOOLCHAIN",
-        ] {
-            let removed = command
-                .get_envs()
-                .any(|(key, value)| key == OsStr::new(name) && value.is_none());
-            assert!(removed, "the test step must not inherit {name}");
+        for step in STEPS {
+            let Action::Cargo(args) = step.action else {
+                continue;
+            };
+            let command = cargo_command(OsStr::new("cargo"), Path::new("."), args);
+            for name in [
+                "PERI_GOLDEN_CREATE",
+                "PROPTEST_CASES",
+                "CLIPPY_CONF_DIR",
+                "RUSTFLAGS",
+                "RUSTDOCFLAGS",
+                "RUSTC",
+                "RUSTDOC",
+                "RUSTC_WRAPPER",
+                "RUSTC_WORKSPACE_WRAPPER",
+                "RUSTUP_TOOLCHAIN",
+            ] {
+                let removed = command
+                    .get_envs()
+                    .any(|(key, value)| key == OsStr::new(name) && value.is_none());
+                assert!(removed, "the {} step must not inherit {name}", step.name);
+            }
         }
+    }
+
+    /// `cargo ci` itself, run by a child copy of this test binary whose
+    /// environment sets variables no step may inherit: golden create mode;
+    /// proptest settings, one of which no list names, so only its prefix
+    /// removes it; and a Clippy configuration that bans what `PROBE` calls.
+    /// Any of them reaching a step fails it. The child runs outside the
+    /// workspace, so only the root it is given can make the steps pass.
+    #[test]
+    fn hostile_variables_never_reach_a_step() {
+        let base = std::env::temp_dir().join(format!("xtask-ci-{}-hostile", std::process::id()));
+        let (root, config) = (base.join("workspace"), base.join("clippy"));
+        let _ = fs::remove_dir_all(&base);
+        clean_workspace(&root);
+        fs::create_dir_all(&config).unwrap();
+        fs::write(
+            config.join("clippy.toml"),
+            "disallowed-methods = [\"std::env::var_os\"]\n",
+        )
+        .unwrap();
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "ci::tests::run_passes_a_clean_workspace"])
+            .env("XTASK_CI_WORKSPACE", &root)
+            .env("PERI_GOLDEN_CREATE", "1")
+            .env("PROPTEST_CASES", "1")
+            .env("PROPTEST_RNG_SEED", "7")
+            .env("CLIPPY_CONF_DIR", &config)
+            // Quiet output, from the caller's environment or a cargo config,
+            // would print `PROBE`'s result as a dot.
+            .env("CARGO_TERM_QUIET", "false")
+            .current_dir(&base)
+            .output()
+            .unwrap();
+        remove_all(&base);
+        // `PROBE`'s own result shows that the child really ran `cargo ci`.
+        let stdout = String::from_utf8_lossy(&child.stdout);
+        assert!(
+            child.status.success()
+                && stdout.contains("test ci::tests::run_passes_a_clean_workspace ... ok")
+                && stdout.contains("test inherits_no_stripped_variable ... ok"),
+            "{stdout}{}",
+            String::from_utf8_lossy(&child.stderr)
+        );
+    }
+
+    /// The child half of `hostile_variables_never_reach_a_step`: `cargo ci`
+    /// on the clean workspace that `XTASK_CI_WORKSPACE` names runs every step,
+    /// in order, and each passes. Run on its own, with no workspace named, it
+    /// does nothing.
+    #[test]
+    fn run_passes_a_clean_workspace() {
+        let Some(root) = std::env::var_os("XTASK_CI_WORKSPACE") else {
+            return;
+        };
+        let mut out = Vec::new();
+        let code = run(Path::new(&root), &mut out);
+        assert_eq!(
+            (code, String::from_utf8(out).unwrap()),
+            (
+                0,
+                "PASS fmt\nPASS clippy\nPASS test\nPASS policy\nPASS book\nci: all 5 steps passed\n"
+                    .to_owned()
+            )
+        );
     }
 
     #[test]

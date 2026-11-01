@@ -4,12 +4,14 @@
 //!
 //! Each rule reads the files under the workspace root (`golden` asks Git,
 //! which reads them too), so the tests run every rule against small fixture
-//! trees. TOML files are parsed, as Cargo, rustup and Clippy parse them.
+//! trees. TOML files are parsed, as Cargo, rustup and Clippy parse them, and
+//! the spec's Markdown is read for the headings and table rows GitHub shows.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use toml_edit::{DocumentMut, Item, Value};
 
 use crate::attributes;
@@ -62,11 +64,12 @@ const SPEC_SECTIONS: [&str; 11] = [
     "Decoder requirements",
     "Change control",
 ];
-/// Tables the spec must hold rows in: (section, row prefix, minimum cells).
+/// Tables the spec must hold rows in: (section, how the code span that
+/// starts a row's first cell begins, minimum cells filled).
 const SPEC_TABLES: [(&str, &str, usize); 3] = [
-    ("Hash algorithms", "| `0x", 4),
-    ("Object kinds", "| `0x", 3),
-    ("Worked examples", "| `", 3),
+    ("Hash algorithms", "0x", 4),
+    ("Object kinds", "0x", 3),
+    ("Worked examples", "", 3),
 ];
 
 /// The outcome of one rule: an empty problem list means it passed.
@@ -405,24 +408,25 @@ fn is_single_word(name: &str) -> bool {
 
 /// The format spec exists, keeps every required section, and its registry
 /// and worked-example tables hold rows (INT-0006 AC-6: the spec comes first).
+/// The spec is read as GitHub shows it (see `markdown`): a heading or a row
+/// that it shows as code, as a comment or as plain text does not count.
 fn spec(root: &Path, _members: &[PathBuf]) -> Vec<String> {
     let path = root.join(SPEC_PATH);
     if !path.is_file() {
         return vec![format!("{SPEC_PATH} is missing")];
     }
-    let text = read(&path);
-    let headings: Vec<&str> = text
-        .lines()
-        .filter_map(|line| line.strip_prefix('#'))
-        .map(|rest| rest.trim_start_matches('#').trim())
-        .collect();
+    let blocks = markdown(&read(&path));
     let mut problems: Vec<String> = SPEC_SECTIONS
         .into_iter()
-        .filter(|name| !headings.contains(name))
+        .filter(|name| {
+            !blocks
+                .iter()
+                .any(|block| matches!(block, Block::Heading(Some(text)) if text == name))
+        })
         .map(|name| format!("{SPEC_PATH} has no \"{name}\" section"))
         .collect();
-    for (name, prefix, cells) in SPEC_TABLES {
-        if table_rows(&text, name, prefix, cells) == 0 {
+    for (name, code, cells) in SPEC_TABLES {
+        if table_rows(&blocks, name, code, cells) == 0 {
             problems.push(format!("{SPEC_PATH} \"{name}\" has no table rows"));
         }
     }
@@ -478,27 +482,93 @@ fn keeps_bytes(attribute: &str, value: &str) -> bool {
     }
 }
 
-/// Counts table rows that start with `prefix` and fill at least `cells`
-/// cells, in the section headed `name`.
-fn table_rows(text: &str, name: &str, prefix: &str, cells: usize) -> usize {
+/// Counts the table body rows in the section headed `name` whose first cell
+/// starts with a code span that starts with `code`, and that fill at least
+/// `cells` of their table's columns.
+fn table_rows(blocks: &[Block], name: &str, code: &str, cells: usize) -> usize {
     let mut inside = false;
     let mut rows = 0;
-    for line in text.lines() {
-        if let Some(rest) = line.strip_prefix('#') {
-            inside = rest.trim_start_matches('#').trim() == name;
-        } else if inside && line.starts_with(prefix) {
-            let filled = line
-                .trim()
-                .trim_matches('|')
-                .split('|')
-                .filter(|cell| !cell.trim().is_empty())
-                .count();
-            if filled >= cells {
-                rows += 1;
+    for block in blocks {
+        match block {
+            Block::Heading(heading) => inside = heading.as_deref() == Some(name),
+            Block::Row { lead, filled } => {
+                let counts = lead.as_deref().is_some_and(|lead| lead.starts_with(code));
+                rows += usize::from(inside && counts && *filled >= cells);
             }
         }
     }
     rows
+}
+
+/// What the `spec` rule reads in Markdown, in order.
+#[derive(Debug)]
+enum Block {
+    /// A heading, which ends the section above it, with its text when it is
+    /// at the top level: one in a list item or a quote names no section.
+    Heading(Option<String>),
+    /// A body row of a table at the top level: the code span that starts its
+    /// first cell, if one does, and how many of its cells hold anything.
+    Row { lead: Option<String>, filled: usize },
+}
+
+/// The headings and table body rows of a Markdown file as GitHub shows it:
+/// CommonMark with tables, as pulldown-cmark reads them (`book` reads the
+/// Book with it too). What it shows as code, in an HTML block or as plain
+/// text is neither, and a row has as many cells as its table's header.
+fn markdown(text: &str) -> Vec<Block> {
+    // CommonMark ends a line at a lone CR too, but pulldown-cmark does not
+    // everywhere (see `book::parse_chapter`), so each line ends at an LF.
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut blocks = Vec::new();
+    // How many elements are open; whether the open table is at the top level;
+    // the open heading, with its text so far when it is at the top level; and
+    // the open row's cells, each as the events it holds, in such a table.
+    let mut depth = 0;
+    let mut top_table = false;
+    let mut heading: Option<Option<String>> = None;
+    let mut row: Option<Vec<Vec<Event>>> = None;
+    for event in Parser::new_ext(&text, Options::ENABLE_TABLES) {
+        let top = depth == 0;
+        match event {
+            Event::Start(_) => depth += 1,
+            Event::End(_) => depth -= 1,
+            _ => {}
+        }
+        match event {
+            Event::Start(Tag::Heading { .. }) => heading = Some(top.then(String::new)),
+            Event::End(TagEnd::Heading(_)) => blocks.extend(heading.take().map(Block::Heading)),
+            Event::Start(Tag::Table(_)) => top_table = top,
+            Event::Start(Tag::TableRow) if top_table => row = Some(Vec::new()),
+            Event::End(TagEnd::TableRow) => {
+                blocks.extend(row.take().map(|cells| Block::Row {
+                    lead: match cells.first().and_then(|cell| cell.first()) {
+                        Some(Event::Code(code)) => Some(code.to_string()),
+                        _ => None,
+                    },
+                    filled: cells.iter().filter(|cell| !cell.is_empty()).count(),
+                }));
+            }
+            Event::Start(Tag::TableCell) => {
+                if let Some(cells) = &mut row {
+                    cells.push(Vec::new());
+                }
+            }
+            Event::End(TagEnd::TableCell) => {}
+            event => {
+                if let Some(Some(text)) = &mut heading {
+                    match &event {
+                        Event::Text(part) | Event::Code(part) => text.push_str(part),
+                        Event::SoftBreak | Event::HardBreak => text.push(' '),
+                        _ => {}
+                    }
+                }
+                if let Some(cell) = row.as_mut().and_then(|cells| cells.last_mut()) {
+                    cell.push(event);
+                }
+            }
+        }
+    }
+    blocks
 }
 
 /// Runs `check` on each member's parsed manifest, passing the member's
@@ -710,14 +780,29 @@ mod tests {
         );
         fixture.fails_only("lints", "crates/hash");
 
+        // A member's own `[lints]` table replaces the workspace lints.
+        let fixture = Fixture::new("lints-own-table");
+        fixture.write(
+            "crates/hash/Cargo.toml",
+            &replace(
+                &member("hash", "blake3.workspace = true"),
+                "[lints]\nworkspace = true\n",
+                "[lints.rust]\nmissing_docs = \"warn\"\n",
+            ),
+        );
+        fixture.fails_only("lints", "crates/hash");
+
         // The inherited lint is the guard for tests, build scripts, binaries
-        // and examples, which the `unsafe` rule never reads.
+        // and examples, which the `unsafe` rule never reads. Only
+        // `unsafe_code` itself, at level `forbid`, is that guard.
         let forbid = "[workspace.lints.rust]\nunsafe_code = \"forbid\"\n";
         for (i, lints) in [
             "",
             "[workspace.lints.rust]\nunsafe_code = \"allow\"\n",
             "[workspace.lints.rust]\nunsafe_code = \"deny\"\n",
+            "[workspace.lints.rust]\nunsafe_code = { level = \"allow\", priority = -1 }\n",
             "[workspace.lints.rust]\n# unsafe_code = \"forbid\"\n",
+            "[workspace.lints.rust]\nunsafe_op_in_unsafe_fn = \"forbid\"\n",
             "[workspace.lints.clippy]\nunsafe_code = \"forbid\"\n",
         ]
         .into_iter()
@@ -753,6 +838,15 @@ mod tests {
         );
         fixture.fails_only("unsafe", "crates/hash/src/lib.rs");
 
+        // A crate with both roots needs the attribute in each.
+        let fixture = Fixture::new("unsafe-lib-beside-main");
+        fixture.write(
+            "crates/hash/src/main.rs",
+            "#![forbid(unsafe_code)]\nfn main() {}\n",
+        );
+        fixture.write("crates/hash/src/lib.rs", "pub fn f() {}\n");
+        fixture.fails_only("unsafe", "crates/hash/src/lib.rs");
+
         // The line counts only as the crate root's first line that is neither
         // blank nor a line comment: anywhere else it could sit inside a block
         // comment, a string or a nested module.
@@ -781,9 +875,18 @@ mod tests {
 
     #[test]
     fn policy_requires_exact_toolchain() {
-        for (i, channel) in ["stable", "1.99", "nightly-2026-10-01", "1.99.1-beta"]
-            .into_iter()
-            .enumerate()
+        // Exactly three parts, each a run of decimal digits.
+        for (i, channel) in [
+            "stable",
+            "1.99",
+            "nightly-2026-10-01",
+            "1.99.1-beta",
+            "1.99.1.0",
+            "1.99.",
+            "1.99.x",
+        ]
+        .into_iter()
+        .enumerate()
         {
             let fixture = Fixture::new(&format!("toolchain-{i}"));
             fixture.write(
@@ -793,6 +896,22 @@ mod tests {
             fixture.fails_only("toolchain", channel);
         }
         assert!(is_exact_version("1.99.1"));
+
+        // Without a channel nothing is pinned (INT-0003 AC-2): rustup falls
+        // back to its default toolchain.
+        let fixture = Fixture::new("toolchain-missing");
+        fs::remove_file(fixture.0.join("rust-toolchain.toml")).unwrap();
+        fixture.fails_only("toolchain", "rust-toolchain.toml is missing");
+
+        let fixture = Fixture::new("toolchain-no-channel");
+        fixture.write(
+            "rust-toolchain.toml",
+            "[toolchain]\ncomponents = [\"clippy\"]\n",
+        );
+        fixture.fails_only(
+            "toolchain",
+            "rust-toolchain.toml has no [toolchain] channel",
+        );
     }
 
     #[test]
@@ -811,16 +930,22 @@ mod tests {
         );
         fixture.fails_only("publish", "crates/hash");
 
-        let fixture = Fixture::new("publish-true");
-        fixture.write(
-            "crates/hash/Cargo.toml",
-            &replace(
-                &member("hash", "blake3.workspace = true"),
-                "publish.workspace = true",
-                "publish = true",
-            ),
-        );
-        fixture.fails_only("publish", "crates/hash");
+        // `true`, or a list of registries to publish to.
+        for (i, publish) in ["publish = true", "publish = [\"crates-io\"]"]
+            .into_iter()
+            .enumerate()
+        {
+            let fixture = Fixture::new(&format!("publish-own-{i}"));
+            fixture.write(
+                "crates/hash/Cargo.toml",
+                &replace(
+                    &member("hash", "blake3.workspace = true"),
+                    "publish.workspace = true",
+                    publish,
+                ),
+            );
+            fixture.fails_only("publish", "crates/hash");
+        }
 
         // A member that inherits gets the workspace value, whatever it is.
         for (i, package) in [
@@ -887,6 +1012,12 @@ mod tests {
                 "`foo`",
                 "[dependencies]",
             ),
+            // An inherited entry does not excuse the entries after it.
+            (
+                "[dependencies]\nblake3.workspace = true\nfoo = \"1\"\n",
+                "`foo`",
+                "[dependencies]",
+            ),
             (
                 "[target.'cfg(windows)'.dependencies]\nwindows-sys = \"0.59\"\n",
                 "`windows-sys`",
@@ -902,6 +1033,18 @@ mod tests {
                 "`libc`",
                 "[target.'cfg(unix)'.dev-dependencies]",
             ),
+            // Before edition 2024, Cargo reads the underscore spellings under
+            // a target too.
+            (
+                "[target.'cfg(unix)'.dev_dependencies]\nlibc = \"0.2\"\n",
+                "`libc`",
+                "[target.'cfg(unix)'.dev_dependencies]",
+            ),
+            (
+                "[target.'cfg(unix)'.build_dependencies]\ncc = \"1\"\n",
+                "`cc`",
+                "[target.'cfg(unix)'.build_dependencies]",
+            ),
         ]
         .into_iter()
         .enumerate()
@@ -915,6 +1058,15 @@ mod tests {
             );
             fixture.fails_exactly(&["deps"], &["crates/hash", name, header]);
         }
+
+        // A top-level inline table declares dependencies too.
+        let fixture = Fixture::new("deps-inline-table");
+        fixture.write(
+            "crates/hash/Cargo.toml",
+            "dependencies = { foo = \"1\" }\n\n[package]\nname = \"hash\"\npublish.workspace = true\n\n\
+             [lints]\nworkspace = true\n",
+        );
+        fixture.fails_exactly(&["deps"], &["crates/hash", "`foo`", "[dependencies]"]);
 
         let fixture = Fixture::new("deps-target-inherited");
         fixture.write(
@@ -947,6 +1099,39 @@ mod tests {
             &format!("{WORKSPACE}\n[workspace.dependencies.zstd]\nversion = \"0.13\"\n"),
         );
         fixture.fails_only("credits", "`zstd`");
+
+        // So do a bare version and a Git source: only `path` entries are
+        // workspace crates.
+        for (i, entry) in [
+            "zstd = \"0.13\"",
+            "zstd = { git = \"https://github.com/gyscos/zstd-rs\" }",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = Fixture::new(&format!("credits-source-{i}"));
+            fixture.write(
+                "Cargo.toml",
+                &replace(
+                    WORKSPACE,
+                    "[workspace.dependencies]\n",
+                    &format!("[workspace.dependencies]\n{entry}\n"),
+                ),
+            );
+            fixture.fails_only("credits", "`zstd`");
+        }
+
+        // The `blake3` row is not a row for `blake`.
+        let fixture = Fixture::new("credits-prefix-name");
+        fixture.write(
+            "Cargo.toml",
+            &replace(
+                WORKSPACE,
+                "[workspace.dependencies]\n",
+                "[workspace.dependencies]\nblake = { version = \"1\", features = [\"pure\"] }\n",
+            ),
+        );
+        fixture.fails_only("credits", "`blake`");
     }
 
     #[test]
@@ -962,6 +1147,13 @@ mod tests {
             "| `blake3` | 1 | CC0-1.0 | `hash` | none | — |",
             "| `blake3` | 1 | CC0-1.0 | `hash` | not checked | — |",
             "| `blake3` | 1 | CC0-1.0 | `hash` | nope | — |",
+            // "—" marks an empty cell, as in the designs tables.
+            "| `blake3` | 1 | — | `hash` | yes | `features = [\"pure\"]` |",
+            // A `yes` row's last cell starts with `C allowed:`, or names
+            // features the entry enables: at least one, each in full.
+            "| `blake3` | 1 | CC0-1.0 | `hash` | yes | Rust only (C allowed: never) |",
+            "| `blake3` | 1 | CC0-1.0 | `hash` | yes | `features = []` |",
+            "| `blake3` | 1 | CC0-1.0 | `hash` | yes | `features = [\"pur\"]` |",
         ];
         for (i, row) in failing.into_iter().enumerate() {
             let fixture = Fixture::new(&format!("credits-row-{i}"));
@@ -1034,6 +1226,22 @@ mod tests {
             fixture.fails_only("clippy", missing);
         }
 
+        // Only the `std` paths ban the `std` types: neither another crate's
+        // types of the same names nor the bare names do.
+        for (i, config) in [
+            "disallowed-types = [\"hashbrown::HashMap\", \"hashbrown::HashSet\"]\n",
+            "disallowed-types = [\"HashMap\", \"HashSet\"]\n",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = Fixture::new(&format!("clippy-not-std-{i}"));
+            fixture.write("clippy.toml", config);
+            for path in ["std::collections::HashMap", "std::collections::HashSet"] {
+                fixture.fails_only("clippy", path);
+            }
+        }
+
         // Clippy reads the first config it finds walking up from a crate,
         // preferring `.clippy.toml`, so any other config on that path wins.
         for shadow in [
@@ -1063,7 +1271,8 @@ mod tests {
 
     #[test]
     fn policy_requires_single_word_names() {
-        for (i, name) in ["peri-hash", "Hash", "hash_ref", "9hash"]
+        // ASCII lowercase letters and digits only, from the first letter on.
+        for (i, name) in ["peri-hash", "Hash", "hash_ref", "9hash", "hashRef", "café"]
             .into_iter()
             .enumerate()
         {
@@ -1087,6 +1296,12 @@ mod tests {
         let fixture = Fixture::new("golden-text");
         fixture.write(".gitattributes", "* text=auto eol=lf\n*.bin text\n");
         fixture.fails_exactly(&["golden"], &["*.bin", "text: set"]);
+
+        // `text=false` gives `text` a value, which is not unsetting it: the
+        // `eol` that `*` sets still converts line endings.
+        let fixture = Fixture::new("golden-text-false");
+        fixture.write(".gitattributes", "* text=auto eol=lf\n*.bin text=false\n");
+        fixture.fails_exactly(&["golden"], &["*.bin", "text: false"]);
 
         // Git lets a later line, or a deeper `.gitattributes`, override
         // `*.bin binary`.
@@ -1152,6 +1367,17 @@ mod tests {
         fixture.write("crates/codec/tests/golden/v1/u32-max.bin", "x");
         fixture.write(".gitattributes", "* text=auto eol=lf\nprobe.bin binary\n");
         fixture.fails_exactly(&["golden"], &["u32-max.bin", "text: auto"]);
+
+        // Every committed golden file, not only the first or the last.
+        let fixture = Fixture::new("golden-every-file");
+        for name in ["blob-envelope", "u32-max", "uvarint-0"] {
+            fixture.write(&format!("crates/codec/tests/golden/v1/{name}.bin"), "x");
+        }
+        fixture.write(
+            ".gitattributes",
+            "* text=auto eol=lf\n*.bin binary\nu32-max.bin text\n",
+        );
+        fixture.fails_exactly(&["golden"], &["u32-max.bin", "text: set"]);
 
         // A file Git warns about, here a macro defined below the root (which
         // Git ignores), fails rather than passing on what Git chose to skip.
@@ -1240,8 +1466,24 @@ mod tests {
         fixture.fails_only("spec", "Worked examples");
 
         // A row without its status cell, or with that cell empty, is not a
-        // row; nor is a worked example without its hex.
+        // row; nor is a worked example without its hex, nor a registry row
+        // that does not start with a `0x..` id.
         let short_rows = [
+            (
+                "| `0x01` | `blake3` | 32 | default |",
+                "| `01` | `blake3` | 32 | default |",
+                "Hash algorithms",
+            ),
+            (
+                "| `0x01` | `blob` | defined |",
+                "| `01` | `blob` | defined |",
+                "Object kinds",
+            ),
+            (
+                "| `0x01` | `blob` | defined |",
+                "| `blob` | `0x01` | defined |",
+                "Object kinds",
+            ),
             (
                 "| `0x01` | `blake3` | 32 | default |",
                 "| `0x01` | `blake3` | 32 |",
@@ -1299,6 +1541,297 @@ mod tests {
                 &replace(SPEC, &format!("{heading}\n"), ""),
             );
             fixture.fails_only("spec", &format!("no \"{section}\" section"));
+
+            // A heading that only starts with the name, or mentions it, is
+            // another section.
+            let fixture = Fixture::new(&format!("spec-renamed-{i}"));
+            fixture.write(
+                "docs/spec/format-v1.md",
+                &replace(
+                    SPEC,
+                    &format!("{heading}\n"),
+                    &format!("## {section} notes\n"),
+                ),
+            );
+            fixture.fails_only("spec", &format!("no \"{section}\" section"));
+        }
+
+        // A row counts only in its own section: not above the first heading,
+        // nor under a later heading that starts with the section's name.
+        let row = "| `0x01` | `blob` | defined |\n";
+        let table = format!("| id | kind | status |\n|---|---|---|\n{row}");
+        let fixture = Fixture::new("spec-row-outside");
+        fixture.write(
+            "docs/spec/format-v1.md",
+            &format!(
+                "{table}\n{}### Object kinds (retired)\n{table}",
+                replace(SPEC, row, "")
+            ),
+        );
+        fixture.fails_only("spec", "\"Object kinds\" has no table rows");
+
+        // A spec that is not UTF-8 has none of the sections.
+        let fixture = Fixture::new("spec-not-utf8");
+        fs::write(fixture.0.join("docs/spec/format-v1.md"), [0xff, 0xfe, 0x00]).unwrap();
+        fixture.fails_only("spec", "docs/spec/format-v1.md");
+
+        // Each missing section and each empty table is named, and nothing
+        // else.
+        let fixture = Fixture::new("spec-every-problem");
+        let text = replace(SPEC, "## Conventions\n", "");
+        let text = replace(&text, "## Change control\n", "");
+        fixture.write("docs/spec/format-v1.md", &replace(&text, row, ""));
+        let problems = [
+            "docs/spec/format-v1.md has no \"Conventions\" section",
+            "docs/spec/format-v1.md has no \"Change control\" section",
+            "docs/spec/format-v1.md \"Object kinds\" has no table rows",
+        ];
+        assert_eq!(
+            fixture.failures(),
+            [("spec", problems.map(str::to_owned).to_vec())]
+        );
+
+        // Nothing more is required: a byte-order mark before the first
+        // heading, a closing run of `#`, trailing spaces, a deeper heading
+        // and more columns than the rule needs all pass.
+        let hash_table = "| id | name | digest bytes | status |\n|---|---|---|---|\n\
+                          | `0x01` | `blake3` | 32 | default |";
+        for (i, text) in [
+            format!("\u{feff}{}", replace(SPEC, "# Format\n", "")),
+            replace(SPEC, "## Change control\n", "## Change control ##\n"),
+            replace(SPEC, "## Change control\n", "## Change control \n"),
+            replace(SPEC, "## Change control\n", "## Change control ## \n"),
+            replace(SPEC, "## Change control\n", "#### Change control\n"),
+            replace(
+                SPEC,
+                hash_table,
+                "| id | name | digest bytes | status | notes |\n|---|---|---|---|---|\n\
+                 | `0x01` | `blake3` | 32 | default | BLAKE3-256 |",
+            ),
+            // A cell past the header's columns is not shown, but the row
+            // still has its four.
+            replace(
+                SPEC,
+                "| `0x01` | `blake3` | 32 | default |",
+                "| `0x01` | `blake3` | 32 | default | BLAKE3-256 |",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = Fixture::new(&format!("spec-ok-{i}"));
+            fixture.write("docs/spec/format-v1.md", &text);
+            fixture.passes();
+        }
+    }
+
+    /// The spec counts as GitHub shows it, CommonMark with tables: what it
+    /// shows as code, as a comment, as plain text or not at all is no section
+    /// and no row.
+    #[test]
+    fn policy_reads_the_spec_as_markdown() {
+        let change = "## Change control\n";
+        let row = "| `0x01` | `blob` | defined |\n";
+        let kinds = "| id | kind | status |\n|---|---|---|\n";
+        let no_kinds = "\"Object kinds\" has no table rows";
+        let missing = [
+            // A heading takes one to six `#` and then a space.
+            (
+                "## Conventions\n",
+                "##Conventions\n",
+                "no \"Conventions\" section",
+            ),
+            (
+                "### Object kinds\n",
+                "###Object kinds\n",
+                "no \"Object kinds\" section",
+            ),
+            (
+                "## Signatures (reserved)\n",
+                "####### Signatures (reserved)\n",
+                "no \"Signatures (reserved)\" section",
+            ),
+            // Inside a fenced code block, closed or not, or an HTML comment.
+            (
+                change,
+                "```text\n## Change control\n```\n",
+                "Change control",
+            ),
+            (change, "~~~\n## Change control\n", "Change control"),
+            (change, "<!--\n## Change control\n-->\n", "Change control"),
+            // Only a run of at least as many of the same marker, indented
+            // less than four columns, closes a fence.
+            (
+                change,
+                "````\n```\n## Change control\n````\n",
+                "Change control",
+            ),
+            (
+                change,
+                "~~~\n```\n## Change control\n~~~\n",
+                "Change control",
+            ),
+            (
+                change,
+                "```\n    ```\n## Change control\n```\n",
+                "Change control",
+            ),
+            (row, "```\n| `0x01` | `blob` | defined |\n```\n", no_kinds),
+            (row, "<!--\n| `0x01` | `blob` | defined |\n-->\n", no_kinds),
+            (
+                "| id | name | digest bytes | status |\n",
+                "```text\n| id | name | digest bytes | status |\n",
+                "\"Hash algorithms\" has no table rows",
+            ),
+            // Indented four columns, or by a tab, after a blank line: code.
+            (change, "\n    ## Change control\n", "Change control"),
+            (change, "\n\t## Change control\n", "Change control"),
+            (row, "\n    | `0x01` | `blob` | defined |\n", no_kinds),
+            // A row needs a table: a header row, then a delimiter row with as
+            // many columns indented less than four, and then rows up to a
+            // blank line or a row without a cell. Lines that go on with a
+            // list item's text are none of these.
+            (kinds, "", no_kinds),
+            (kinds, "| id | kind | status |\n|---|---|\n", no_kinds),
+            (kinds, "| id | kind | status |\n|---||---|\n", no_kinds),
+            (
+                kinds,
+                "| id | kind | status |\n    |---|---|---|\n",
+                no_kinds,
+            ),
+            (kinds, "| id | kind | status |\n|---|---|---|\n\n", no_kinds),
+            (row, "|\n| `0x01` | `blob` | defined |\n", no_kinds),
+            (
+                kinds,
+                "- note\n| id | kind | status |\n|---|---|---|\n",
+                no_kinds,
+            ),
+            // An escaped pipe splits no cells.
+            (kinds, "| id \\| kind | status |\n|---|---|---|\n", no_kinds),
+            (row, "| `0x01` \\| `blob` | defined |\n", no_kinds),
+            // A cell past the header's columns is not shown: here the status.
+            (
+                "| id | name | digest bytes | status |\n|---|---|---|---|\n",
+                "| id | name | digest bytes |\n|---|---|---|\n",
+                "\"Hash algorithms\" has no table rows",
+            ),
+            // Other HTML hides what follows it up to a blank line, so the
+            // reading stops there.
+            (
+                change,
+                "<div>\n## Change control\n</div>\n",
+                "Change control",
+            ),
+            // A fence or comment indented as if in a list might be in one,
+            // and then a later fence at the top level is an opening fence.
+            (
+                change,
+                "- note\n  ```\ntext\n```\n## Change control\n```\n",
+                "Change control",
+            ),
+            (
+                change,
+                "- note\n  <!--\n```\n-->\n## Change control\n```\n",
+                "Change control",
+            ),
+            (
+                change,
+                "- ```\n  ## Change control\n  ```\n",
+                "Change control",
+            ),
+            // Renderers disagree on whether a tab may follow a closing fence.
+            (change, "```\n```\t\n## Change control\n", "Change control"),
+            (
+                change,
+                "<div>\n-->\n## Change control\n</div>\n",
+                "Change control",
+            ),
+            (
+                change,
+                "<!--\nretired\n## Change control\n-->\n",
+                "Change control",
+            ),
+            (change, "</div>\n## Change control\n", "Change control"),
+            (change, "<?x\n## Change control\n?>\n", "Change control"),
+            (
+                change,
+                "\n\t```\n```\n## Change control\n```\n",
+                "Change control",
+            ),
+            (kinds, "| id | kind |\n|---|---|---|\n", no_kinds),
+            (
+                kinds,
+                "\n    | id | kind | status\n|---|---|---|---|\n",
+                no_kinds,
+            ),
+            // A heading in a list or a quote, or underlined, ends the section
+            // above it, and one in a list or a quote names none.
+            (row, &format!("- ### Retired\n\n{kinds}{row}"), no_kinds),
+            (row, &format!("* ### Retired\n\n{kinds}{row}"), no_kinds),
+            (row, &format!("1. ### Retired\n\n{kinds}{row}"), no_kinds),
+            (row, &format!("> ### Retired\n\n{kinds}{row}"), no_kinds),
+            (row, &format!("\nRetired\n---\n\n{kinds}{row}"), no_kinds),
+            (row, &format!("\nRetired\n===\n\n{kinds}{row}"), no_kinds),
+            (change, "> ## Change control\n", "Change control"),
+            (change, "- ## Change control\n", "Change control"),
+            // A table in a list or a quote holds no rows the rule counts.
+            (
+                &format!("{kinds}{row}"),
+                "> | id | kind | status |\n> |---|---|---|\n> | `0x01` | `blob` | defined |\n",
+                no_kinds,
+            ),
+            (
+                &format!("{kinds}{row}"),
+                "- | id | kind | status |\n  |---|---|---|\n  | `0x01` | `blob` | defined |\n",
+                no_kinds,
+            ),
+            // A registry row starts with its id as code.
+            (row, "| 0x01 | `blob` | defined |\n", no_kinds),
+            (row, "| *`0x01`* | `blob` | defined |\n", no_kinds),
+        ];
+        for (i, (from, to, needle)) in missing.into_iter().enumerate() {
+            let fixture = Fixture::new(&format!("spec-markdown-{i}"));
+            fixture.write("docs/spec/format-v1.md", &replace(SPEC, from, to));
+            fixture.fails_only("spec", needle);
+        }
+
+        // Each of these shows every section and row.
+        for (i, text) in [
+            replace(SPEC, change, " ## Change control\n"),
+            replace(SPEC, change, "##\tChange control\n"),
+            // A heading's text is what it shows, code spans and lines joined.
+            replace(SPEC, change, "## `Change control`\n"),
+            replace(SPEC, change, "## Change `control`\n"),
+            replace(SPEC, change, "Change\ncontrol\n---\n"),
+            replace(SPEC, change, "## Change *control*\n"),
+            replace(
+                SPEC,
+                change,
+                "```text\n## Fenced\n````\n<!-- a -->\n<!--\nb\n-->\n## Change control\n",
+            ),
+            replace(SPEC, change, "``` `not a fence` ```\n## Change control\n"),
+            replace(SPEC, kinds, &format!("\n{kinds}")),
+            replace(SPEC, kinds, &format!("```\ncode\n```\n{kinds}")),
+            replace(SPEC, kinds, &format!("<!-- note -->\n{kinds}")),
+            replace(SPEC, kinds, "| id | kind | status |\n|:---|:---:|---:|\n"),
+            replace(SPEC, kinds, "| id | kind | status\n|---|---|---\n"),
+            replace(SPEC, row, &format!("  {row}")),
+            SPEC.replace('\n', "\r\n"),
+            SPEC.replace('\n', "\r"),
+            // A lone CR ends a line in a fence and in a comment too.
+            replace(
+                SPEC,
+                change,
+                "```\n## Fenced\n```\n<!--\n## Hidden\n-->\n## Change control\n",
+            )
+            .replace('\n', "\r"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = Fixture::new(&format!("spec-markdown-ok-{i}"));
+            fixture.write("docs/spec/format-v1.md", &text);
+            fixture.passes();
         }
     }
 
@@ -1451,6 +1984,20 @@ mod tests {
         );
         fixture.fails_only("names", "crates/old");
 
+        // An `exclude` entry covers whole path components: `crates/old` does
+        // not exclude `crates/older`.
+        let fixture = Fixture::new("members-exclude-prefix");
+        fixture.write(
+            "Cargo.toml",
+            &replace(
+                WORKSPACE,
+                "\"crates/*\"]",
+                "\"crates/*\"]\nexclude = [\"crates/old\"]",
+            ),
+        );
+        fixture.write("crates/older/Cargo.toml", &member("Older", ""));
+        fixture.fails_only("names", "crates/older");
+
         // The root package is a member, and so is a path dependency inside the root.
         let fixture = Fixture::new("members-root");
         fixture.write(
@@ -1474,5 +2021,37 @@ mod tests {
         );
         fixture.write("tools/tool/Cargo.toml", &member("Tool", ""));
         fixture.fails_only("names", "tools/tool");
+
+        // Cargo follows path dependencies from each member it adds, at any depth.
+        let fixture = Fixture::new("members-nested-path");
+        fixture.write(
+            "Cargo.toml",
+            &replace(
+                WORKSPACE,
+                "hash = { path = \"crates/hash\" }",
+                "hash = { path = \"crates/hash\" }\ntool = { path = \"tools/tool\" }\n\
+                 util = { path = \"tools/util\" }",
+            ),
+        );
+        fixture.write(
+            "crates/hash/Cargo.toml",
+            &member("hash", "tool.workspace = true"),
+        );
+        fixture.write(
+            "tools/tool/Cargo.toml",
+            &member("tool", "util.workspace = true"),
+        );
+        fixture.write("tools/util/Cargo.toml", &member("Util", ""));
+        fixture.fails_only("names", "tools/util");
+
+        // A member's own `path` dependency is a member too; `deps` flags the
+        // entry itself.
+        let fixture = Fixture::new("members-own-path");
+        fixture.write(
+            "crates/hash/Cargo.toml",
+            &member("hash", "tool = { path = \"../../tools/tool\" }"),
+        );
+        fixture.write("tools/tool/Cargo.toml", &member("Tool", ""));
+        fixture.fails_exactly(&["deps", "names"], &["tool"]);
     }
 }

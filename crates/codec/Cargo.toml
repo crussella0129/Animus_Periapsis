@@ -14,6 +14,7 @@ hash.workspace = true
 [dev-dependencies]
 allocation-counter.workspace = true
 proptest.workspace = true
+pulldown-cmark.workspace = true
 
 [lints]
 workspace = true
