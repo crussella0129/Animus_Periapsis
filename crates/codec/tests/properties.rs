@@ -349,29 +349,63 @@ fn trailing_bytes_rejected() {
     );
 }
 
+/// Every version and kind byte, each with an empty and a one-byte body. The
+/// expected results are the spec's version rule and kind table written out by
+/// hand, not taken from the code they check, and the class counts fail a
+/// sweep that skips ids.
 #[test]
 fn envelope_rejects_unknown_version_and_kind() {
     let blob = blob(b"content");
     assert_eq!(decode_envelope(&blob).unwrap().kind, ObjectKind::Blob);
     assert_eq!(decode_envelope(&blob).unwrap().body, b"content");
-    for version in [0u8, 2] {
-        assert_eq!(
-            decode_envelope(&[version, 0x01]),
-            Err(DecodeError::UnsupportedFormatVersion { version })
-        );
+
+    let mut versions = BTreeMap::new();
+    for version in 0..=u8::MAX {
+        let (class, expected) = match version {
+            0x01 => ("supported", Ok(ObjectKind::Blob)),
+            _ => (
+                "unsupported",
+                Err(DecodeError::UnsupportedFormatVersion { version }),
+            ),
+        };
+        for envelope in [&[version, 0x01][..], &[version, 0x01, 0x00]] {
+            let decoded = decode_envelope(envelope).map(|envelope| envelope.kind);
+            assert_eq!(
+                decoded, expected,
+                "version {version:#04x}, envelope {envelope:02x?}"
+            );
+        }
+        *versions.entry(class).or_insert(0) += 1;
     }
-    for kind in [0x02u8, 0x03, 0x04, 0x05] {
-        assert_eq!(
-            decode_envelope(&[0x01, kind]),
-            Err(DecodeError::ReservedObjectKind { kind })
-        );
+    assert_eq!(
+        versions,
+        BTreeMap::from([("supported", 1), ("unsupported", 255)])
+    );
+
+    // `from_id` is the lookup the decoder uses, so it must agree id for id.
+    let mut kinds = BTreeMap::new();
+    for kind in 0..=u8::MAX {
+        let (class, expected) = match kind {
+            0x01 => ("defined", Ok(ObjectKind::Blob)),
+            0x02..=0x05 => ("reserved", Err(DecodeError::ReservedObjectKind { kind })),
+            // 0x00 is invalid and 0x06 to 0xff are unassigned.
+            _ => ("unknown", Err(DecodeError::UnknownObjectKind { kind })),
+        };
+        for envelope in [&[0x01, kind][..], &[0x01, kind, 0x00]] {
+            let decoded = decode_envelope(envelope).map(|envelope| envelope.kind);
+            assert_eq!(
+                decoded, expected,
+                "kind {kind:#04x}, envelope {envelope:02x?}"
+            );
+        }
+        assert_eq!(ObjectKind::from_id(kind), expected, "from_id({kind:#04x})");
+        *kinds.entry(class).or_insert(0) += 1;
     }
-    for kind in [0x00u8, 0x06, 0xff] {
-        assert_eq!(
-            decode_envelope(&[0x01, kind]),
-            Err(DecodeError::UnknownObjectKind { kind })
-        );
-    }
+    assert_eq!(
+        kinds,
+        BTreeMap::from([("defined", 1), ("reserved", 4), ("unknown", 251)])
+    );
+
     assert!(matches!(
         decode_envelope(&[0x01]),
         Err(DecodeError::UnexpectedEnd { .. })
