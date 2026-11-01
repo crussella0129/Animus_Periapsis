@@ -1,6 +1,6 @@
 # Sprint 0 Integration Test Results
 
-- **Tested head:** `24d01f55cad930f8430289996efe84eea56dfce0` on `dev`, committed. `git status --porcelain` printed nothing in the Windows working checkout before and after the runs; the WSL runs check their own clone. The head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques. Later commits change only the Book.
+- **Tested head:** `94f736378f5643701f8bd3d1ced4e1346a5dd691` on `dev`, committed. `git status --porcelain` printed nothing in the Windows working checkout before and after the runs; the WSL runs check their own clone. The head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques. Later commits change only the Book.
 - **Canonical runner:** `cargo ci` (steps fmt, clippy, test, policy, book). `cargo deny check` (cargo-deny 0.20.2) runs beside it.
 - **Raw output:** [test-matrix-log.md](test-matrix-log.md). It holds the final run, which produced every result below except the two task-boundary deny runs, and the scripts that ran it.
 - **Toolchain:** rustc 1.99.1 (58cf8f9c3 2026-10-13), LLVM 23.1.1, installed from `rust-toolchain.toml` on each host. Git 2.56.0.windows.3 on Windows, Git 2.53.0 in WSL.
@@ -24,7 +24,7 @@
 ### `int_ci_windows`
 - **Intents:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-4 (local half), [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-1, [INT-0006](../../../intents/INT-0006-format-v1.md) AC-3 (local half), [INT-0002](../../../intents/INT-0002-typed-acceptance-criteria.md) AC-2
 - **Run:** `cargo ci` in the Windows working checkout.
-- **Observed:** `PASS fmt`, `PASS clippy`, `PASS test`, `PASS policy`, `PASS book`, then `ci: all 5 steps passed`; exit 0. A separate `cargo test --workspace --locked` in the same checkout listed 151 tests passed ([unit-tests.md](unit-tests.md)).
+- **Observed:** `PASS fmt`, `PASS clippy`, `PASS test`, `PASS policy`, `PASS book`, then `ci: all 5 steps passed`; exit 0. A separate `cargo test --workspace --locked` in the same checkout listed 153 tests passed ([unit-tests.md](unit-tests.md)).
 - **Result:** pass
 
 ### `int_ci_reports_failures` (added in the Test phase)
@@ -85,9 +85,9 @@
 - **Intents:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-4 (local half), [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-1, [INT-0006](../../../intents/INT-0006-format-v1.md) AC-3 (local half)
 - **Run:** clone the committed `dev` head into the WSL ext4 home directory, install the pinned toolchain, run `cargo ci`, then list the tests with `cargo test --workspace --locked`.
 - **Observed:**
-  - The clone's head is `24d01f5` and `df` reports ext4.
+  - The clone's head is `94f7363` and `df` reports ext4.
   - `cargo ci` printed `PASS` for all five steps, then `ci: all 5 steps passed`; exit 0.
-  - 151 tests passed on Linux, the same count as on Windows.
+  - 153 tests passed on Linux, the same count as on Windows.
   - The golden test ran inside the `test` step, so the 23 `.bin` files matched the Linux encoder byte for byte.
   - `PASS policy` includes the golden rule: Git, run against the rule's private repository in this fresh clone, gave all 23 `.bin` files and the `probe.bin` path `text: unset` and no filter, `ident` or working-tree encoding.
 - **Result:** pass
@@ -122,7 +122,7 @@
   3. Run `cargo clippy --workspace --all-targets -- -D warnings`, building into the clone's own target directory.
   4. Delete the clone.
 - **Observed:**
-  - HashMap clone (at `24d01f5`, 1 file changed): "error: use of a disallowed type `std::collections::HashMap`", exit 101.
-  - HashSet clone (at `24d01f5`, 1 file changed): "error: use of a disallowed type `std::collections::HashSet`", exit 101.
+  - HashMap clone (at `94f7363`, 1 file changed): "error: use of a disallowed type `std::collections::HashMap`", exit 101.
+  - HashSet clone (at `94f7363`, 1 file changed): "error: use of a disallowed type `std::collections::HashSet`", exit 101.
   - Both clones were removed.
 - **Result:** pass

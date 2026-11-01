@@ -1,6 +1,6 @@
 # Sprint 0 Test Matrix Log
 
-The raw output of the final test-matrix run at `24d01f5`, produced by the scripts reproduced at the end of this page: `test_matrix.sh`, its WSL leg `wsl_ci.sh`, and `port_corpus.py`. [integration-tests.md](integration-tests.md) and [e2e-tests.md](e2e-tests.md) summarize it.
+The raw output of the final test-matrix run at `94f7363`, produced by the scripts reproduced at the end of this page: `test_matrix.sh`, its WSL leg `wsl_ci.sh`, and `port_corpus.py`. [integration-tests.md](integration-tests.md) and [e2e-tests.md](e2e-tests.md) summarize it.
 
 ```text
 
@@ -17,7 +17,7 @@ cargo-deny 0.20.2
 git version 2.56.0.windows.3
 PROPTEST_*, PERI_*, CLIPPY_CONF_DIR, CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR or GIT_* set: GIT_EDITOR 
 cargo config files above the checkouts: 
-head 24d01f55cad930f8430289996efe84eea56dfce0 on dev; uncommitted paths: 0
+head 94f736378f5643701f8bd3d1ced4e1346a5dd691 on dev; uncommitted paths: 0
 target directory: C:\Users\charl\Animus_Periapsis\target
 
 ==== int_ci_windows (working checkout, NTFS)
@@ -42,7 +42,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
      Running tests\book.rs
 test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.92s
      Running tests\cli.rs
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
      Running unittests src\lib.rs
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests\alloc.rs
@@ -52,19 +52,19 @@ test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
      Running tests\mutants.rs
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
      Running tests\properties.rs
-test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.73s
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.75s
      Running tests\spec.rs
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running unittests src\lib.rs
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests\vectors.rs
-test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.47s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.66s
      Running unittests src\main.rs
-test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.00s
+test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.24s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-tests passed: 151
+tests passed: 153
 
 ==== int_cc_build_dependency_audit
 cc v1.10.0
@@ -77,12 +77,12 @@ C-build yes rows:
   `blake3` 
 
 ==== int_disallowed_types_probe (two scratch clones, discarded)
--- planted std::collections::HashMap at 24d01f5:  1 file changed, 5 insertions(+)
+-- planted std::collections::HashMap at 94f7363:  1 file changed, 5 insertions(+)
 target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
 error: use of a disallowed type `std::collections::HashMap`
 clippy exit 101 (non-zero required)
 scratch clone removed: yes
--- planted std::collections::HashSet at 24d01f5:  1 file changed, 5 insertions(+)
+-- planted std::collections::HashSet at 94f7363:  1 file changed, 5 insertions(+)
 target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
 error: use of a disallowed type `std::collections::HashSet`
 clippy exit 101 (non-zero required)
@@ -166,17 +166,17 @@ cargo policy exit 1 (1 required)
 scratch clone removed: yes
 
 ==== e2e_fresh_clone_windows (core.autocrlf=true)
-clone head 24d01f55cad930f8430289996efe84eea56dfce0, core.autocrlf=true
+clone head 94f736378f5643701f8bd3d1ced4e1346a5dd691, core.autocrlf=true
 target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\e2e-autocrlf\target
 golden: all 23 .bin files byte-identical to the original
-tracked files: 126; with CRLF or mixed line ends in the working tree: 0
+tracked files: 127; with CRLF or mixed line ends in the working tree: 0
 PASS fmt
 PASS clippy
 PASS test
 PASS policy
 PASS book
 ci: all 5 steps passed
-cargo ci exit 0 (cold build, 47 s)
+cargo ci exit 0 (cold build, 46 s)
 
 ==== e2e_port_rule_sprint_loops_book
 Animus_Sprint_Loops head e8c3a58018e1627a145759fdac1f089c6236ba36, uncommitted paths: 0
@@ -243,7 +243,7 @@ markdown-it-py 4.0.0
 port_corpus exit 0
   Animus_Amalgam: 7a6786b3e1, docs/intents uncommitted: 0
   Animus_Ferric: 508edfd, docs/intents uncommitted: 0
-  Animus_Periapsis: 24d01f5, docs/intents uncommitted: 0
+  Animus_Periapsis: 94f7363, docs/intents uncommitted: 0
   Animus_Sprint_Loops: e8c3a58, docs/intents uncommitted: 0
   Animus_Unitarity: 4f82372, docs/intents uncommitted: 0
   CubiKan: 77642b4, docs/intents uncommitted: 0
@@ -274,7 +274,7 @@ git version 2.53.0
 PROPTEST_*, PERI_*, CLIPPY_CONF_DIR, CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR or GIT_* set: none
 cargo config files above the checkouts: 
 == clone
-head 24d01f55cad930f8430289996efe84eea56dfce0
+head 94f736378f5643701f8bd3d1ced4e1346a5dd691
 checkout on ext4
 rustc 1.99.1 (58cf8f9c3 2026-10-13)
 binary: rustc
@@ -292,7 +292,7 @@ PASS policy
 PASS book
 ci: all 5 steps passed
 cargo ci exit 0
-tests passed on Linux: 151
+tests passed on Linux: 153
 == int_tooling_is_idempotent
 run 1 cargo ci: exit 0, dirty files 0
 run 1 cargo policy: exit 0, dirty files 0
@@ -359,7 +359,7 @@ wsl exit 0
 
 ==== after
 working checkout uncommitted paths: 0
-tested head 24d01f55cad930f8430289996efe84eea56dfce0
+tested head 94f736378f5643701f8bd3d1ced4e1346a5dd691
 ```
 
 ## Scripts

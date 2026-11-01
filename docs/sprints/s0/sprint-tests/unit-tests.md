@@ -1,8 +1,8 @@
 # Sprint 0 Unit Test Results
 
-- **Tested head:** `24d01f55cad930f8430289996efe84eea56dfce0` on `dev`, committed, with a clean working tree. Later commits change only the Book. This head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques ([round 1](critique-round1.md), [round 2](critique-round2.md), [round 3](critique-round3.md), [round 4](critique-round4.md)).
+- **Tested head:** `94f736378f5643701f8bd3d1ced4e1346a5dd691` on `dev`, committed, with a clean working tree. Later commits change only the Book. This head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques ([round 1](critique-round1.md), [round 2](critique-round2.md), [round 3](critique-round3.md), [round 4](critique-round4.md), [round 5](critique-round5.md)).
 - **Runner:** the `test` step of `cargo ci`, which runs `cargo test --workspace --locked`. The listing below comes from running that command directly in the Windows working checkout, as recorded in [integration-tests.md](integration-tests.md).
-- **Result:** 151 passed, 0 failed, 0 ignored, on the Windows 11 working checkout and in the WSL Ubuntu 26.04.1 ext4 clone. The `test` step also passed in the fresh `core.autocrlf=true` Windows clone ([e2e-tests.md](e2e-tests.md)). No test is platform-gated or `#[ignore]`d: `cfg(windows)` and `cfg(unix)` mark only helper pairs (`non_unicode_name` and its xtask counterpart), each with both variants. Both systems ran the same 151 tests.
+- **Result:** 153 passed, 0 failed, 0 ignored, on the Windows 11 working checkout and in the WSL Ubuntu 26.04.1 ext4 clone. The `test` step also passed in the fresh `core.autocrlf=true` Windows clone ([e2e-tests.md](e2e-tests.md)). No test is platform-gated or `#[ignore]`d: `cfg(windows)` and `cfg(unix)` mark only helper pairs (`non_unicode_name` and its xtask counterpart), each with both variants. Both systems ran the same 153 tests.
 - **Toolchain:** rustc 1.99.1 (58cf8f9c3 2026-10-13), LLVM 23.1.1, on `x86_64-pc-windows-msvc` and `x86_64-unknown-linux-gnu`.
 - **Randomness:** property tests use proptest 1.12 with fixed case counts: 10,000 cases per property in `hash`, `codec` and `book`, and 100,000 for decoder totality.
   - The seed is random on each run. proptest stores a failing seed under `proptest-regressions/` and replays it first next time; `PROPTEST_RNG_SEED` replays any seed.
@@ -12,8 +12,8 @@
 
 | Target | Tests |
 |--------|-------|
-| `xtask` unit tests (`policy`, `attributes`, `ci`, `deny`, `workflow`, `workspace`, `docs`, front end) | 48 |
-| `hash` `tests/vectors.rs` | 12 |
+| `xtask` unit tests (`policy`, `attributes`, `ci`, `deny`, `workflow`, `workspace`, `docs`, front end) | 49 |
+| `hash` `tests/vectors.rs` | 13 |
 | `codec` `tests/properties.rs` | 40 |
 | `codec` `tests/alloc.rs` | 3 |
 | `codec` `tests/mutants.rs` | 1 |
@@ -21,7 +21,7 @@
 | `codec` `tests/spec.rs` | 2 |
 | `book` `tests/book.rs` | 33 |
 | `book` `tests/cli.rs` | 4 |
-| **Total** | **151** |
+| **Total** | **153** |
 
 Each table below maps one task's EARS clauses (from the locked [build plan](../sprint-plans/build-plan.md)) to the tests that assert them. Where a clause is verified by an integration or E2E run, the table names that run instead. Tests added for code-review findings sit beside the clause they strengthen. [code-review.md](code-review.md) maps each finding to its regression test.
 
@@ -44,7 +44,7 @@ Each table below maps one task's EARS clauses (from the locked [build plan](../s
 | a member uses `HashMap` or `HashSet` → Clippy fails on `disallowed_types` | `int_disallowed_types_probe` (integration: `HashMap` and `HashSet`, each in its own clone) | pass |
 | a package name outside `[a-z][a-z0-9]*` → FAIL `names`, for any workspace package | `policy_requires_single_word_names` (`peri-hash`, `Hash`, `hash_ref` and `9hash` fail; `hash` and `sha256` pass). `policy_finds_members_like_cargo`: a member outside `crates/*` is checked. `policy_refuses_member_patterns_it_cannot_expand` covers `[...]` and `**` | pass |
 | any argument besides the command → exit 2, usage on stderr | `policy_rejects_extra_arguments`, `non_unicode_arguments_are_usage_errors` (both also assert empty stdout) | pass |
-| `cargo deny check` at the task boundary → four checks ok, recorded | `int_deny_at_t001` (integration). The licences `deny.toml` allows are themselves all GPL-3.0-compatible (INT-0003 AC-3): `deny_allows_only_gpl3_compatible_licences`, and `incompatible_licences_are_named` for the main list, both forms of per-crate exception and an unreadable policy | pass |
+| `cargo deny check` at the task boundary → four checks ok, recorded | `int_deny_at_t001` (integration). The licences `deny.toml` allows are themselves all GPL-3.0-compatible (INT-0003 AC-3): `deny_allows_only_gpl3_compatible_licences`, and `incompatible_licences_are_named` for the main list, both forms of per-crate exception, an identifier that only starts with an allowed one, and an unreadable policy. `deny.toml` may not hide crates from cargo-deny through `[graph] exclude` or `[licenses] clarify` (`settings_that_hide_licences_are_named`) | pass |
 | (all rules) manifests are read as Cargo reads them | `policy_reads_manifests_as_toml`: multi-line arrays, `path="…"`, dotted keys, `publish = { workspace = true }`. Also `policy_flags_invalid_toml`, `policy_ignores_byte_order_marks`, `wildcards_match_within_a_component` and `paths_resolve_inside_the_root` | pass |
 
 ## T-002: Format v1 specification
@@ -69,7 +69,7 @@ The spec landed in `951be4f`, before the hash code (`0fdb12a`) and the codec cod
 | a digest of the wrong length → `DigestLength { expected, actual }` | `wrong_digest_length_rejected` (0, 31 and 33 bytes, both algorithms) | pass |
 | equal digests under different algorithms → unequal, ordered by id first | `equal_digest_different_alg_unequal` | pass |
 | binary round trip; unknown id, truncation and trailing bytes rejected | `binary_round_trip` (property, 10,000 cases), `binary_rejects_malformed` | pass |
-| text form `<name>:<lowercase hex>` round trip; uppercase, unknown name, odd or wrong length and a missing `:` rejected | `text_round_trip` (property, 10,000 cases). `text_rejects_malformed` asserts the exact error for each case, including 65 digits and an uppercase or mixed-case name with valid hex | pass |
+| text form `<name>:<lowercase hex>` round trip; uppercase, unknown name, odd or wrong length and a missing `:` rejected | `text_form_matches_the_spec`: the spec's BLAKE3 example and SHA-256 of "abc" as fixed strings, rendered and parsed. `text_round_trip` (property, 10,000 cases). `text_rejects_malformed` asserts the exact error for each case, including 65 digits and an uppercase or mixed-case name with valid hex | pass |
 | chunked `Hasher::update` → equals one-shot, both algorithms | `incremental_matches_one_shot` (property, 10,000 cases); `case_count_is_not_overridden` | pass |
 | `cc`'s direct dependents equal the C-build `yes` rows; `blake3 feature "pure"` resolved | `int_cc_build_dependency_audit` (integration) | pass |
 | `cargo policy` and `cargo deny check` at the boundary → pass, recorded | `int_deny_at_t003` (integration); T-003 completion entry | pass |
@@ -82,7 +82,7 @@ The spec landed in `951be4f`, before the hash code (`0fdb12a`) and the codec cod
 | `u64` → minimal LEB128: `00`, `7f`, `80 01`, `ac 02`, `ff … 01` | `varint_known_encodings` (both directions) | pass |
 | `80 00`, an 11-byte varint or a tenth byte of `02` as a `Vec<u64>`'s second element → `NonMinimalVarint` or `VarintOverflow` at 2 | `varint_rejects_non_canonical`; `truncated_varint_located_at_its_start` (a cut-off varint is reported at 2, where it starts) | pass |
 | `u32` from `80 80 80 80 10` → `IntegerOutOfRange`; from `ff ff ff ff 0f` → `u32::MAX` | `u32_range_is_enforced` | pass |
-| bad bool, option tag or UTF-8 as a second element → the named error at its offset (UTF-8 at the first content byte) | `decode_rejects_invalid_primitives` | pass |
+| bad bool, option tag or UTF-8 as a second element → the named error at its offset (UTF-8 at the first content byte) | `decode_rejects_invalid_primitives`, with UTF-8 fixtures that separate the first content byte from the first invalid byte and from one past the length prefix's start | pass |
 | a `u64::MAX` length or count prefix → `UnexpectedEnd { at: 2 }` without allocating | `oversize_prefixes_rejected_without_allocation`; `overrun_reports_bytes_still_needed` (`needed` is the shortfall; the message is true). `hostile_hash_count_reserves_nothing` and `hostile_pair_count_reserves_nothing` cap a rejected input's peak heap below 1,024 bytes. `valid_vec_grows_as_it_decodes` | pass |
 | map or set keys not strictly increasing → `UnsortedOrDuplicateKey` at the offending key | `maps_and_sets_require_strictly_increasing_keys` | pass |
 | bytes after the value → `TrailingBytes` | `trailing_bytes_rejected` | pass |
@@ -132,12 +132,12 @@ The validator reads chapters as CommonMark (pulldown-cmark), the way GitHub rend
 | EARS clause (WHEN → SHALL) | Test | Result |
 |----------------------------|------|--------|
 | `cargo ci` → exactly fmt, clippy, test, policy, book in order, one PASS or FAIL line each | `ci_steps_are_ordered_and_locked` (the whole step list, commands included); every `cargo ci` run in the integration and E2E records | pass |
-| two failing steps, one a missing tool → every step runs, non-zero exit, both named | `ci_failures_do_not_stop_later_steps` (the loop, with scripted outcomes); `steps_execute_for_real` (an unknown cargo subcommand and a program that does not exist give FAIL with their reason); `book_step_fails_on_a_violation` (a Book with violations fails the `book` step with their count); `int_ci_reports_failures` (integration, Windows and WSL: a real `cargo ci` with three failing steps, `book` among them, prints each and exits 1) | pass |
+| two failing steps, one a missing tool → every step runs, non-zero exit, both named | `ci_failures_do_not_stop_later_steps` (the loop, with scripted outcomes); `steps_execute_for_real` (an unknown cargo subcommand and a program that does not exist give FAIL with their reason); `book_step_fails_on_a_violation` (a Book with violations fails the `book` step with their count); `int_ci_reports_failures` (integration, Windows and WSL: a real `cargo ci` with fmt and test failing prints both, `ci: failed: fmt, test`, and exits 1); `int_ci_reports_book_violation` (the same with test and book failing, `ci: failed: test, book`) | pass |
 | any argument besides the command → exit 2, usage on stderr | `ci_rejects_extra_arguments`, `non_unicode_arguments_are_usage_errors` | pass |
 | the `test` step → `PERI_GOLDEN_CREATE` removed from its environment | `test_step_removes_golden_create` (and `PROPTEST_CASES`, `CLIPPY_CONF_DIR`); `proptest_variables_are_never_inherited`; `int_ci_ignores_hostile_environment` (integration: a deleted golden file is not recreated) | pass |
 | `cargo ci` on the three checkouts → all PASS, exit 0, OS and `rustc -Vv` recorded | `int_ci_windows`, `int_ci_wsl`, `e2e_fresh_clone_windows` | pass |
 | `cargo ci`, `cargo policy` and `cargo book` twice each → exit 0, one counted line per chapter, clean tree | `int_tooling_is_idempotent` | pass |
-| the workflow file → push on `dev` and `main`, `pull_request`, the two-OS matrix running `cargo ci`, a `deny` job, no swallowed failures | `workflow_matches_ci_contract`: each point is checked on its own job, and 19 mutants fail. `workflow_forms_read_alike` | pass |
+| the workflow file → push on `dev` and `main`, `pull_request`, the two-OS matrix running `cargo ci`, a `deny` job, no swallowed failures | `workflow_matches_ci_contract`: each point is checked on its own job, and 19 mutants fail. The deny job must run every check on this workspace: eleven narrowed deny steps must not count and three full forms must. `workflow_forms_read_alike` | pass |
 
 ## T-008: README and documentation checks
 - **Intent:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-5 (supporting), AC-10
