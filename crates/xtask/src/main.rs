@@ -6,6 +6,8 @@
 mod attributes;
 mod ci;
 #[cfg(test)]
+mod deny;
+#[cfg(test)]
 mod docs;
 mod manifest;
 mod policy;

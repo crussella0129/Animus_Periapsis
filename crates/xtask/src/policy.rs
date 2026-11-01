@@ -836,25 +836,35 @@ mod tests {
                      [lints]\nworkspace = true\n"
                 ),
             );
-            fixture.fails_exactly(&["deps"], &["crates/hash", "`foo`"]);
+            let header = format!("[{table}]");
+            fixture.fails_exactly(&["deps"], &["crates/hash", "`foo`", header.as_str()]);
         }
-        for (i, (table, name)) in [
-            ("[dependencies.foo]\nversion = \"1\"\n", "`foo`"),
+        // Each form names the crate, the dependency and the table it is in.
+        for (i, (table, name, header)) in [
+            (
+                "[dependencies.foo]\nversion = \"1\"\n",
+                "`foo`",
+                "[dependencies]",
+            ),
             (
                 "[dependencies]\nfoo = { version = \"1\", workspace = false }\n",
                 "`foo`",
+                "[dependencies]",
             ),
             (
                 "[target.'cfg(windows)'.dependencies]\nwindows-sys = \"0.59\"\n",
                 "`windows-sys`",
+                "[target.'cfg(windows)'.dependencies]",
             ),
             (
                 "[target.'cfg(unix)'.build-dependencies]\ncc = \"1\"\n",
                 "`cc`",
+                "[target.'cfg(unix)'.build-dependencies]",
             ),
             (
                 "[target.'cfg(unix)'.dev-dependencies.libc]\nversion = \"0.2\"\n",
                 "`libc`",
+                "[target.'cfg(unix)'.dev-dependencies]",
             ),
         ]
         .into_iter()
@@ -867,7 +877,7 @@ mod tests {
                     "[package]\nname = \"hash\"\npublish.workspace = true\n\n{table}\n[lints]\nworkspace = true\n"
                 ),
             );
-            fixture.fails_exactly(&["deps"], &["crates/hash", name]);
+            fixture.fails_exactly(&["deps"], &["crates/hash", name, header]);
         }
 
         let fixture = Fixture::new("deps-target-inherited");
