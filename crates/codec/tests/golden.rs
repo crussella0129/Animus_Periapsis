@@ -111,7 +111,10 @@ fn check_golden(dir: &Path, cases: &[Case], create: bool) -> Vec<String> {
                     ));
                 }
                 if let Err(error) = (case.decodes)(&file) {
-                    failures.push(format!("{}.bin: file does not decode: {error}", case.name));
+                    failures.push(format!(
+                        "{}.bin: file does not decode to its value: {error}",
+                        case.name
+                    ));
                 }
             }
             Err(_) if create => {
@@ -154,35 +157,73 @@ fn golden_changed_file_fails() {
     bytes[3] ^= 0x01;
     fs::write(&changed, &bytes).unwrap();
 
-    // The file no longer matches the encoder, and no longer holds the value.
-    let failures = check_golden(&dir, &cases, false);
-    assert_eq!(failures.len(), 2, "{failures:?}");
-    assert!(
-        failures[0].starts_with("string-ascii.bin: encoding changed"),
-        "{failures:?}"
-    );
-    assert!(
-        failures[1].starts_with("string-ascii.bin: file does not decode"),
-        "{failures:?}"
+    // The harness compares the bytes first, then decodes the file: the file
+    // no longer matches the encoder, and no longer holds the value.
+    assert_eq!(
+        check_golden(&dir, &cases, false),
+        [
+            "string-ascii.bin: encoding changed (file 10 bytes, encoder 10 bytes)",
+            "string-ascii.bin: file does not decode to its value: decoded \"pesiapsis\", expected \"periapsis\"",
+        ]
     );
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// The corpus with the encoder's output for two cases changed while their
+/// committed files still decode to the values: only the byte comparison can
+/// catch it, once with equal lengths and once without.
+fn changed_encoder() -> (Vec<Case>, [&'static str; 2]) {
+    let mut cases = corpus();
+    for case in &mut cases {
+        match case.name {
+            "uvarint-0" => case.bytes = vec![0x01],
+            "uvarint-127" => case.bytes = vec![0xff, 0x00],
+            _ => {}
+        }
+    }
+    let failures = [
+        "uvarint-0.bin: encoding changed (file 1 bytes, encoder 1 bytes)",
+        "uvarint-127.bin: encoding changed (file 1 bytes, encoder 2 bytes)",
+    ];
+    (cases, failures)
+}
+
 #[test]
 fn golden_encoder_change_fails() {
-    // The encoder's output changed while the committed file still decodes to
-    // the value, so only the byte comparison can catch it.
     let dir = scratch_dir("encoder");
     assert!(check_golden(&dir, &corpus(), true).is_empty());
-    let mut changed = corpus();
-    let case = changed
-        .iter_mut()
-        .find(|case| case.name == "uvarint-0")
-        .unwrap();
-    case.bytes = vec![0x01];
+    let (changed, failures) = changed_encoder();
+    assert_eq!(check_golden(&dir, &changed, false), failures);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn golden_encoder_change_fails_in_create_mode() {
+    // Create mode writes only missing files: existing ones still fail, and
+    // are left as committed.
+    let dir = scratch_dir("encoder-create");
+    assert!(check_golden(&dir, &corpus(), true).is_empty());
+    let (changed, failures) = changed_encoder();
+    assert_eq!(check_golden(&dir, &changed, true), failures);
+    assert_eq!(fs::read(dir.join("uvarint-0.bin")).unwrap(), [0x00]);
+    assert_eq!(fs::read(dir.join("uvarint-127.bin")).unwrap(), [0x7f]);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn golden_undecodable_file_fails() {
+    // The encoder and the file agree on bytes that do not decode: only the
+    // decode check can catch it.
+    let dir = scratch_dir("undecodable");
+    let mut cases = corpus();
+    cases.retain(|case| case.name == "uvarint-0");
+    cases[0].bytes = vec![0x80];
+    assert!(check_golden(&dir, &cases, true).is_empty());
     assert_eq!(
-        check_golden(&dir, &changed, false),
-        ["uvarint-0.bin: encoding changed (file 1 bytes, encoder 1 bytes)"]
+        check_golden(&dir, &cases, false),
+        [
+            "uvarint-0.bin: file does not decode to its value: value at byte 0 is truncated; 1 more bytes needed"
+        ]
     );
     let _ = fs::remove_dir_all(&dir);
 }
