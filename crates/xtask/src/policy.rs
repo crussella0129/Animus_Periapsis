@@ -8,10 +8,10 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use toml_edit::{DocumentMut, Item, Value};
 
+use crate::attributes;
 use crate::manifest::{dependency_tables, is_true, load, lookup, read_text, strings};
 use crate::workspace::members;
 
@@ -411,46 +411,19 @@ fn spec(root: &Path, _members: &[PathBuf]) -> Vec<String> {
     problems
 }
 
-/// Golden encodings must reach every platform byte for byte, so Git must
-/// treat them as binary (INT-0006 AC-3, INT-0004 AC-1). Later lines and
-/// deeper `.gitattributes` files override earlier ones, so the rule asks Git
-/// for its verdict rather than reading one file.
+/// Golden encodings must reach every platform byte for byte, so the
+/// workspace's `.gitattributes` files must make Git treat them as binary
+/// (INT-0006 AC-3, INT-0004 AC-1). Later lines and deeper files override
+/// earlier ones, so Git evaluates the files (see `attributes`), inside a
+/// checkout or out of one.
 fn golden(root: &Path, _members: &[PathBuf]) -> Vec<String> {
-    // Outside a Git checkout, such as an unpacked source archive, Git converts
-    // nothing; a broken `.git` still fails below.
-    if !root.join(".git").exists() {
-        return Vec::new();
+    match attributes::value(root, "text", GOLDEN_PROBE) {
+        Ok(text) if text == "unset" => Vec::new(),
+        Ok(text) => vec![format!(
+            "*.bin files are not binary: the .gitattributes files give them `text: {text}`"
+        )],
+        Err(problem) => vec![format!("*.bin files cannot be checked: {problem}")],
     }
-    let output = Command::new("git")
-        .args(["check-attr", "text", "--", GOLDEN_PROBE])
-        .current_dir(root)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        // Git's own messages, quoted below, in one language everywhere.
-        .env("LC_ALL", "C")
-        .output();
-    let output = match output {
-        Ok(output) => output,
-        Err(error) => {
-            return vec![format!(
-                "*.bin files cannot be checked: could not run git: {error}"
-            )];
-        }
-    };
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    if output.status.success() && stdout.trim() == format!("{GOLDEN_PROBE}: text: unset") {
-        return Vec::new();
-    }
-    let printed = format!("{stdout}{}", String::from_utf8_lossy(&output.stderr));
-    let printed = printed.trim();
-    vec![if output.status.success() {
-        format!("*.bin files are not binary to Git: `git check-attr text` printed {printed:?}")
-    } else {
-        format!(
-            "*.bin files cannot be checked: `git check-attr text` exited with {}: {printed:?}",
-            output.status
-        )
-    }]
 }
 
 /// Counts table rows that start with `prefix` and fill at least `cells`
@@ -525,7 +498,6 @@ fn relative(root: &Path, path: &Path) -> String {
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::process::Command;
 
     use super::{check, is_exact_version, is_single_word};
 
@@ -551,21 +523,6 @@ mod tests {
                 std::env::temp_dir().join(format!("xtask-policy-{}-{name}", std::process::id()));
             let _ = fs::remove_dir_all(&root);
             fs::create_dir_all(&root).unwrap();
-            // An empty template keeps the machine's own (hooks, info/attributes)
-            // out of the fixture.
-            let init = Command::new("git")
-                .args(["init", "-q", "--template="])
-                .current_dir(&root)
-                .env_remove("GIT_DIR")
-                .env_remove("GIT_WORK_TREE")
-                .output()
-                .expect("git must be on PATH");
-            assert!(
-                init.status.success(),
-                "git init failed in {}: {}",
-                root.display(),
-                String::from_utf8_lossy(&init.stderr)
-            );
             let fixture = Fixture(root);
             fixture.write("Cargo.toml", WORKSPACE);
             fixture.write("Cargo.lock", "version = 4\n");
@@ -1048,17 +1005,13 @@ mod tests {
         );
         fixture.fails_exactly(&["golden"], &["*.bin", "text: set"]);
 
-        // When Git cannot answer, the rule fails and quotes it.
-        let fixture = Fixture::new("golden-no-repository");
-        fs::remove_dir_all(fixture.0.join(".git")).unwrap();
+        // Only the files decide: the fixtures are not checkouts, and a broken
+        // `.git` changes nothing.
+        let fixture = Fixture::new("golden-broken-checkout");
         fixture.write(".git", "gitdir: nowhere\n");
-        fixture.fails_exactly(&["golden"], &["*.bin", "fatal:"]);
-
-        // Without a checkout, as in an unpacked archive, Git converts nothing.
-        let fixture = Fixture::new("golden-archive");
-        fs::remove_dir_all(fixture.0.join(".git")).unwrap();
-        fixture.write(".gitattributes", "* text=auto eol=lf\n");
         fixture.passes();
+        fixture.write(".gitattributes", "* text=auto eol=lf\n");
+        fixture.fails_exactly(&["golden"], &["*.bin", "text: auto"]);
     }
 
     #[test]
