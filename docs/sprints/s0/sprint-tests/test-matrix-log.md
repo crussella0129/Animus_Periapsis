@@ -1,6 +1,6 @@
 # Sprint 0 Test Matrix Log
 
-The raw output of the final test-matrix run at `6a85e66`, produced by the scripts reproduced at the end of this page: `test_matrix.sh`, its WSL leg `wsl_ci.sh`, and `port_corpus.py`. [integration-tests.md](integration-tests.md) and [e2e-tests.md](e2e-tests.md) summarize it.
+The raw output of the final test-matrix run at `24d01f5`, produced by the scripts reproduced at the end of this page: `test_matrix.sh`, its WSL leg `wsl_ci.sh`, and `port_corpus.py`. [integration-tests.md](integration-tests.md) and [e2e-tests.md](e2e-tests.md) summarize it.
 
 ```text
 
@@ -17,7 +17,7 @@ cargo-deny 0.20.2
 git version 2.56.0.windows.3
 PROPTEST_*, PERI_*, CLIPPY_CONF_DIR, CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR or GIT_* set: GIT_EDITOR 
 cargo config files above the checkouts: 
-head 6a85e669d9a0d62fc03dbac4c283146c86be181a on dev; uncommitted paths: 0
+head 24d01f55cad930f8430289996efe84eea56dfce0 on dev; uncommitted paths: 0
 target directory: C:\Users\charl\Animus_Periapsis\target
 
 ==== int_ci_windows (working checkout, NTFS)
@@ -40,31 +40,31 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
      Running unittests src\main.rs
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests\book.rs
-test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.89s
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.92s
      Running tests\cli.rs
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
      Running unittests src\lib.rs
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests\alloc.rs
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
      Running tests\golden.rs
 test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
      Running tests\mutants.rs
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
      Running tests\properties.rs
-test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.74s
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.73s
      Running tests\spec.rs
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running unittests src\lib.rs
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests\vectors.rs
-test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.51s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.47s
      Running unittests src\main.rs
-test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.68s
+test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.00s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-tests passed: 149
+tests passed: 151
 
 ==== int_cc_build_dependency_audit
 cc v1.10.0
@@ -77,27 +77,43 @@ C-build yes rows:
   `blake3` 
 
 ==== int_disallowed_types_probe (two scratch clones, discarded)
--- planted std::collections::HashMap at 6a85e66:  1 file changed, 5 insertions(+)
+-- planted std::collections::HashMap at 24d01f5:  1 file changed, 5 insertions(+)
 target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
 error: use of a disallowed type `std::collections::HashMap`
 clippy exit 101 (non-zero required)
 scratch clone removed: yes
--- planted std::collections::HashSet at 6a85e66:  1 file changed, 5 insertions(+)
+-- planted std::collections::HashSet at 24d01f5:  1 file changed, 5 insertions(+)
 target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
 error: use of a disallowed type `std::collections::HashSet`
 clippy exit 101 (non-zero required)
 scratch clone removed: yes
 
-==== int_ci_reports_failures (Windows scratch clone: one golden byte changed, one fmt violation, one untyped criterion)
-changed:  M crates/codec/src/lib.rs  M crates/codec/tests/golden/v1/string-ascii.bin  M docs/intents/INT-0031-visual-identity.md 
+==== int_ci_reports_failures (Windows scratch clone: one golden byte changed, one fmt violation)
+changed:  M crates/codec/src/lib.rs  M crates/codec/tests/golden/v1/string-ascii.bin 
 target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
 FAIL fmt: cargo fmt --all --check exited with exit code: 1
 PASS clippy
 FAIL test: cargo test --workspace --locked exited with exit code: 101
 PASS policy
-FAIL book: 1 Book violations; run `cargo book`
-ci: failed: fmt, test, book
+PASS book
+ci: failed: fmt, test
 cargo ci exit 1 (1 required)
+test golden_v1_corpus_matches ... FAILED
+string-ascii.bin: encoding changed (file 10 bytes, encoder 10 bytes)
+scratch clone removed: yes
+
+==== int_ci_reports_book_violation (Windows scratch clone: one untyped criterion)
+changed:  M docs/intents/INT-0031-visual-identity.md 
+target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
+PASS fmt
+PASS clippy
+FAIL test: cargo test --workspace --locked exited with exit code: 101
+PASS policy
+FAIL book: 1 Book violations; run `cargo book`
+ci: failed: test, book
+cargo ci exit 1 (1 required)
+test book_intents_pass_strict ... FAILED
+C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\crates\book\../../docs\intents\INT-0031-visual-identity.md:25: untyped: criterion lacks `**AC-n**` `polarity` `modality`
 scratch clone removed: yes
 
 ==== int_ci_ignores_hostile_environment (Windows scratch clone: HashMap planted, a golden file deleted)
@@ -150,10 +166,10 @@ cargo policy exit 1 (1 required)
 scratch clone removed: yes
 
 ==== e2e_fresh_clone_windows (core.autocrlf=true)
-clone head 6a85e669d9a0d62fc03dbac4c283146c86be181a, core.autocrlf=true
+clone head 24d01f55cad930f8430289996efe84eea56dfce0, core.autocrlf=true
 target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\e2e-autocrlf\target
 golden: all 23 .bin files byte-identical to the original
-text files with CRLF: 0
+tracked files: 126; with CRLF or mixed line ends in the working tree: 0
 PASS fmt
 PASS clippy
 PASS test
@@ -227,7 +243,7 @@ markdown-it-py 4.0.0
 port_corpus exit 0
   Animus_Amalgam: 7a6786b3e1, docs/intents uncommitted: 0
   Animus_Ferric: 508edfd, docs/intents uncommitted: 0
-  Animus_Periapsis: 6a85e66, docs/intents uncommitted: 0
+  Animus_Periapsis: 24d01f5, docs/intents uncommitted: 0
   Animus_Sprint_Loops: e8c3a58, docs/intents uncommitted: 0
   Animus_Unitarity: 4f82372, docs/intents uncommitted: 0
   CubiKan: 77642b4, docs/intents uncommitted: 0
@@ -250,7 +266,7 @@ port_corpus exit 0
   sprint-loops: 0bdbe66, docs/intents uncommitted: 0
   yarduluv: c941400, docs/intents uncommitted: 0
 
-==== WSL leg (int_ci_wsl, int_tooling_is_idempotent, int_ci_reports_failures, int_policy_reports_failures)
+==== WSL leg (int_ci_wsl, int_tooling_is_idempotent, int_ci_reports_failures, int_ci_reports_book_violation, int_policy_reports_failures)
 == host
 Linux 6.6.114.1-microsoft-standard-WSL2 x86_64
 PRETTY_NAME="Ubuntu 26.04.1 LTS"
@@ -258,7 +274,7 @@ git version 2.53.0
 PROPTEST_*, PERI_*, CLIPPY_CONF_DIR, CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR or GIT_* set: none
 cargo config files above the checkouts: 
 == clone
-head 6a85e669d9a0d62fc03dbac4c283146c86be181a
+head 24d01f55cad930f8430289996efe84eea56dfce0
 checkout on ext4
 rustc 1.99.1 (58cf8f9c3 2026-10-13)
 binary: rustc
@@ -276,7 +292,7 @@ PASS policy
 PASS book
 ci: all 5 steps passed
 cargo ci exit 0
-tests passed on Linux: 149
+tests passed on Linux: 151
 == int_tooling_is_idempotent
 run 1 cargo ci: exit 0, dirty files 0
 run 1 cargo policy: exit 0, dirty files 0
@@ -285,16 +301,29 @@ run 2 cargo ci: exit 0, dirty files 0
 run 2 cargo policy: exit 0, dirty files 0
 run 2 cargo book: exit 0, dirty files 0, counted chapter lines 31
 chapters in docs/intents: 31
-== int_ci_reports_failures: one golden byte changed, one fmt violation, one untyped criterion
-changed:  M crates/codec/src/lib.rs  M crates/codec/tests/golden/v1/string-ascii.bin  M docs/intents/INT-0031-visual-identity.md 
+== int_ci_reports_failures: one golden byte changed, one fmt violation
+changed:  M crates/codec/src/lib.rs  M crates/codec/tests/golden/v1/string-ascii.bin 
 target directory: /home/charles/periapsis-s0-probe/target
 FAIL fmt: cargo fmt --all --check exited with exit status: 1
 PASS clippy
 FAIL test: cargo test --workspace --locked exited with exit status: 101
 PASS policy
-FAIL book: 1 Book violations; run `cargo book`
-ci: failed: fmt, test, book
+PASS book
+ci: failed: fmt, test
 cargo ci exit 1 (1 required)
+test golden_v1_corpus_matches ... FAILED
+string-ascii.bin: encoding changed (file 10 bytes, encoder 10 bytes)
+== int_ci_reports_book_violation: one untyped criterion
+changed:  M docs/intents/INT-0031-visual-identity.md 
+PASS fmt
+PASS clippy
+FAIL test: cargo test --workspace --locked exited with exit status: 101
+PASS policy
+FAIL book: 1 Book violations; run `cargo book`
+ci: failed: test, book
+cargo ci exit 1 (1 required)
+test book_intents_pass_strict ... FAILED
+/home/charles/periapsis-s0-probe/crates/book/../../docs/intents/INT-0031-visual-identity.md:25: untyped: criterion lacks `**AC-n**` `polarity` `modality`
 == int_policy_reports_failures: .gitattributes emptied, so nothing marks *.bin binary
 changed:  M .gitattributes 
 -- the caller's environment as is
@@ -330,7 +359,7 @@ wsl exit 0
 
 ==== after
 working checkout uncommitted paths: 0
-tested head 6a85e669d9a0d62fc03dbac4c283146c86be181a
+tested head 24d01f55cad930f8430289996efe84eea56dfce0
 ```
 
 ## Scripts
@@ -428,13 +457,29 @@ for type in "std::collections::HashMap::<u8, u8>" "std::collections::HashSet::<u
   discard "$P"
 done
 
-section "int_ci_reports_failures (Windows scratch clone: one golden byte changed, one fmt violation, one untyped criterion)"
+section "int_ci_reports_failures (Windows scratch clone: one golden byte changed, one fmt violation)"
 P="$S/probe"
 fresh_clone "$P"
 (
   cd "$P" || exit 12
   printf 's' | dd of=crates/codec/tests/golden/v1/string-ascii.bin bs=1 seek=3 count=1 conv=notrunc 2>/dev/null
   printf '\npub fn  badly_formatted( ) {}\n' >> crates/codec/src/lib.rs
+  echo "changed: $(git status --porcelain | tr '\n' ' ')"
+  echo "target directory: $(target_dir)"
+  cargo ci > "$S/probe.out" 2>&1
+  code=$?
+  grep -E '^(PASS|FAIL|ci:)' "$S/probe.out"
+  echo "cargo ci exit $code (1 required)"
+  # The test step's own report: the golden test failed on the changed file.
+  tr -d '\r' < "$S/probe.out" | grep -E '^test golden_v1_corpus_matches \.\.\. |string-ascii\.bin: encoding changed'
+)
+discard "$P"
+
+section "int_ci_reports_book_violation (Windows scratch clone: one untyped criterion)"
+P="$S/probe"
+fresh_clone "$P"
+(
+  cd "$P" || exit 16
   sed -i '/^## Acceptance criteria$/a - An untyped probe criterion.' docs/intents/INT-0031-visual-identity.md
   echo "changed: $(git status --porcelain | tr '\n' ' ')"
   echo "target directory: $(target_dir)"
@@ -442,6 +487,7 @@ fresh_clone "$P"
   code=$?
   grep -E '^(PASS|FAIL|ci:)' "$S/probe.out"
   echo "cargo ci exit $code (1 required)"
+  tr -d '\r' < "$S/probe.out" | grep -E '^test book_intents_pass_strict \.\.\. |INT-0031-visual-identity\.md:[0-9]+: untyped: ' | head -3
 )
 discard "$P"
 
@@ -512,7 +558,8 @@ git clone --quiet -c core.autocrlf=true --branch dev "$REPO" "$W"
   else
     echo "golden: MISMATCH"; diff "$S/clone.sha" "$S/orig.sha"
   fi
-  echo "text files with CRLF: $(git ls-files | grep -vE '\.bin$' | xargs file 2>/dev/null | grep -c CRLF)"
+  eol=$(git ls-files --eol)
+  echo "tracked files: $(printf '%s\n' "$eol" | wc -l); with CRLF or mixed line ends in the working tree: $(printf '%s\n' "$eol" | grep -cE 'w/(crlf|mixed)')"
   start=$(date +%s)
   cargo ci 2>&1 | grep -E '^(PASS|FAIL|ci:)'
   echo "cargo ci exit ${PIPESTATUS[0]} (cold build, $(( $(date +%s) - start )) s)"
@@ -543,7 +590,7 @@ for book in $(ls -d C:/Users/charl/*/docs/.sprint-loop-book | sed 's#/docs/.spri
   fi
 done
 
-section "WSL leg (int_ci_wsl, int_tooling_is_idempotent, int_ci_reports_failures, int_policy_reports_failures)"
+section "WSL leg (int_ci_wsl, int_tooling_is_idempotent, int_ci_reports_failures, int_ci_reports_book_violation, int_policy_reports_failures)"
 # A login shell puts ~/.cargo/bin on PATH; the copy drops any CR line ends.
 wsl.exe -d Ubuntu -- bash -lc "tr -d '\r' < '$WSL_SCRIPT' > /tmp/wsl_ci.sh && bash /tmp/wsl_ci.sh" 2>&1 | tr -d '\r'
 echo "wsl exit ${PIPESTATUS[0]}"
@@ -558,7 +605,8 @@ echo "tested head $HEAD_SHA"
 ````bash
 #!/usr/bin/env bash
 # Sprint 0 Test phase, Linux leg: int_ci_wsl, int_tooling_is_idempotent,
-# int_ci_reports_failures and int_policy_reports_failures. Clones the committed
+# int_ci_reports_failures, int_ci_reports_book_violation and
+# int_policy_reports_failures. Clones the committed
 # dev head into the WSL ext4 home directory (not /mnt/c) and runs the project
 # commands there. Every checkout builds into its own target directory.
 set -u
@@ -604,19 +652,29 @@ for run in 1 2; do
   done
 done
 echo "chapters in docs/intents: $(ls docs/intents/INT-*.md | wc -l)"
-echo "== int_ci_reports_failures: one golden byte changed, one fmt violation, one untyped criterion"
+echo "== int_ci_reports_failures: one golden byte changed, one fmt violation"
 rm -rf "$PROBE"
 git clone --quiet "$DEST" "$PROBE" || exit 12
 cd "$PROBE" || exit 13
 printf 's' | dd of=crates/codec/tests/golden/v1/string-ascii.bin bs=1 seek=3 count=1 conv=notrunc 2>/dev/null
 printf '\npub fn  badly_formatted( ) {}\n' >> crates/codec/src/lib.rs
-sed -i '/^## Acceptance criteria$/a - An untyped probe criterion.' docs/intents/INT-0031-visual-identity.md
 echo "changed: $(git status --porcelain | tr '\n' ' ')"
 echo "target directory: $(target_dir)"
 out=$(cargo ci 2>&1)
 code=$?
 printf '%s\n' "$out" | grep -E '^(PASS|FAIL|ci:)'
 echo "cargo ci exit $code (1 required)"
+# The test step's own report: the golden test failed on the changed file.
+printf '%s\n' "$out" | grep -E '^test golden_v1_corpus_matches \.\.\. |string-ascii\.bin: encoding changed'
+echo "== int_ci_reports_book_violation: one untyped criterion"
+git checkout --quiet -- .
+sed -i '/^## Acceptance criteria$/a - An untyped probe criterion.' docs/intents/INT-0031-visual-identity.md
+echo "changed: $(git status --porcelain | tr '\n' ' ')"
+out=$(cargo ci 2>&1)
+code=$?
+printf '%s\n' "$out" | grep -E '^(PASS|FAIL|ci:)'
+echo "cargo ci exit $code (1 required)"
+printf '%s\n' "$out" | grep -E '^test book_intents_pass_strict \.\.\. |INT-0031-visual-identity\.md:[0-9]+: untyped: ' | head -3
 echo "== int_policy_reports_failures: .gitattributes emptied, so nothing marks *.bin binary"
 git checkout --quiet -- .
 : > .gitattributes

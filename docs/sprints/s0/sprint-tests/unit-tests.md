@@ -1,8 +1,8 @@
 # Sprint 0 Unit Test Results
 
-- **Tested head:** `6a85e669d9a0d62fc03dbac4c283146c86be181a` on `dev`, committed, with a clean working tree. Later commits change only the Book. This head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques ([round 1](critique-round1.md), [round 2](critique-round2.md), [round 3](critique-round3.md)).
+- **Tested head:** `24d01f55cad930f8430289996efe84eea56dfce0` on `dev`, committed, with a clean working tree. Later commits change only the Book. This head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques ([round 1](critique-round1.md), [round 2](critique-round2.md), [round 3](critique-round3.md), [round 4](critique-round4.md)).
 - **Runner:** the `test` step of `cargo ci`, which runs `cargo test --workspace --locked`. The listing below comes from running that command directly in the Windows working checkout, as recorded in [integration-tests.md](integration-tests.md).
-- **Result:** 149 passed, 0 failed, 0 ignored, on the Windows 11 working checkout and in the WSL Ubuntu 26.04.1 ext4 clone. The `test` step also passed in the fresh `core.autocrlf=true` Windows clone ([e2e-tests.md](e2e-tests.md)). No test is platform-gated or `#[ignore]`d: `cfg(windows)` and `cfg(unix)` mark only helper pairs (`non_unicode_name` and its xtask counterpart), each with both variants. Both systems ran the same 149 tests.
+- **Result:** 151 passed, 0 failed, 0 ignored, on the Windows 11 working checkout and in the WSL Ubuntu 26.04.1 ext4 clone. The `test` step also passed in the fresh `core.autocrlf=true` Windows clone ([e2e-tests.md](e2e-tests.md)). No test is platform-gated or `#[ignore]`d: `cfg(windows)` and `cfg(unix)` mark only helper pairs (`non_unicode_name` and its xtask counterpart), each with both variants. Both systems ran the same 151 tests.
 - **Toolchain:** rustc 1.99.1 (58cf8f9c3 2026-10-13), LLVM 23.1.1, on `x86_64-pc-windows-msvc` and `x86_64-unknown-linux-gnu`.
 - **Randomness:** property tests use proptest 1.12 with fixed case counts: 10,000 cases per property in `hash`, `codec` and `book`, and 100,000 for decoder totality.
   - The seed is random on each run. proptest stores a failing seed under `proptest-regressions/` and replays it first next time; `PROPTEST_RNG_SEED` replays any seed.
@@ -12,7 +12,7 @@
 
 | Target | Tests |
 |--------|-------|
-| `xtask` unit tests (`policy`, `attributes`, `ci`, `workflow`, `workspace`, `docs`, front end) | 46 |
+| `xtask` unit tests (`policy`, `attributes`, `ci`, `deny`, `workflow`, `workspace`, `docs`, front end) | 48 |
 | `hash` `tests/vectors.rs` | 12 |
 | `codec` `tests/properties.rs` | 40 |
 | `codec` `tests/alloc.rs` | 3 |
@@ -21,7 +21,7 @@
 | `codec` `tests/spec.rs` | 2 |
 | `book` `tests/book.rs` | 33 |
 | `book` `tests/cli.rs` | 4 |
-| **Total** | **149** |
+| **Total** | **151** |
 
 Each table below maps one task's EARS clauses (from the locked [build plan](../sprint-plans/build-plan.md)) to the tests that assert them. Where a clause is verified by an integration or E2E run, the table names that run instead. Tests added for code-review findings sit beside the clause they strengthen. [code-review.md](code-review.md) maps each finding to its regression test.
 
@@ -44,7 +44,7 @@ Each table below maps one task's EARS clauses (from the locked [build plan](../s
 | a member uses `HashMap` or `HashSet` → Clippy fails on `disallowed_types` | `int_disallowed_types_probe` (integration: `HashMap` and `HashSet`, each in its own clone) | pass |
 | a package name outside `[a-z][a-z0-9]*` → FAIL `names`, for any workspace package | `policy_requires_single_word_names` (`peri-hash`, `Hash`, `hash_ref` and `9hash` fail; `hash` and `sha256` pass). `policy_finds_members_like_cargo`: a member outside `crates/*` is checked. `policy_refuses_member_patterns_it_cannot_expand` covers `[...]` and `**` | pass |
 | any argument besides the command → exit 2, usage on stderr | `policy_rejects_extra_arguments`, `non_unicode_arguments_are_usage_errors` (both also assert empty stdout) | pass |
-| `cargo deny check` at the task boundary → four checks ok, recorded | `int_deny_at_t001` (integration) | pass |
+| `cargo deny check` at the task boundary → four checks ok, recorded | `int_deny_at_t001` (integration). The licences `deny.toml` allows are themselves all GPL-3.0-compatible (INT-0003 AC-3): `deny_allows_only_gpl3_compatible_licences`, and `incompatible_licences_are_named` for the main list, both forms of per-crate exception and an unreadable policy | pass |
 | (all rules) manifests are read as Cargo reads them | `policy_reads_manifests_as_toml`: multi-line arrays, `path="…"`, dotted keys, `publish = { workspace = true }`. Also `policy_flags_invalid_toml`, `policy_ignores_byte_order_marks`, `wildcards_match_within_a_component` and `paths_resolve_inside_the_root` | pass |
 
 ## T-002: Format v1 specification
