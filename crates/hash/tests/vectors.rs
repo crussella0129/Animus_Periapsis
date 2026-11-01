@@ -273,6 +273,26 @@ fn binary_rejects_malformed() {
     );
 }
 
+/// The text form against fixed strings, not only by round trip: the spec's
+/// own example (BLAKE3 of empty input) and SHA-256 of "abc" (FIPS 180-2). Each
+/// string must also parse to the hash it names.
+#[test]
+fn text_form_matches_the_spec() {
+    for (hash, text) in [
+        (
+            HashAlg::Blake3.hash(b""),
+            "blake3:af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        ),
+        (
+            HashAlg::Sha256.hash(b"abc"),
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        ),
+    ] {
+        assert_eq!(hash.to_string(), text);
+        assert_eq!(text.parse::<HashRef>(), Ok(hash), "{text}");
+    }
+}
+
 #[test]
 fn text_rejects_malformed() {
     let valid = HashAlg::Blake3.hash(b"x").to_string();

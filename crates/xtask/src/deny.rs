@@ -1,7 +1,7 @@
 //! The licence policy in `deny.toml` (INT-0003 AC-3). `cargo deny check`
-//! proves that every dependency's licence is on the policy's `allow` lists;
-//! these tests prove that every licence on those lists is compatible with
-//! GPL-3.0.
+//! proves that every dependency's licence is on the policy's `allow` lists,
+//! provided the policy hides no crate from it; these tests prove that it hides
+//! none, and that every licence on those lists is compatible with GPL-3.0.
 
 use std::fs;
 use std::path::Path;
@@ -74,11 +74,41 @@ fn incompatible(text: &str) -> Result<Vec<String>, String> {
     Ok(wrong)
 }
 
+/// The settings of a `deny.toml` that would hide a dependency's licence from
+/// `cargo deny check`: crates removed from the graph, and licences set by hand.
+fn hiding(text: &str) -> Result<Vec<&'static str>, String> {
+    let config: DocumentMut = text
+        .parse()
+        .map_err(|error| format!("deny.toml: {error}"))?;
+    let set = |table: &str, key: &str| config.get(table).and_then(|t| t.get(key)).is_some();
+    let mut found = Vec::new();
+    if set("graph", "exclude") {
+        found.push("[graph] exclude");
+    }
+    if set("licenses", "clarify") {
+        found.push("[licenses] clarify");
+    }
+    Ok(found)
+}
+
 #[test]
 fn deny_allows_only_gpl3_compatible_licences() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deny.toml");
     let text = fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     assert_eq!(incompatible(&text), Ok(Vec::new()));
+    assert_eq!(hiding(&text), Ok(Vec::new()));
+}
+
+/// Settings that would let a dependency's licence past `cargo deny check`
+/// unread are named, so adding one means revisiting this check.
+#[test]
+fn settings_that_hide_licences_are_named() {
+    let exclude = "[graph]\nexclude = [\"winnow\"]\n\n[licenses]\nallow = [\"MIT\"]\n";
+    assert_eq!(hiding(exclude), Ok(vec!["[graph] exclude"]));
+    let clarify = "[licenses]\nallow = [\"MIT\"]\n\n[[licenses.clarify]]\ncrate = \"x\"\n\
+                   expression = \"MIT\"\nlicense-files = []\n";
+    assert_eq!(hiding(clarify), Ok(vec!["[licenses] clarify"]));
+    assert!(hiding("licenses = [").is_err());
 }
 
 /// An incompatible licence is named wherever `deny.toml` allows it: in the
@@ -88,6 +118,13 @@ fn deny_allows_only_gpl3_compatible_licences() {
 fn incompatible_licences_are_named() {
     let main = "[licenses]\nallow = [\"MIT\", \"SSPL-1.0\"]\n";
     assert_eq!(incompatible(main), Ok(vec!["SSPL-1.0".to_owned()]));
+    // Only an exact match counts: this identifier starts with an allowed one,
+    // but its MPL forbids the GPL combination.
+    let near = "[licenses]\nallow = [\"MPL-2.0-no-copyleft-exception\"]\n";
+    assert_eq!(
+        incompatible(near),
+        Ok(vec!["MPL-2.0-no-copyleft-exception".to_owned()])
+    );
     let exception = "[licenses]\nallow = [\"MIT\"]\n\n\
                      [[licenses.exceptions]]\ncrate = \"x\"\nallow = [\"BUSL-1.1\"]\n";
     assert_eq!(incompatible(exception), Ok(vec!["BUSL-1.1".to_owned()]));

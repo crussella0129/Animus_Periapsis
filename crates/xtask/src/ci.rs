@@ -497,5 +497,55 @@ mod tests {
                 "this workflow must fail:\n{mutant}"
             );
         }
+
+        // A deny step that narrows the checks, the workspace or the
+        // configuration does not count as the deny job's check.
+        const DENY: &str = "      - uses: EmbarkStudios/cargo-deny-action@v2\n";
+        for narrowed in [
+            "command: check bans",
+            "command: check bans licenses sources",
+            "command-arguments: advisories",
+            "arguments: --exclude winnow",
+            "manifest-path: other/Cargo.toml",
+        ] {
+            let mutant = replace(
+                &workflow,
+                DENY,
+                &format!("{DENY}        with:\n          {narrowed}\n"),
+            );
+            assert!(
+                !workflow::problems(&mutant).is_empty(),
+                "this deny step must not count:\n{narrowed}"
+            );
+        }
+        for narrowed in [
+            "cargo deny check sources",
+            "cargo deny check advisories bans",
+            "cargo deny --manifest-path other/Cargo.toml check",
+            "cargo deny check --config other.toml",
+            "cargo deny --offline check",
+            "cargo deny check check",
+        ] {
+            let mutant = replace(&workflow, DENY, &format!("      - run: {narrowed}\n"));
+            assert!(
+                !workflow::problems(&mutant).is_empty(),
+                "this deny step must not count:\n{narrowed}"
+            );
+        }
+        // The forms of a full check: the action's defaults written out, and
+        // plain commands.
+        for full in [
+            "      - uses: EmbarkStudios/cargo-deny-action@v2\n        with:\n          command: check\n          \
+             arguments: --all-features\n          log-level: warn\n",
+            "      - run: cargo deny check\n",
+            "      - run: cargo deny --all-features --locked check\n",
+        ] {
+            let accepted = replace(&workflow, DENY, full);
+            assert_eq!(
+                workflow::problems(&accepted),
+                Vec::<String>::new(),
+                "{full}"
+            );
+        }
     }
 }

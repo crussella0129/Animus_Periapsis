@@ -102,10 +102,11 @@ fn runs_ci_on_both_platforms(job: &Node) -> bool {
         })
 }
 
-/// A job on ubuntu-latest whose own steps run the check: cargo-deny's action
-/// (unless its `with: command` is something other than `check`), or a plain
-/// `cargo deny ... check` command. A step that only installs cargo-deny does
-/// not count. Neither the job nor that step may carry an `if:`.
+/// A job on ubuntu-latest whose own steps run every cargo-deny check
+/// (advisories, bans, licences and sources) on this workspace: cargo-deny's
+/// action with its defaults, or a plain `cargo deny check` command. A step
+/// that only installs cargo-deny, or narrows what it checks, does not count.
+/// Neither the job nor that step may carry an `if:`.
 fn runs_deny_on_ubuntu(job: &Node) -> bool {
     runs_on(job) == Some("ubuntu-latest")
         && unconditional(&job.children)
@@ -117,8 +118,7 @@ fn runs_deny_on_ubuntu(job: &Node) -> bool {
                             .to_ascii_lowercase()
                             .starts_with("embarkstudios/cargo-deny-action@")
                             && field(&step.children, "with")
-                                .and_then(|with| field(&with.children, "command"))
-                                .is_none_or(|command| value_of(command).starts_with("check"))
+                                .is_none_or(|with| keeps_every_check(&with.children))
                     }
                     "run" => runs_deny_check(value),
                     _ => false,
@@ -126,12 +126,32 @@ fn runs_deny_on_ubuntu(job: &Node) -> bool {
         })
 }
 
-/// A plain `cargo deny ... check ...` command: no shell operator could replace
-/// or ignore its exit status.
+/// Whether the action's `with:` inputs keep the defaults that decide what is
+/// checked: `command` exactly `check`, `arguments` exactly `--all-features`,
+/// and no other input but `log-level`. Naming checks, another manifest or
+/// other arguments would narrow the check.
+fn keeps_every_check(inputs: &[Node]) -> bool {
+    inputs.iter().all(|input| match entry(input.text) {
+        Some(("command", value)) => value == "check",
+        Some(("arguments", value)) => value == "--all-features",
+        Some(("log-level", _)) => true,
+        _ => false,
+    })
+}
+
+/// Flags that leave what `cargo deny check` checks, and where, unchanged.
+const PLAIN_FLAGS: [&str; 2] = ["--all-features", "--locked"];
+
+/// A plain `cargo deny check` command, with at most `PLAIN_FLAGS`: no shell
+/// operator could replace or ignore its exit status, and no word names a check,
+/// a path or another configuration.
 fn runs_deny_check(command: &str) -> bool {
-    command.starts_with("cargo deny")
-        && !command.contains(['|', '&', ';', '<', '>', '$', '`'])
-        && command.split_whitespace().any(|word| word == "check")
+    let words: Vec<&str> = command.split_whitespace().collect();
+    words.starts_with(&["cargo", "deny"])
+        && words[2..].iter().filter(|&&word| word == "check").count() == 1
+        && words[2..]
+            .iter()
+            .all(|word| *word == "check" || PLAIN_FLAGS.contains(word))
 }
 
 /// Whether the mapping `nodes` has no `if:` entry.
@@ -290,7 +310,8 @@ jobs:
       - run: cargo deny --all-features check
       - uses: embarkstudios/cargo-deny-action@v2
         with:
-          command: check bans
+          command: 'check'
+          log-level: warn
 ";
     assert_eq!(problems(workflow), Vec::<String>::new());
     let develop = workflow.replace("- \"dev\"", "- develop");

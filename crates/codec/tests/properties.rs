@@ -269,6 +269,20 @@ fn decode_rejects_invalid_primitives() {
         from_slice::<Vec<String>>(&second_element(0x00, &[0x01, 0xff])),
         Err(DecodeError::InvalidUtf8 { at: 3 })
     );
+    // The error is at the first content byte, not at the first invalid byte
+    // (4 here)...
+    assert_eq!(
+        from_slice::<Vec<String>>(&second_element(0x00, &[0x02, 0x61, 0xff])),
+        Err(DecodeError::InvalidUtf8 { at: 3 })
+    );
+    // ...and not one past the prefix's start: a two-byte prefix at 2 puts the
+    // content at 4.
+    let mut long = vec![0x80, 0x01];
+    long.extend_from_slice(&[0xff; 128]);
+    assert_eq!(
+        from_slice::<Vec<String>>(&second_element(0x00, &long)),
+        Err(DecodeError::InvalidUtf8 { at: 4 })
+    );
 }
 
 #[test]
