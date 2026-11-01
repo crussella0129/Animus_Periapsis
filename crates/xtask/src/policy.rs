@@ -144,12 +144,28 @@ fn forbid_unsafe(root: &Path, members: &[PathBuf]) -> Vec<String> {
     for dir in members {
         for crate_root in ["src/lib.rs", "src/main.rs"] {
             let path = dir.join(crate_root);
-            if path.is_file() && !read(&path).lines().any(|line| line.trim() == FORBID_UNSAFE) {
+            if path.is_file() && !opens_with_forbid_unsafe(&read(&path)) {
                 problems.push(format!("{} lacks {FORBID_UNSAFE}", relative(root, &path)));
             }
         }
     }
     problems
+}
+
+/// Whether a crate root carries `#![forbid(unsafe_code)]` as its own: among
+/// its leading lines, where only blank lines, line comments and other one-line
+/// inner attributes may come first. Inside a block comment or a nested module
+/// the line would not apply to the crate.
+fn opens_with_forbid_unsafe(text: &str) -> bool {
+    for line in text.lines().map(str::trim) {
+        if line == FORBID_UNSAFE {
+            return true;
+        }
+        if !(line.is_empty() || line.starts_with("//") || line.starts_with("#![")) {
+            return false;
+        }
+    }
+    false
 }
 
 fn toolchain(root: &Path, _members: &[PathBuf]) -> Vec<String> {
@@ -741,6 +757,26 @@ mod tests {
             "//! A library without the attribute.\n",
         );
         fixture.fails_only("unsafe", "crates/hash/src/lib.rs");
+
+        // The line only counts as the crate root's own attribute: not inside
+        // a block comment, nor inside a nested module.
+        for (i, text) in [
+            "/*\n#![forbid(unsafe_code)]\n*/\npub fn f() {}\n",
+            "mod inner {\n    #![forbid(unsafe_code)]\n}\n",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = Fixture::new(&format!("unsafe-hidden-{i}"));
+            fixture.write("crates/hash/src/lib.rs", text);
+            fixture.fails_only("unsafe", "crates/hash/src/lib.rs");
+        }
+        let fixture = Fixture::new("unsafe-after-docs");
+        fixture.write(
+            "crates/hash/src/lib.rs",
+            "//! Docs come first.\n\n#![deny(missing_docs)]\n#![forbid(unsafe_code)]\n",
+        );
+        fixture.passes();
     }
 
     #[test]

@@ -1,7 +1,8 @@
 //! The licence policy in `deny.toml` (INT-0003 AC-3). `cargo deny check`
 //! proves that every dependency's licence is on the policy's `allow` lists,
 //! provided the policy hides no crate from it; these tests prove that it hides
-//! none, and that every licence on those lists is compatible with GPL-3.0.
+//! none, dev-dependencies included, and that every licence on those lists is
+//! compatible with GPL-3.0.
 
 use std::fs;
 use std::path::Path;
@@ -75,18 +76,23 @@ fn incompatible(text: &str) -> Result<Vec<String>, String> {
 }
 
 /// The settings of a `deny.toml` that would hide a dependency's licence from
-/// `cargo deny check`: crates removed from the graph, and licences set by hand.
+/// `cargo deny check`: crates removed from the graph, licences set by hand,
+/// and dev-dependencies left out, which cargo-deny does unless
+/// `[licenses] include-dev` is `true`.
 fn hiding(text: &str) -> Result<Vec<&'static str>, String> {
     let config: DocumentMut = text
         .parse()
         .map_err(|error| format!("deny.toml: {error}"))?;
-    let set = |table: &str, key: &str| config.get(table).and_then(|t| t.get(key)).is_some();
+    let get = |table: &str, key: &str| config.get(table).and_then(|t| t.get(key));
     let mut found = Vec::new();
-    if set("graph", "exclude") {
+    if get("graph", "exclude").is_some() {
         found.push("[graph] exclude");
     }
-    if set("licenses", "clarify") {
+    if get("licenses", "clarify").is_some() {
         found.push("[licenses] clarify");
+    }
+    if get("licenses", "include-dev").and_then(Item::as_bool) != Some(true) {
+        found.push("[licenses] include-dev is not true");
     }
     Ok(found)
 }
@@ -103,11 +109,20 @@ fn deny_allows_only_gpl3_compatible_licences() {
 /// unread are named, so adding one means revisiting this check.
 #[test]
 fn settings_that_hide_licences_are_named() {
-    let exclude = "[graph]\nexclude = [\"winnow\"]\n\n[licenses]\nallow = [\"MIT\"]\n";
+    let exclude =
+        "[graph]\nexclude = [\"winnow\"]\n\n[licenses]\nallow = [\"MIT\"]\ninclude-dev = true\n";
     assert_eq!(hiding(exclude), Ok(vec!["[graph] exclude"]));
-    let clarify = "[licenses]\nallow = [\"MIT\"]\n\n[[licenses.clarify]]\ncrate = \"x\"\n\
-                   expression = \"MIT\"\nlicense-files = []\n";
+    let clarify = "[licenses]\nallow = [\"MIT\"]\ninclude-dev = true\n\n[[licenses.clarify]]\n\
+                   crate = \"x\"\nexpression = \"MIT\"\nlicense-files = []\n";
     assert_eq!(hiding(clarify), Ok(vec!["[licenses] clarify"]));
+    for dev in ["", "include-dev = false\n", "include-dev = \"true\"\n"] {
+        let text = format!("[licenses]\nallow = [\"MIT\"]\n{dev}");
+        assert_eq!(
+            hiding(&text),
+            Ok(vec!["[licenses] include-dev is not true"]),
+            "{dev:?}"
+        );
+    }
     assert!(hiding("licenses = [").is_err());
 }
 

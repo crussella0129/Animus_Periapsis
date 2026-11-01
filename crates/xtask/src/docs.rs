@@ -98,24 +98,94 @@ fn credited_names_are_whole_words() {
     assert!(names("[Lean 4](url)", "Lean 4"));
 }
 
+/// What a README lacks against the T-008 clause: the owner's paragraphs
+/// verbatim, a link to the Book, `cargo ci` and `cargo deny check` as command
+/// lines of their own in fenced blocks, what `cargo policy` and `cargo book`
+/// do (on a line besides the no-flags sentence), and that sentence exactly.
+fn readme_problems(readme: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    for paragraph in OWNER_PARAGRAPHS {
+        if !readme.lines().any(|line| line == paragraph) {
+            problems.push(format!(
+                "the owner's paragraph must stay verbatim: {paragraph:?}"
+            ));
+        }
+    }
+    if !readme.contains("](docs/SUMMARY.md)") {
+        problems.push("README must link the Book".to_owned());
+    }
+    let fenced = fenced_lines(readme);
+    for command in ["cargo ci", "cargo deny check"] {
+        if !fenced.contains(&command) {
+            problems.push(format!("README must show `{command}` as a command line"));
+        }
+    }
+    let described = readme.lines().any(|line| {
+        line != NO_FLAGS && line.contains("`cargo policy`") && line.contains("`cargo book`")
+    });
+    if !described {
+        problems.push("README must say what `cargo policy` and `cargo book` do".to_owned());
+    }
+    if !readme.lines().any(|line| line == NO_FLAGS) {
+        problems.push(format!("README must say exactly: {NO_FLAGS}"));
+    }
+    problems
+}
+
+/// The trimmed lines inside fenced code blocks.
+fn fenced_lines(text: &str) -> Vec<&str> {
+    let mut inside = false;
+    let mut lines = Vec::new();
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            inside = !inside;
+        } else if inside {
+            lines.push(line.trim());
+        }
+    }
+    lines
+}
+
 #[test]
 fn readme_keeps_statement_and_links_book() {
-    let readme = repo_file("README.md");
-    for paragraph in OWNER_PARAGRAPHS {
-        assert!(
-            readme.lines().any(|line| line == paragraph),
-            "the owner's paragraph must stay verbatim: {paragraph:?}"
-        );
-    }
-    assert!(
-        readme.contains("](docs/SUMMARY.md)"),
-        "README must link the Book"
+    assert_eq!(
+        readme_problems(&repo_file("README.md")),
+        Vec::<String>::new()
     );
-    for command in ["cargo ci", "cargo policy", "cargo book", "cargo deny check"] {
-        assert!(readme.contains(command), "README must document `{command}`");
-    }
-    assert!(
-        readme.lines().any(|line| line == NO_FLAGS),
-        "README must say exactly: {NO_FLAGS}"
+}
+
+/// READMEs that only mention the commands fail: the build section cut to
+/// the no-flags sentence, a narrowed or changed command line, and no line
+/// on what `cargo policy` and `cargo book` do.
+#[test]
+fn readme_must_document_each_command() {
+    let readme = repo_file("README.md").replace("\r\n", "\n");
+    let replace = |from: &str, to: &str| {
+        assert!(readme.contains(from), "{from:?} is not in README.md");
+        readme.replace(from, to)
+    };
+    let ci = "README must show `cargo ci` as a command line".to_owned();
+    let deny = "README must show `cargo deny check` as a command line".to_owned();
+    let described = "README must say what `cargo policy` and `cargo book` do".to_owned();
+
+    let (head, rest) = readme.split_once("Requires rustup").unwrap();
+    let (_, tail) = rest.split_once("Designs borrowed").unwrap();
+    let cut = format!("{head}{NO_FLAGS}\nNever run `cargo deny check`.\n\nDesigns borrowed{tail}");
+    assert_eq!(
+        readme_problems(&cut),
+        [ci.clone(), deny.clone(), described.clone()]
     );
+
+    let narrowed = replace(
+        "```bash\ncargo deny check\n```",
+        "```bash\ncargo deny check bans\n```",
+    );
+    assert_eq!(readme_problems(&narrowed), [deny]);
+    let changed = replace("```bash\ncargo ci\n```", "```bash\ncargo ci --fast\n```");
+    assert_eq!(readme_problems(&changed), [ci]);
+    let undescribed = replace(
+        "`cargo policy` and `cargo book` run those last two checks on their own.\n",
+        "",
+    );
+    assert_eq!(readme_problems(&undescribed), [described]);
 }

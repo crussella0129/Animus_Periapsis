@@ -25,6 +25,38 @@ pub fn problems(workflow: &str) -> Vec<String> {
     if under(&top, &["on", "pull_request"]).is_none() {
         problems.push("there is no pull_request trigger".to_owned());
     }
+    // A filter can keep a trigger from ever firing, so none is allowed; a
+    // `pull_request` branch list must name both branches.
+    for (event, filters) in [
+        ("push", &["paths", "paths-ignore", "branches-ignore"][..]),
+        (
+            "pull_request",
+            &["paths", "paths-ignore", "branches-ignore", "types"],
+        ),
+    ] {
+        let Some(trigger) = under(&top, &["on", event]) else {
+            continue;
+        };
+        if event == "pull_request" && !value_of(trigger).is_empty() {
+            problems.push("pull_request is configured inline".to_owned());
+        }
+        for filter in filters {
+            if field(&trigger.children, filter).is_some() {
+                problems.push(format!("{event} is filtered by `{filter}`"));
+            }
+        }
+    }
+    if let Some(branches) = under(&top, &["on", "pull_request", "branches"]) {
+        let branches = list(branches);
+        for branch in ["dev", "main"] {
+            if !branches.contains(&branch) {
+                problems.push(format!("pull_request does not trigger on {branch}"));
+            }
+        }
+    }
+    if field(&top, "defaults").is_some() {
+        problems.push("the workflow sets step defaults".to_owned());
+    }
     let jobs = under(&top, &["jobs"]).map_or(&[][..], |jobs| jobs.children.as_slice());
     if !jobs.iter().any(runs_ci_on_both_platforms) {
         problems.push(
@@ -106,19 +138,27 @@ fn runs_ci_on_both_platforms(job: &Node) -> bool {
 /// (advisories, bans, licences and sources) on this workspace: cargo-deny's
 /// action with its defaults, or a plain `cargo deny check` command. A step
 /// that only installs cargo-deny, or narrows what it checks, does not count.
-/// Neither the job nor that step may carry an `if:`.
+/// Neither the job nor that step may carry an `if:`, and neither may change
+/// where or how the step runs (`defaults`, `working-directory`, `shell`).
 fn runs_deny_on_ubuntu(job: &Node) -> bool {
     runs_on(job) == Some("ubuntu-latest")
         && unconditional(&job.children)
+        && field(&job.children, "defaults").is_none()
         && steps(job).any(|(step, entries)| {
-            !entries.iter().any(|&(key, _)| key == "if")
+            let keys = |key: &str| entries.iter().any(|&(found, _)| found == key);
+            !["if", "working-directory", "shell"].into_iter().any(keys)
                 && entries.iter().any(|&(key, value)| match key {
                     "uses" => {
                         value
                             .to_ascii_lowercase()
                             .starts_with("embarkstudios/cargo-deny-action@")
-                            && field(&step.children, "with")
-                                .is_none_or(|with| keeps_every_check(&with.children))
+                            && match field(&step.children, "with") {
+                                // Inputs are read only as a block under the step.
+                                Some(with) => {
+                                    value_of(with).is_empty() && keeps_every_check(&with.children)
+                                }
+                                None => !keys("with"),
+                            }
                     }
                     "run" => runs_deny_check(value),
                     _ => false,
@@ -126,15 +166,19 @@ fn runs_deny_on_ubuntu(job: &Node) -> bool {
         })
 }
 
+/// cargo-deny's log levels. The action passes `log-level` to cargo-deny
+/// word by word, so any other value could add arguments.
+const LOG_LEVELS: [&str; 5] = ["error", "warn", "info", "debug", "trace"];
+
 /// Whether the action's `with:` inputs keep the defaults that decide what is
 /// checked: `command` exactly `check`, `arguments` exactly `--all-features`,
-/// and no other input but `log-level`. Naming checks, another manifest or
-/// other arguments would narrow the check.
+/// and no other input but a plain `log-level`. Naming checks, another
+/// manifest or other arguments would narrow the check.
 fn keeps_every_check(inputs: &[Node]) -> bool {
     inputs.iter().all(|input| match entry(input.text) {
         Some(("command", value)) => value == "check",
         Some(("arguments", value)) => value == "--all-features",
-        Some(("log-level", _)) => true,
+        Some(("log-level", value)) => LOG_LEVELS.contains(&value),
         _ => false,
     })
 }

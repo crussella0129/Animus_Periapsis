@@ -507,6 +507,8 @@ mod tests {
             "command-arguments: advisories",
             "arguments: --exclude winnow",
             "manifest-path: other/Cargo.toml",
+            "log-level: warn --exclude winnow",
+            "log-level: warn --exclude-dev",
         ] {
             let mutant = replace(
                 &workflow,
@@ -532,6 +534,64 @@ mod tests {
                 "this deny step must not count:\n{narrowed}"
             );
         }
+        // Inputs the rule cannot read, and settings that change where or how
+        // the step runs.
+        for (from, to) in [
+            (
+                DENY,
+                "      - uses: EmbarkStudios/cargo-deny-action@v2\n        with: {command: check bans}\n",
+            ),
+            (
+                DENY,
+                "      - with:\n          command: check bans\n        uses: EmbarkStudios/cargo-deny-action@v2\n",
+            ),
+            (
+                DENY,
+                "      - run: cargo deny check\n        working-directory: crates/hash\n",
+            ),
+            (
+                DENY,
+                "      - run: cargo deny check\n        shell: cat {0}\n",
+            ),
+            (
+                "    runs-on: ubuntu-latest\n",
+                "    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: crates/hash\n",
+            ),
+            (
+                "jobs:\n",
+                "defaults:\n  run:\n    working-directory: crates/hash\njobs:\n",
+            ),
+        ] {
+            let mutant = replace(&workflow, from, to);
+            assert!(
+                !workflow::problems(&mutant).is_empty(),
+                "this deny job must not count:\n{to}"
+            );
+        }
+        // A trigger filter can keep CI from ever running.
+        const PUSH: &str = "    branches: [dev, main]\n";
+        const PR: &str = "  pull_request:\n";
+        for (from, filter) in [
+            (PUSH, "    paths-ignore: ['**']\n"),
+            (PUSH, "    paths: ['nothing/**']\n"),
+            (PUSH, "    branches-ignore: [dev, main]\n"),
+            (PR, "    types: [closed]\n"),
+            (PR, "    paths-ignore: ['**']\n"),
+            (PR, "    branches: [nothing]\n"),
+            (PR, "    branches: [dev]\n"),
+            (PR, "    branches-ignore: [main]\n"),
+        ] {
+            let mutant = replace(&workflow, from, &format!("{from}{filter}"));
+            assert!(
+                !workflow::problems(&mutant).is_empty(),
+                "this trigger must fail:\n{from}{filter}"
+            );
+        }
+        let inline = replace(&workflow, PR, "  pull_request: {types: [closed]}\n");
+        assert!(!workflow::problems(&inline).is_empty(), "{inline}");
+        let both = replace(&workflow, PR, &format!("{PR}    branches: [dev, main]\n"));
+        assert_eq!(workflow::problems(&both), Vec::<String>::new());
+
         // The forms of a full check: the action's defaults written out, and
         // plain commands.
         for full in [
