@@ -1,15 +1,16 @@
 # Sprint 0 Integration Test Results
 
-- **Tested head:** `ac0e010a76d45fcce7a619889d94e4dfb8048597` on `dev`, committed. `git status --porcelain` printed nothing in the Windows working checkout before and after the runs; the WSL runs check their own clone. The head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques. Later commits change only the Book.
+- **Tested head:** `6a85e669d9a0d62fc03dbac4c283146c86be181a` on `dev`, committed. `git status --porcelain` printed nothing in the Windows working checkout before and after the runs; the WSL runs check their own clone. The head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques. Later commits change only the Book.
 - **Canonical runner:** `cargo ci` (steps fmt, clippy, test, policy, book). `cargo deny check` (cargo-deny 0.20.2) runs beside it.
 - **Raw output:** [test-matrix-log.md](test-matrix-log.md). It holds the final run, which produced every result below except the two task-boundary deny runs, and the scripts that ran it.
 - **Toolchain:** rustc 1.99.1 (58cf8f9c3 2026-10-13), LLVM 23.1.1, installed from `rust-toolchain.toml` on each host. Git 2.56.0.windows.3 on Windows, Git 2.53.0 in WSL.
-- **Environment:** both hosts printed `PROPTEST_*, PERI_* or CLIPPY_CONF_DIR set: none` before running. `int_ci_ignores_hostile_environment` sets them deliberately, on purpose, to show that `cargo ci` ignores them.
+- **Environment:** before running, each host printed which of `PROPTEST_*`, `PERI_*`, `CLIPPY_CONF_DIR`, `CARGO_TARGET_DIR`, `CARGO_BUILD_TARGET_DIR` and `GIT_*` it sets. WSL sets none. Windows sets only `GIT_EDITOR`, which the session sets; the golden rule removes it like any other `GIT_*` variable. Neither host has a Cargo config file above the checkouts. `int_ci_ignores_hostile_environment` and `int_policy_reports_failures` set such variables on purpose, to show that the tools ignore them.
+- **Target directories:** every checkout builds into its own `target/`, and each run prints its target directory. No run shares one with another checkout, which [code-review.md](code-review.md) records as a known limit.
 
 | Host | OS release | `rustc -Vv` host | Checkout |
 |------|------------|------------------|----------|
 | Windows | Microsoft Windows 11 Pro 10.0.26300 | `x86_64-pc-windows-msvc` | the working checkout `C:\Users\charl\Animus_Periapsis` (NTFS); scratch clones for the probes |
-| WSL 2 | Ubuntu 26.04.1 LTS, kernel 6.6.114.1-microsoft-standard-WSL2 | `x86_64-unknown-linux-gnu` | a fresh `git clone --branch dev` into `$HOME/periapsis-s0-test` (ext4, not `/mnt/c`); a clone of that for the failure probe |
+| WSL 2 | Ubuntu 26.04.1 LTS, kernel 6.6.114.1-microsoft-standard-WSL2 | `x86_64-unknown-linux-gnu` | a fresh `git clone --branch dev` into `$HOME/periapsis-s0-test` (ext4, not `/mnt/c`); a clone of that for the failure and policy probes |
 
 ## Results
 
@@ -23,18 +24,18 @@
 ### `int_ci_windows`
 - **Intents:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-4 (local half), [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-1, [INT-0006](../../../intents/INT-0006-format-v1.md) AC-3 (local half), [INT-0002](../../../intents/INT-0002-typed-acceptance-criteria.md) AC-2
 - **Run:** `cargo ci` in the Windows working checkout.
-- **Observed:** `PASS fmt`, `PASS clippy`, `PASS test`, `PASS policy`, `PASS book`, then `ci: all 5 steps passed`; exit 0. A separate `cargo test --workspace --locked` in the same checkout listed 140 tests passed ([unit-tests.md](unit-tests.md)).
+- **Observed:** `PASS fmt`, `PASS clippy`, `PASS test`, `PASS policy`, `PASS book`, then `ci: all 5 steps passed`; exit 0. A separate `cargo test --workspace --locked` in the same checkout listed 149 tests passed ([unit-tests.md](unit-tests.md)).
 - **Result:** pass
 
 ### `int_ci_reports_failures` (added in the Test phase)
-- **Intents:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-4, [INT-0006](../../../intents/INT-0006-format-v1.md) AC-3: the suite fails when an encoding changes. This is the end-to-end form of the T-007 clause "two steps fail → every step runs, non-zero exit, both named".
+- **Intents:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-4, [INT-0006](../../../intents/INT-0006-format-v1.md) AC-3: the suite fails when an encoding changes; [INT-0002](../../../intents/INT-0002-typed-acceptance-criteria.md) AC-2: the Book check fails on a violation. This is the end-to-end form of the T-007 clause "two steps fail → every step runs, non-zero exit, both named".
 - **Run:**
   1. Clone the tested head into a scratch directory: on Windows from the working checkout, in WSL from the ext4 clone.
   2. Overwrite one byte of `crates/codec/tests/golden/v1/string-ascii.bin`.
-  3. Append the unformatted line `pub fn  badly_formatted( ) {}` to `crates/codec/src/lib.rs`.
+  3. Append the unformatted line `pub fn  badly_formatted( ) {}` to `crates/codec/src/lib.rs`, and insert the untyped criterion `- An untyped probe criterion.` after the criteria heading of `docs/intents/INT-0031-visual-identity.md`.
   4. Run `cargo ci`, then delete the clone.
-- **Observed on both systems:** `FAIL fmt: cargo fmt --all --check exited with …1`, `PASS clippy`, `FAIL test: cargo test --workspace --locked exited with …101`, `PASS policy`, `PASS book`, then `ci: failed: fmt, test`; exit 1.
-- **Result:** pass. Every step ran, the run exited non-zero, and the summary named both failures. This exercises `ci::run`, `finish`, the `ci` arm of `cli` and `main`'s exit status.
+- **Observed on both systems:** `FAIL fmt: cargo fmt --all --check exited with …1`, `PASS clippy`, `FAIL test: cargo test --workspace --locked exited with …101`, `PASS policy`, `` FAIL book: 1 Book violations; run `cargo book` ``, then `ci: failed: fmt, test, book`; exit 1.
+- **Result:** pass. Every step ran, the run exited non-zero, and the summary named all three failures. This exercises `ci::run`, `finish`, the Book step's violation arm, the `ci` arm of `cli` and `main`'s exit status.
 
 ### `int_ci_ignores_hostile_environment` (added in the Test phase)
 - **Intents:** [INT-0006](../../../intents/INT-0006-format-v1.md) AC-3, [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md) AC-4; T-007 clause "the `test` step removes `PERI_GOLDEN_CREATE`"
@@ -52,6 +53,19 @@
   - `PERI_GOLDEN_CREATE` would have recreated the file and passed the test step;
   - `PROPTEST_CASES` would have failed the guard.
 
+### `int_policy_reports_failures` (added after the round-3 test critique)
+- **Intents:** [INT-0006](../../../intents/INT-0006-format-v1.md) AC-3, [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-1; the T-005 clause "`cargo policy` **SHALL** fail with the new rule `golden`"
+- **Run:** on Windows and in WSL:
+  1. Clone the tested head into a scratch directory. In WSL the failure probe's clone is reused, restored first with `git checkout -- .`.
+  2. Empty `.gitattributes`, so nothing marks `*.bin` binary.
+  3. Run `cargo policy`.
+  4. Write a file holding `*.bin binary`. Set `GIT_CONFIG_PARAMETERS`, and `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0`, so that both forms point `core.attributesFile` at it. As a control, run a plain `git check-attr text` on a golden file without and with these variables. Then run `cargo policy` again with them.
+  5. Delete the clone.
+- **Observed on both systems:**
+  - Both `cargo policy` runs printed `PASS` for the ten other rules and `` FAIL golden: 24 *.bin paths are not binary: the .gitattributes files give crates/codec/tests/golden/v1/blob-envelope.bin `text: unspecified` ``, and exited 1.
+  - The control printed `text: unspecified` without the variables and `text: unset` with them.
+- **Result:** pass. `cargo policy` fails naming `golden` and exits 1. Git variables that change a plain `git`'s answer do not reach the rule.
+
 ### `int_deny_windows`
 - **Intent:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-3 (local half)
 - **Run:** `cargo deny check` on the Windows host at the tested head.
@@ -62,9 +76,9 @@
 - **Intents:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-4 (local half), [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-1, [INT-0006](../../../intents/INT-0006-format-v1.md) AC-3 (local half)
 - **Run:** clone the committed `dev` head into the WSL ext4 home directory, install the pinned toolchain, run `cargo ci`, then list the tests with `cargo test --workspace --locked`.
 - **Observed:**
-  - The clone's head is `ac0e010` and `df` reports ext4.
+  - The clone's head is `6a85e66` and `df` reports ext4.
   - `cargo ci` printed `PASS` for all five steps, then `ci: all 5 steps passed`; exit 0.
-  - 140 tests passed on Linux, the same count as on Windows.
+  - 149 tests passed on Linux, the same count as on Windows.
   - The golden test ran inside the `test` step, so the 23 `.bin` files matched the Linux encoder byte for byte.
   - `PASS policy` includes the golden rule: Git, run against the rule's private repository in this fresh clone, gave all 23 `.bin` files and the `probe.bin` path `text: unset` and no filter, `ident` or working-tree encoding.
 - **Result:** pass
@@ -96,10 +110,10 @@
 - **Run:** on the Windows host, twice, once per type:
   1. Clone the tested head into a scratch directory.
   2. Append a function to `crates/codec/src/lib.rs` that builds a `std::collections::HashMap::<u8, u8>` in the first clone, and a `std::collections::HashSet::<u8>` in the second.
-  3. Run `cargo clippy --workspace --all-targets -- -D warnings`.
+  3. Run `cargo clippy --workspace --all-targets -- -D warnings`, building into the clone's own target directory.
   4. Delete the clone.
 - **Observed:**
-  - HashMap clone (at `ac0e010`, 1 file changed): "error: use of a disallowed type `std::collections::HashMap`", exit 101.
-  - HashSet clone (at `ac0e010`, 1 file changed): "error: use of a disallowed type `std::collections::HashSet`", exit 101.
+  - HashMap clone (at `6a85e66`, 1 file changed): "error: use of a disallowed type `std::collections::HashMap`", exit 101.
+  - HashSet clone (at `6a85e66`, 1 file changed): "error: use of a disallowed type `std::collections::HashSet`", exit 101.
   - Both clones were removed.
 - **Result:** pass

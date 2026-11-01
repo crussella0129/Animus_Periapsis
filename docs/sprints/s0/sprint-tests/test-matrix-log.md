@@ -1,6 +1,6 @@
 # Sprint 0 Test Matrix Log
 
-The raw output of the final test-matrix run at `ac0e010`, produced by the scripts reproduced at the end of this page: `test_matrix.sh`, its WSL leg `wsl_ci.sh`, and `port_corpus.py`. [integration-tests.md](integration-tests.md) and [e2e-tests.md](e2e-tests.md) summarize it.
+The raw output of the final test-matrix run at `6a85e66`, produced by the scripts reproduced at the end of this page: `test_matrix.sh`, its WSL leg `wsl_ci.sh`, and `port_corpus.py`. [integration-tests.md](integration-tests.md) and [e2e-tests.md](e2e-tests.md) summarize it.
 
 ```text
 
@@ -15,8 +15,10 @@ release: 1.99.1
 LLVM version: 23.1.1
 cargo-deny 0.20.2
 git version 2.56.0.windows.3
-PROPTEST_*, PERI_* or CLIPPY_CONF_DIR set: none
-head ac0e010a76d45fcce7a619889d94e4dfb8048597 on dev; uncommitted paths: 0
+PROPTEST_*, PERI_*, CLIPPY_CONF_DIR, CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR or GIT_* set: GIT_EDITOR 
+cargo config files above the checkouts: 
+head 6a85e669d9a0d62fc03dbac4c283146c86be181a on dev; uncommitted paths: 0
+target directory: C:\Users\charl\Animus_Periapsis\target
 
 ==== int_ci_windows (working checkout, NTFS)
 PASS fmt
@@ -38,9 +40,9 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
      Running unittests src\main.rs
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests\book.rs
-test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.89s
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.89s
      Running tests\cli.rs
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.61s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
      Running unittests src\lib.rs
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests\alloc.rs
@@ -50,19 +52,19 @@ test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
      Running tests\mutants.rs
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
      Running tests\properties.rs
-test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.73s
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.74s
      Running tests\spec.rs
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running unittests src\lib.rs
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests\vectors.rs
-test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.13s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.51s
      Running unittests src\main.rs
-test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.85s
+test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.68s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-tests passed: 140
+tests passed: 149
 
 ==== int_cc_build_dependency_audit
 cc v1.10.0
@@ -75,28 +77,32 @@ C-build yes rows:
   `blake3` 
 
 ==== int_disallowed_types_probe (two scratch clones, discarded)
--- planted std::collections::HashMap at ac0e010:  1 file changed, 5 insertions(+)
+-- planted std::collections::HashMap at 6a85e66:  1 file changed, 5 insertions(+)
+target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
 error: use of a disallowed type `std::collections::HashMap`
 clippy exit 101 (non-zero required)
 scratch clone removed: yes
--- planted std::collections::HashSet at ac0e010:  1 file changed, 5 insertions(+)
+-- planted std::collections::HashSet at 6a85e66:  1 file changed, 5 insertions(+)
+target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
 error: use of a disallowed type `std::collections::HashSet`
 clippy exit 101 (non-zero required)
 scratch clone removed: yes
 
-==== int_ci_reports_failures (Windows scratch clone: one golden byte changed, one fmt violation)
-changed:  M crates/codec/src/lib.rs  M crates/codec/tests/golden/v1/string-ascii.bin 
+==== int_ci_reports_failures (Windows scratch clone: one golden byte changed, one fmt violation, one untyped criterion)
+changed:  M crates/codec/src/lib.rs  M crates/codec/tests/golden/v1/string-ascii.bin  M docs/intents/INT-0031-visual-identity.md 
+target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
 FAIL fmt: cargo fmt --all --check exited with exit code: 1
 PASS clippy
 FAIL test: cargo test --workspace --locked exited with exit code: 101
 PASS policy
-PASS book
-ci: failed: fmt, test
+FAIL book: 1 Book violations; run `cargo book`
+ci: failed: fmt, test, book
 cargo ci exit 1 (1 required)
 scratch clone removed: yes
 
 ==== int_ci_ignores_hostile_environment (Windows scratch clone: HashMap planted, a golden file deleted)
 changed:  M crates/codec/src/lib.rs  D crates/codec/tests/golden/v1/uvarint-0.bin 
+target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
 PASS fmt
 FAIL clippy: cargo clippy --workspace --all-targets --locked -- -D warnings exited with exit code: 101
 FAIL test: cargo test --workspace --locked exited with exit code: 101
@@ -110,8 +116,42 @@ test golden_v1_corpus_matches ... FAILED
 uvarint-0.bin recreated: no
 scratch clone removed: yes
 
+==== int_policy_reports_failures (Windows scratch clone: .gitattributes emptied, so nothing marks *.bin binary)
+changed:  M .gitattributes 
+target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
+-- the caller's environment as is
+PASS lints
+PASS unsafe
+PASS toolchain
+PASS lockfile
+PASS publish
+PASS deps
+PASS credits
+PASS clippy
+PASS names
+PASS spec
+FAIL golden: 24 *.bin paths are not binary: the .gitattributes files give crates/codec/tests/golden/v1/blob-envelope.bin `text: unspecified`
+cargo policy exit 1 (1 required)
+-- Git variables that point core.attributesFile at a file marking *.bin binary
+control, plain git check-attr: crates/codec/tests/golden/v1/uvarint-0.bin: text: unspecified
+control, with the variables:   crates/codec/tests/golden/v1/uvarint-0.bin: text: unset
+PASS lints
+PASS unsafe
+PASS toolchain
+PASS lockfile
+PASS publish
+PASS deps
+PASS credits
+PASS clippy
+PASS names
+PASS spec
+FAIL golden: 24 *.bin paths are not binary: the .gitattributes files give crates/codec/tests/golden/v1/blob-envelope.bin `text: unspecified`
+cargo policy exit 1 (1 required)
+scratch clone removed: yes
+
 ==== e2e_fresh_clone_windows (core.autocrlf=true)
-clone head ac0e010a76d45fcce7a619889d94e4dfb8048597, core.autocrlf=true
+clone head 6a85e669d9a0d62fc03dbac4c283146c86be181a, core.autocrlf=true
+target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\e2e-autocrlf\target
 golden: all 23 .bin files byte-identical to the original
 text files with CRLF: 0
 PASS fmt
@@ -120,11 +160,24 @@ PASS test
 PASS policy
 PASS book
 ci: all 5 steps passed
-cargo ci exit 0 (cold build, 40 s)
+cargo ci exit 0 (cold build, 47 s)
 
 ==== e2e_port_rule_sprint_loops_book
 Animus_Sprint_Loops head e8c3a58018e1627a145759fdac1f089c6236ba36, uncommitted paths: 0
 INT files: 13
+awk INT-0001-project-book.md: 5
+awk INT-0002-substrate-and-branch-model.md: 6
+awk INT-0003-dependency-updates-on-work.md: 7
+awk INT-0004-substrate-contract-versioning.md: 7
+awk INT-0005-turn-and-checkpoint-contract.md: 6
+awk INT-0006-provider-reach-and-ci-truth.md: 11
+awk INT-0007-integrity-sweep.md: 5
+awk INT-0008-escalation-and-flow.md: 5
+awk INT-0009-sprint-identity.md: 5
+awk INT-0010-rust-portability-study.md: 5
+awk INT-0011-human-in-the-loop-compatibility.md: 5
+awk INT-0012-ci-scaffolding-lifecycle.md: 6
+awk INT-0013-verification-integrity.md: 9
 independent count (awk): 82
 book: C:/Users/charl/Animus_Sprint_Loops/docs (undeclared, port rule)
   INT-0001-project-book.md: 5 criteria
@@ -174,7 +227,7 @@ markdown-it-py 4.0.0
 port_corpus exit 0
   Animus_Amalgam: 7a6786b3e1, docs/intents uncommitted: 0
   Animus_Ferric: 508edfd, docs/intents uncommitted: 0
-  Animus_Periapsis: ac0e010, docs/intents uncommitted: 0
+  Animus_Periapsis: 6a85e66, docs/intents uncommitted: 0
   Animus_Sprint_Loops: e8c3a58, docs/intents uncommitted: 0
   Animus_Unitarity: 4f82372, docs/intents uncommitted: 0
   CubiKan: 77642b4, docs/intents uncommitted: 0
@@ -197,14 +250,15 @@ port_corpus exit 0
   sprint-loops: 0bdbe66, docs/intents uncommitted: 0
   yarduluv: c941400, docs/intents uncommitted: 0
 
-==== WSL leg (int_ci_wsl, int_tooling_is_idempotent, int_ci_reports_failures)
+==== WSL leg (int_ci_wsl, int_tooling_is_idempotent, int_ci_reports_failures, int_policy_reports_failures)
 == host
 Linux 6.6.114.1-microsoft-standard-WSL2 x86_64
 PRETTY_NAME="Ubuntu 26.04.1 LTS"
 git version 2.53.0
-PROPTEST_*, PERI_* or CLIPPY_CONF_DIR set: none
+PROPTEST_*, PERI_*, CLIPPY_CONF_DIR, CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR or GIT_* set: none
+cargo config files above the checkouts: 
 == clone
-head ac0e010a76d45fcce7a619889d94e4dfb8048597
+head 6a85e669d9a0d62fc03dbac4c283146c86be181a
 checkout on ext4
 rustc 1.99.1 (58cf8f9c3 2026-10-13)
 binary: rustc
@@ -213,6 +267,7 @@ commit-date: 2026-10-13
 host: x86_64-unknown-linux-gnu
 release: 1.99.1
 LLVM version: 23.1.1
+target directory: /home/charles/periapsis-s0-test/target
 == int_ci_wsl: cargo ci
 PASS fmt
 PASS clippy
@@ -221,7 +276,7 @@ PASS policy
 PASS book
 ci: all 5 steps passed
 cargo ci exit 0
-tests passed on Linux: 140
+tests passed on Linux: 149
 == int_tooling_is_idempotent
 run 1 cargo ci: exit 0, dirty files 0
 run 1 cargo policy: exit 0, dirty files 0
@@ -230,21 +285,52 @@ run 2 cargo ci: exit 0, dirty files 0
 run 2 cargo policy: exit 0, dirty files 0
 run 2 cargo book: exit 0, dirty files 0, counted chapter lines 31
 chapters in docs/intents: 31
-== int_ci_reports_failures: one golden byte changed, one fmt violation
-changed:  M crates/codec/src/lib.rs  M crates/codec/tests/golden/v1/string-ascii.bin 
+== int_ci_reports_failures: one golden byte changed, one fmt violation, one untyped criterion
+changed:  M crates/codec/src/lib.rs  M crates/codec/tests/golden/v1/string-ascii.bin  M docs/intents/INT-0031-visual-identity.md 
+target directory: /home/charles/periapsis-s0-probe/target
 FAIL fmt: cargo fmt --all --check exited with exit status: 1
 PASS clippy
 FAIL test: cargo test --workspace --locked exited with exit status: 101
 PASS policy
-PASS book
-ci: failed: fmt, test
+FAIL book: 1 Book violations; run `cargo book`
+ci: failed: fmt, test, book
 cargo ci exit 1 (1 required)
+== int_policy_reports_failures: .gitattributes emptied, so nothing marks *.bin binary
+changed:  M .gitattributes 
+-- the caller's environment as is
+PASS lints
+PASS unsafe
+PASS toolchain
+PASS lockfile
+PASS publish
+PASS deps
+PASS credits
+PASS clippy
+PASS names
+PASS spec
+FAIL golden: 24 *.bin paths are not binary: the .gitattributes files give crates/codec/tests/golden/v1/blob-envelope.bin `text: unspecified`
+cargo policy exit 1 (1 required)
+-- Git variables that point core.attributesFile at a file marking *.bin binary
+control, plain git check-attr: crates/codec/tests/golden/v1/uvarint-0.bin: text: unspecified
+control, with the variables:   crates/codec/tests/golden/v1/uvarint-0.bin: text: unset
+PASS lints
+PASS unsafe
+PASS toolchain
+PASS lockfile
+PASS publish
+PASS deps
+PASS credits
+PASS clippy
+PASS names
+PASS spec
+FAIL golden: 24 *.bin paths are not binary: the .gitattributes files give crates/codec/tests/golden/v1/blob-envelope.bin `text: unspecified`
+cargo policy exit 1 (1 required)
 == done
 wsl exit 0
 
 ==== after
 working checkout uncommitted paths: 0
-tested head ac0e010a76d45fcce7a619889d94e4dfb8048597
+tested head 6a85e669d9a0d62fc03dbac4c283146c86be181a
 ```
 
 ## Scripts
@@ -262,10 +348,16 @@ REPO=C:/Users/charl/Animus_Periapsis
 SL=C:/Users/charl/Animus_Sprint_Loops
 S=C:/Users/charl/AppData/Local/Temp/claude/C--Users-charl--claude-spares-spare-61ekw4/5eb9caae-ac3b-41b6-a91c-2cad206f0660/scratchpad
 WSL_SCRIPT=/mnt/c/Users/charl/AppData/Local/Temp/claude/C--Users-charl--claude-spares-spare-61ekw4/5eb9caae-ac3b-41b6-a91c-2cad206f0660/scratchpad/tools/wsl_ci.sh
-# Scratch clones share one target directory, so each builds only the workspace.
-PROBE_TARGET="$S/probe-target"
 
 section() { printf '\n==== %s\n' "$1"; }
+
+# The target directory cargo uses in the current directory. Every checkout
+# here builds into its own: cargo decides freshness by file times, so a
+# shared one could run binaries built for another checkout.
+target_dir() {
+  cargo metadata --format-version 1 --no-deps 2>/dev/null |
+    python -X utf8 -c "import json, sys; print(json.load(sys.stdin)['target_directory'])"
+}
 
 # A fresh clone of the committed head in a new scratch directory.
 fresh_clone() {
@@ -289,11 +381,13 @@ powershell.exe -NoProfile -Command "(Get-CimInstance Win32_OperatingSystem) | Fo
 rustc -Vv
 cargo deny --version
 git --version
-set_vars=$(env | grep -E '^(PROPTEST_|PERI_|CLIPPY_CONF_DIR)' | cut -d= -f1 | tr '\n' ' ')
-echo "PROPTEST_*, PERI_* or CLIPPY_CONF_DIR set: ${set_vars:-none}"
+set_vars=$(env | grep -E '^(PROPTEST_|PERI_|CLIPPY_CONF_DIR|CARGO_TARGET_DIR|CARGO_BUILD_TARGET_DIR|GIT_)' | cut -d= -f1 | tr '\n' ' ')
+echo "PROPTEST_*, PERI_*, CLIPPY_CONF_DIR, CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR or GIT_* set: ${set_vars:-none}"
+echo "cargo config files above the checkouts: $(ls C:/Users/charl/.cargo/config.toml C:/Users/charl/.cargo/config C:/Users/.cargo/config.toml C:/.cargo/config.toml 2>/dev/null | tr '\n' ' ')"
 cd "$REPO" || exit 10
 HEAD_SHA=$(git rev-parse HEAD)
 echo "head $HEAD_SHA on $(git branch --show-current); uncommitted paths: $(git status --porcelain | wc -l)"
+echo "target directory: $(target_dir)"
 
 section "int_ci_windows (working checkout, NTFS)"
 cargo ci 2>&1 | grep -E '^(PASS|FAIL|ci:)'
@@ -325,7 +419,8 @@ for type in "std::collections::HashMap::<u8, u8>" "std::collections::HashSet::<u
     plant "$type"
     name=${type%%::<*}
     echo "-- planted $name at $(git rev-parse --short HEAD): $(git diff --stat | tail -1)"
-    CARGO_TARGET_DIR="$PROBE_TARGET" cargo clippy --workspace --all-targets -- -D warnings > "$S/probe.out" 2>&1
+    echo "target directory: $(target_dir)"
+    cargo clippy --workspace --all-targets -- -D warnings > "$S/probe.out" 2>&1
     code=$?
     grep -E "disallowed type \`$name\`" "$S/probe.out" | head -1
     echo "clippy exit $code (non-zero required)"
@@ -333,15 +428,17 @@ for type in "std::collections::HashMap::<u8, u8>" "std::collections::HashSet::<u
   discard "$P"
 done
 
-section "int_ci_reports_failures (Windows scratch clone: one golden byte changed, one fmt violation)"
+section "int_ci_reports_failures (Windows scratch clone: one golden byte changed, one fmt violation, one untyped criterion)"
 P="$S/probe"
 fresh_clone "$P"
 (
   cd "$P" || exit 12
   printf 's' | dd of=crates/codec/tests/golden/v1/string-ascii.bin bs=1 seek=3 count=1 conv=notrunc 2>/dev/null
   printf '\npub fn  badly_formatted( ) {}\n' >> crates/codec/src/lib.rs
+  sed -i '/^## Acceptance criteria$/a - An untyped probe criterion.' docs/intents/INT-0031-visual-identity.md
   echo "changed: $(git status --porcelain | tr '\n' ' ')"
-  CARGO_TARGET_DIR="$PROBE_TARGET" cargo ci > "$S/probe.out" 2>&1
+  echo "target directory: $(target_dir)"
+  cargo ci > "$S/probe.out" 2>&1
   code=$?
   grep -E '^(PASS|FAIL|ci:)' "$S/probe.out"
   echo "cargo ci exit $code (1 required)"
@@ -357,14 +454,46 @@ mkdir -p "$S/empty-clippy-conf"
   plant "std::collections::HashMap::<u8, u8>"
   rm crates/codec/tests/golden/v1/uvarint-0.bin
   echo "changed: $(git status --porcelain | tr '\n' ' ')"
+  echo "target directory: $(target_dir)"
   PROPTEST_CASES=1 PERI_GOLDEN_CREATE=1 CLIPPY_CONF_DIR="$S/empty-clippy-conf" \
-    CARGO_TARGET_DIR="$PROBE_TARGET" cargo ci > "$S/probe.out" 2>&1
+    cargo ci > "$S/probe.out" 2>&1
   code=$?
   grep -E '^(PASS|FAIL|ci:)' "$S/probe.out"
   echo "cargo ci exit $code (1 required)"
   grep -E 'disallowed type `std::collections::HashMap`' "$S/probe.out" | head -1
   grep -E '^test (case_count_is_not_overridden|case_counts_are_not_overridden|golden_v1_corpus_matches) \.\.\. ' "$S/probe.out"
   echo "uvarint-0.bin recreated: $([ -e crates/codec/tests/golden/v1/uvarint-0.bin ] && echo yes || echo no)"
+)
+discard "$P"
+
+section "int_policy_reports_failures (Windows scratch clone: .gitattributes emptied, so nothing marks *.bin binary)"
+P="$S/probe"
+fresh_clone "$P"
+printf '*.bin binary\n' > "$S/hostile-attributes"
+(
+  cd "$P" || exit 15
+  # Empty, so that a global attributes file could decide: a workspace line
+  # such as `* text=auto` would outrank it.
+  : > .gitattributes
+  echo "changed: $(git status --porcelain | tr '\n' ' ')"
+  echo "target directory: $(target_dir)"
+  echo "-- the caller's environment as is"
+  cargo policy > "$S/probe.out" 2>&1
+  code=$?
+  grep -E '^(PASS|FAIL)' "$S/probe.out"
+  echo "cargo policy exit $code (1 required)"
+  echo "-- Git variables that point core.attributesFile at a file marking *.bin binary"
+  hostile() {
+    GIT_CONFIG_PARAMETERS="'core.attributesfile'='$S/hostile-attributes'" \
+      GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.attributesFile GIT_CONFIG_VALUE_0="$S/hostile-attributes" \
+      "$@"
+  }
+  echo "control, plain git check-attr: $(git check-attr text -- crates/codec/tests/golden/v1/uvarint-0.bin)"
+  echo "control, with the variables:   $(hostile git check-attr text -- crates/codec/tests/golden/v1/uvarint-0.bin)"
+  hostile cargo policy > "$S/probe.out" 2>&1
+  code=$?
+  grep -E '^(PASS|FAIL)' "$S/probe.out"
+  echo "cargo policy exit $code (1 required)"
 )
 discard "$P"
 
@@ -375,6 +504,7 @@ git clone --quiet -c core.autocrlf=true --branch dev "$REPO" "$W"
 (
   cd "$W" || exit 14
   echo "clone head $(git rev-parse HEAD), core.autocrlf=$(git config core.autocrlf)"
+  echo "target directory: $(target_dir)"
   (cd crates/codec/tests/golden/v1 && sha256sum ./*.bin) > "$S/clone.sha"
   (cd "$REPO/crates/codec/tests/golden/v1" && sha256sum ./*.bin) > "$S/orig.sha"
   if diff -q "$S/clone.sha" "$S/orig.sha" >/dev/null; then
@@ -394,6 +524,7 @@ echo "INT files: $(ls "$SL"/docs/intents/INT-*.md | wc -l)"
 total=0
 for f in "$SL"/docs/intents/INT-*.md; do
   n=$(awk '/^(```|~~~)/{fence=!fence; next} fence{next} /^## /{inside=($0 ~ /^## Acceptance criteria[[:space:]]*$/); next} inside && /^- /{c++} END{print c+0}' "$f")
+  echo "awk $(basename "$f"): $n"
   total=$((total + n))
 done
 echo "independent count (awk): $total"
@@ -412,7 +543,7 @@ for book in $(ls -d C:/Users/charl/*/docs/.sprint-loop-book | sed 's#/docs/.spri
   fi
 done
 
-section "WSL leg (int_ci_wsl, int_tooling_is_idempotent, int_ci_reports_failures)"
+section "WSL leg (int_ci_wsl, int_tooling_is_idempotent, int_ci_reports_failures, int_policy_reports_failures)"
 # A login shell puts ~/.cargo/bin on PATH; the copy drops any CR line ends.
 wsl.exe -d Ubuntu -- bash -lc "tr -d '\r' < '$WSL_SCRIPT' > /tmp/wsl_ci.sh && bash /tmp/wsl_ci.sh" 2>&1 | tr -d '\r'
 echo "wsl exit ${PIPESTATUS[0]}"
@@ -426,20 +557,27 @@ echo "tested head $HEAD_SHA"
 
 ````bash
 #!/usr/bin/env bash
-# Sprint 0 Test phase, Linux leg: int_ci_wsl, int_tooling_is_idempotent and
-# int_ci_reports_failures. Clones the committed dev head into the WSL ext4 home
-# directory (not /mnt/c) and runs the project commands there.
+# Sprint 0 Test phase, Linux leg: int_ci_wsl, int_tooling_is_idempotent,
+# int_ci_reports_failures and int_policy_reports_failures. Clones the committed
+# dev head into the WSL ext4 home directory (not /mnt/c) and runs the project
+# commands there. Every checkout builds into its own target directory.
 set -u
 SRC=/mnt/c/Users/charl/Animus_Periapsis
 DEST="$HOME/periapsis-s0-test"
 PROBE="$HOME/periapsis-s0-probe"
 
+target_dir() {
+  cargo metadata --format-version 1 --no-deps 2>/dev/null |
+    python3 -c "import json, sys; print(json.load(sys.stdin)['target_directory'])"
+}
+
 echo "== host"
 uname -srm
 grep PRETTY_NAME /etc/os-release
 git --version
-set_vars=$(env | grep -E '^(PROPTEST_|PERI_|CLIPPY_CONF_DIR)' | cut -d= -f1 | tr '\n' ' ')
-echo "PROPTEST_*, PERI_* or CLIPPY_CONF_DIR set: ${set_vars:-none}"
+set_vars=$(env | grep -E '^(PROPTEST_|PERI_|CLIPPY_CONF_DIR|CARGO_TARGET_DIR|CARGO_BUILD_TARGET_DIR|GIT_)' | cut -d= -f1 | tr '\n' ' ')
+echo "PROPTEST_*, PERI_*, CLIPPY_CONF_DIR, CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR or GIT_* set: ${set_vars:-none}"
+echo "cargo config files above the checkouts: $(ls "$HOME"/.cargo/config.toml "$HOME"/.cargo/config /home/.cargo/config.toml /.cargo/config.toml 2>/dev/null | tr '\n' ' ')"
 echo "== clone"
 rm -rf "$DEST"
 git clone --quiet --branch dev "$SRC" "$DEST" || exit 10
@@ -448,6 +586,7 @@ echo "head $(git rev-parse HEAD)"
 echo "checkout on $(df --output=fstype . | tail -1)"
 rustup toolchain install >/dev/null 2>&1
 rustc -Vv
+echo "target directory: $(target_dir)"
 echo "== int_ci_wsl: cargo ci"
 cargo ci 2>&1 | grep -E '^(PASS|FAIL|ci:)'
 echo "cargo ci exit ${PIPESTATUS[0]}"
@@ -465,18 +604,42 @@ for run in 1 2; do
   done
 done
 echo "chapters in docs/intents: $(ls docs/intents/INT-*.md | wc -l)"
-echo "== int_ci_reports_failures: one golden byte changed, one fmt violation"
+echo "== int_ci_reports_failures: one golden byte changed, one fmt violation, one untyped criterion"
 rm -rf "$PROBE"
 git clone --quiet "$DEST" "$PROBE" || exit 12
 cd "$PROBE" || exit 13
 printf 's' | dd of=crates/codec/tests/golden/v1/string-ascii.bin bs=1 seek=3 count=1 conv=notrunc 2>/dev/null
 printf '\npub fn  badly_formatted( ) {}\n' >> crates/codec/src/lib.rs
+sed -i '/^## Acceptance criteria$/a - An untyped probe criterion.' docs/intents/INT-0031-visual-identity.md
 echo "changed: $(git status --porcelain | tr '\n' ' ')"
-out=$(CARGO_TARGET_DIR="$DEST/target" cargo ci 2>&1)
+echo "target directory: $(target_dir)"
+out=$(cargo ci 2>&1)
 code=$?
 printf '%s\n' "$out" | grep -E '^(PASS|FAIL|ci:)'
 echo "cargo ci exit $code (1 required)"
-cd "$HOME" && rm -rf "$PROBE"
+echo "== int_policy_reports_failures: .gitattributes emptied, so nothing marks *.bin binary"
+git checkout --quiet -- .
+: > .gitattributes
+printf '*.bin binary\n' > "$HOME/hostile-attributes"
+echo "changed: $(git status --porcelain | tr '\n' ' ')"
+echo "-- the caller's environment as is"
+out=$(cargo policy 2>&1)
+code=$?
+printf '%s\n' "$out" | grep -E '^(PASS|FAIL)'
+echo "cargo policy exit $code (1 required)"
+echo "-- Git variables that point core.attributesFile at a file marking *.bin binary"
+hostile() {
+  GIT_CONFIG_PARAMETERS="'core.attributesfile'='$HOME/hostile-attributes'" \
+    GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.attributesFile GIT_CONFIG_VALUE_0="$HOME/hostile-attributes" \
+    "$@"
+}
+echo "control, plain git check-attr: $(git check-attr text -- crates/codec/tests/golden/v1/uvarint-0.bin)"
+echo "control, with the variables:   $(hostile git check-attr text -- crates/codec/tests/golden/v1/uvarint-0.bin)"
+out=$(hostile cargo policy 2>&1)
+code=$?
+printf '%s\n' "$out" | grep -E '^(PASS|FAIL)'
+echo "cargo policy exit $code (1 required)"
+cd "$HOME" && rm -rf "$PROBE" "$HOME/hostile-attributes"
 echo "== done"
 ````
 

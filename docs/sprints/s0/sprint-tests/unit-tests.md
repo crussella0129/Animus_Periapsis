@@ -1,27 +1,27 @@
 # Sprint 0 Unit Test Results
 
-- **Tested head:** `ac0e010a76d45fcce7a619889d94e4dfb8048597` on `dev`, committed, with a clean working tree. Later commits change only the Book. This head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques ([round 1](critique-round1.md), [round 2](critique-round2.md)).
+- **Tested head:** `6a85e669d9a0d62fc03dbac4c283146c86be181a` on `dev`, committed, with a clean working tree. Later commits change only the Book. This head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques ([round 1](critique-round1.md), [round 2](critique-round2.md), [round 3](critique-round3.md)).
 - **Runner:** the `test` step of `cargo ci`, which runs `cargo test --workspace --locked`. The listing below comes from running that command directly in the Windows working checkout, as recorded in [integration-tests.md](integration-tests.md).
-- **Result:** 140 passed, 0 failed, 0 ignored, on the Windows 11 working checkout and in the WSL Ubuntu 26.04.1 ext4 clone. The `test` step also passed in the fresh `core.autocrlf=true` Windows clone ([e2e-tests.md](e2e-tests.md)). No test is platform-gated or `#[ignore]`d: `cfg(windows)` and `cfg(unix)` mark only helper pairs (`non_unicode_name` and its xtask counterpart), each with both variants. Both systems ran the same 140 tests.
+- **Result:** 149 passed, 0 failed, 0 ignored, on the Windows 11 working checkout and in the WSL Ubuntu 26.04.1 ext4 clone. The `test` step also passed in the fresh `core.autocrlf=true` Windows clone ([e2e-tests.md](e2e-tests.md)). No test is platform-gated or `#[ignore]`d: `cfg(windows)` and `cfg(unix)` mark only helper pairs (`non_unicode_name` and its xtask counterpart), each with both variants. Both systems ran the same 149 tests.
 - **Toolchain:** rustc 1.99.1 (58cf8f9c3 2026-10-13), LLVM 23.1.1, on `x86_64-pc-windows-msvc` and `x86_64-unknown-linux-gnu`.
 - **Randomness:** property tests use proptest 1.12 with fixed case counts: 10,000 cases per property in `hash`, `codec` and `book`, and 100,000 for decoder totality.
   - The seed is random on each run. proptest stores a failing seed under `proptest-regressions/` and replays it first next time; `PROPTEST_RNG_SEED` replays any seed.
   - The `cargo ci` test step does not pass `PROPTEST_*` variables to its child process, so a shell variable cannot cut those counts.
   - Each property crate also has a guard test (`case_count_is_not_overridden`, `case_counts_are_not_overridden`) that fails when `PROPTEST_CASES` would replace a configured count.
-- **Stubs:** one. `ci_failures_do_not_stop_later_steps` gives the runner's loop scripted outcomes, to test the loop on its own. The real executor is tested by `steps_execute_for_real`: a real cargo step, an unknown cargo subcommand, a program that does not exist, and the in-process policy and Book steps. Every other test builds real inputs: temporary fixture trees (named by process id and test) or in-memory text. Tests call the xtask front end as a function and the `book` binary as a process.
+- **Stubs:** one. `ci_failures_do_not_stop_later_steps` gives the runner's loop scripted outcomes, to test the loop on its own. The real executor is tested by `steps_execute_for_real`: a real cargo step, an unknown cargo subcommand, a program that does not exist, and the in-process policy and Book steps. Every other test builds real inputs: temporary fixture trees (named by process id and test) or in-memory text. Tests call the xtask front end as a function and the `book` binary as a process. One xtask test, `caller_git_settings_are_shut_out`, runs its own test binary again in a child process, with Git variables set that the golden rule must ignore.
 
 | Target | Tests |
 |--------|-------|
-| `xtask` unit tests (`policy`, `attributes`, `ci`, `workflow`, `workspace`, `docs`, front end) | 39 |
+| `xtask` unit tests (`policy`, `attributes`, `ci`, `workflow`, `workspace`, `docs`, front end) | 46 |
 | `hash` `tests/vectors.rs` | 12 |
 | `codec` `tests/properties.rs` | 40 |
 | `codec` `tests/alloc.rs` | 3 |
 | `codec` `tests/mutants.rs` | 1 |
 | `codec` `tests/golden.rs` | 8 |
 | `codec` `tests/spec.rs` | 2 |
-| `book` `tests/book.rs` | 31 |
+| `book` `tests/book.rs` | 33 |
 | `book` `tests/cli.rs` | 4 |
-| **Total** | **140** |
+| **Total** | **149** |
 
 Each table below maps one task's EARS clauses (from the locked [build plan](../sprint-plans/build-plan.md)) to the tests that assert them. Where a clause is verified by an integration or E2E run, the table names that run instead. Tests added for code-review findings sit beside the clause they strengthen. [code-review.md](code-review.md) maps each finding to its regression test.
 
@@ -32,6 +32,7 @@ Each table below maps one task's EARS clauses (from the locked [build plan](../s
 |----------------------------|------|--------|
 | `cargo policy` at the root → exit 0 and `PASS <rule>` for every rule | `policy_passes_on_workspace`, `policy_command_reports_every_rule` (all 11 rules print `PASS`) | pass |
 | the clean fixture → every rule passes | `fixture_passes_every_rule` | pass |
+| a rule fails → `cargo policy` prints `FAIL <rule>: <problem>` for each problem in its rule's place, nothing on stderr, exit 1 | `policy_command_fails_naming_each_failing_rule` compares the whole output: one failing rule, two failing rules, and one rule with two problems. `int_policy_reports_failures` (integration, Windows and WSL) | pass |
 | a member that does not resolve to `publish = false` → FAIL `publish`, naming the crate | `policy_requires_unpublished_members`: both accepted forms pass; a workspace `publish = true` and a missing workspace value each fail | pass |
 | no `[lints] workspace = true` → FAIL `lints`, naming the crate; the workspace lint must forbid `unsafe_code` | `policy_flags_missing_workspace_lints`: a member without `[lints]` fails. A root `unsafe_code` that is missing, `allow`, `deny`, commented out, or in the wrong table also fails | pass |
 | a crate root without `#![forbid(unsafe_code)]` → FAIL `unsafe`, naming the file | `policy_flags_missing_forbid_unsafe` (`src/main.rs` and `src/lib.rs`) | pass |
@@ -89,7 +90,7 @@ The spec landed in `951be4f`, before the hash code (`0fdb12a`) and the codec cod
 | 10,000 random mutants per type that still decode → re-encode to the mutant | `mutants_{…}` (13 properties, same types) | pass |
 | every single-byte substitution, insertion and deletion of a fixed value per type → decoding mutants re-encode to themselves; at least one decodes per type | `exhaustive_mutants_reencode` | pass |
 | 100,000 random byte strings as every type and as an envelope → Ok or Err, never a panic | `decode_is_total_on_random_bytes`; `case_counts_are_not_overridden` | pass |
-| envelope version ≠ 1, reserved kinds 0x02–0x05, unknown kinds → the three named errors; `object_id` hashes the whole envelope | `envelope_rejects_unknown_version_and_kind`, `object_id_hashes_whole_envelope` | pass |
+| envelope version ≠ 1, reserved kinds 0x02–0x05, unknown kinds → the three named errors; `object_id` hashes the whole envelope | `envelope_rejects_unknown_version_and_kind`: all 256 versions and all 256 kinds, each with an empty and a one-byte body, against the spec's version rule and kind table written out by hand, and `ObjectKind::from_id` for every id; class counts fail a sweep that skips ids. `object_id_hashes_whole_envelope` | pass |
 | the public kind registry → exactly blob defined and the four reserved kinds | `kind_registry_is_complete` | pass |
 
 ## T-005: Golden corpus and spec consistency
@@ -104,7 +105,7 @@ The spec landed in `951be4f`, before the hash code (`0fdb12a`) and the codec cod
 | `create_mode` → true exactly for `Some("1")` | `create_mode_is_exactly_one` (`"0"`, `"true"`, `""` and unset are false) | pass |
 | every golden file equals the spec's hand-written hex; every corpus name has a row | `spec_examples_match_golden_files` | pass |
 | the spec's hash and kind tables equal the code registries | `spec_registries_match_code` | pass |
-| `.gitattributes` does not mark `*.bin` files as binary → FAIL `golden` | `policy_requires_binary_golden_attr`. Git evaluates the workspace's own `.gitattributes` files for every committed golden file and a probe, through a private repository and from the workspace root, inside a checkout or out of one. Each of these fails: no `*.bin binary` (`text: unspecified`, `text: auto`); `*.bin text`; a later overriding line; a nested file at any level down to `v1/`; `filter`, `ident` or `working-tree-encoding` set; a real golden file left out by a probe-only pattern; anything Git warns about; Git unable to answer. A broken `.git` changes nothing. Also the `attributes` unit tests `check_attr_runs_at_the_workspace_and_isolated`, `every_git_variable_is_scrubbed` and `a_missing_workspace_is_an_error` | pass |
+| `.gitattributes` does not mark `*.bin` files as binary → FAIL `golden` | `policy_requires_binary_golden_attr`. Git evaluates the workspace's own `.gitattributes` files for every committed golden file and a probe, from the workspace root, inside a checkout or out of one, through a private repository made for each evaluation in a new directory and removed afterwards. Each of these fails: no `*.bin binary` (`text: unspecified`, `text: auto`); `*.bin text`; a later overriding line; a nested file at any level down to `v1/`; `filter`, `ident` or `working-tree-encoding` set; a real golden file left out by a probe-only pattern; anything Git warns about; Git unable to answer. A broken `.git` changes nothing. `policy_command_fails_naming_each_failing_rule`: `cargo policy` itself prints `FAIL golden` and exits 1. The `attributes` unit tests: `check_attr_runs_at_the_workspace_and_isolated`; `isolated_removes_every_inherited_git_variable` and `every_git_variable_is_scrubbed`; `caller_git_settings_are_shut_out`, where Git variables that mark `*.bin` binary for a plain `git` change nothing for the rule; `taken_names_are_never_used` and `every_private_repository_is_new_and_removed_after_use`; `a_missing_workspace_is_an_error`. `int_policy_reports_failures` (integration, Windows and WSL) | pass |
 
 ## T-006: Typed-acceptance validator in the book crate
 - **Intents:** [INT-0002](../../../intents/INT-0002-typed-acceptance-criteria.md) AC-2, AC-3, AC-4; [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-9
@@ -114,7 +115,7 @@ The validator reads chapters as CommonMark (pulldown-cmark), the way GitHub rend
 | EARS clause (WHEN → SHALL) | Test | Result |
 |----------------------------|------|--------|
 | `cargo book` with no arguments → strict rule from the marker, a counted line per chapter, ≥1 criterion each, 0 violations, exit 0 | `book_intents_pass_strict`, `cli_exit_codes` (no-argument case run at the repository root) | pass |
-| a typed line breaking one rule → exactly one violation with file, line and rule | `typed_line_violations_are_reported` (polarity, modality, claim, number, duplicate, detail). `numbers_are_plain_digits` (`+1`, `02`, `0`, overflow). `tab_indented_detail_is_located_at_its_line`. Every violation test checks the path, and that CRLF and a lone CR give the same violations | pass |
+| a typed line breaking one rule → exactly one violation with file, line and rule | `typed_line_violations_are_reported` (polarity, modality, claim, number, duplicate, detail). `detail_keys_follow_each_modality`: every modality with the eleven keys the T-006 Notes name and four near misses, exact case included; an allowed key is kept as a detail, any other is one `detail` violation. `printed_violations_name_file_line_and_rule`: each of the eight rules prints `path:line: rule: `. `numbers_are_plain_digits` (`+1`, `02`, `0`, overflow). `tab_indented_detail_is_located_at_its_line`. Every violation test checks the path, and that CRLF and a lone CR give the same violations | pass |
 | a declared Book's chapter without criteria, or with an empty section → `missing` | `missing_criteria_are_reported` (no violation under the port rule); `prose_alone_is_untyped_not_missing` | pass |
 | fenced lines of both styles, including a fenced criteria heading → ignored | `fenced_code_is_ignored`, `long_and_tagged_fences_follow_commonmark`, `unclosed_fence_ends_with_its_item`, `indented_code_opens_no_fence`, `comments_breaks_and_prose_are_not_criteria` | pass |
 | a wrapped typed claim → trimmed lines joined by single spaces | `typed_criteria_parse_with_details`, `wrapped_details_keep_their_lines`, `quotes_join_a_claim_and_code_does_not` | pass |
@@ -123,7 +124,7 @@ The validator reads chapters as CommonMark (pulldown-cmark), the way GitHub rend
 | `typed-acceptance:` other than `1`, a repeated declaration, or no marker → error; the binary exits 2 with stderr | `unsupported_declaration_is_an_error`, `repeated_declaration_is_an_error`, `missing_marker_is_an_error`, `cli_exit_codes`, `repeated_declaration_exits_2` | pass |
 | `status` over any outcomes → never both Certified and Refuted; Certified iff all hold; Refuted iff a necessary criterion fails; empty → Undetermined | `status_is_consistent` (10,000 cases; `status` returns one variant, so "both" cannot be represented, and the two iff assertions pin which); `status_truth_table`; `case_count_is_not_overridden` | pass |
 | the vendored Sprint Loops chapters, undeclared → 0 violations, 5 and 9 criteria, all `necessary` `asserted`, INT-0001's joined first claim | `sprint_loops_fixtures_pass_port_rule` | pass |
-| exit 1 on violations, 0 when clean, 2 with stderr and empty stdout for a missing directory, a flag or two directories | `cli_exit_codes`, `non_unicode_argument_is_a_book_path` | pass |
+| exit 1 on violations, 0 when clean, 2 with stderr and empty stdout for a missing directory, a flag or two directories | `cli_exit_codes` (the violation prints as the chapter's full path, `:4: untyped: `), `non_unicode_argument_is_a_book_path` | pass |
 
 ## T-007: Canonical suite runner and CI workflow
 - **Intents:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-2, AC-3, AC-4, AC-9; [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-1; [INT-0002](../../../intents/INT-0002-typed-acceptance-criteria.md) AC-2
@@ -131,7 +132,7 @@ The validator reads chapters as CommonMark (pulldown-cmark), the way GitHub rend
 | EARS clause (WHEN → SHALL) | Test | Result |
 |----------------------------|------|--------|
 | `cargo ci` → exactly fmt, clippy, test, policy, book in order, one PASS or FAIL line each | `ci_steps_are_ordered_and_locked` (the whole step list, commands included); every `cargo ci` run in the integration and E2E records | pass |
-| two failing steps, one a missing tool → every step runs, non-zero exit, both named | `ci_failures_do_not_stop_later_steps` (the loop, with scripted outcomes); `steps_execute_for_real` (an unknown cargo subcommand and a program that does not exist give FAIL with their reason); `int_ci_reports_failures` (integration, Windows and WSL: a real `cargo ci` with two failing steps prints both and exits 1) | pass |
+| two failing steps, one a missing tool → every step runs, non-zero exit, both named | `ci_failures_do_not_stop_later_steps` (the loop, with scripted outcomes); `steps_execute_for_real` (an unknown cargo subcommand and a program that does not exist give FAIL with their reason); `book_step_fails_on_a_violation` (a Book with violations fails the `book` step with their count); `int_ci_reports_failures` (integration, Windows and WSL: a real `cargo ci` with three failing steps, `book` among them, prints each and exits 1) | pass |
 | any argument besides the command → exit 2, usage on stderr | `ci_rejects_extra_arguments`, `non_unicode_arguments_are_usage_errors` | pass |
 | the `test` step → `PERI_GOLDEN_CREATE` removed from its environment | `test_step_removes_golden_create` (and `PROPTEST_CASES`, `CLIPPY_CONF_DIR`); `proptest_variables_are_never_inherited`; `int_ci_ignores_hostile_environment` (integration: a deleted golden file is not recreated) | pass |
 | `cargo ci` on the three checkouts → all PASS, exit 0, OS and `rustc -Vv` recorded | `int_ci_windows`, `int_ci_wsl`, `e2e_fresh_clone_windows` | pass |

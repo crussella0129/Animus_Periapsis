@@ -1,7 +1,7 @@
 # Sprint 0 End-to-End Test Results
 
 - **Status:** possible. Both planned scenarios ran, plus one added scenario, `e2e_port_rule_local_books`.
-- **Tested head:** `ac0e010a76d45fcce7a619889d94e4dfb8048597` on `dev`, committed. The head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques. Later commits change only the Book.
+- **Tested head:** `6a85e669d9a0d62fc03dbac4c283146c86be181a` on `dev`, committed. The head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques. Later commits change only the Book.
 - **Host:** Microsoft Windows 11 Pro 10.0.26300; rustc 1.99.1 (58cf8f9c3 2026-10-13), `x86_64-pc-windows-msvc`, LLVM 23.1.1.
 - **Raw output:** [test-matrix-log.md](test-matrix-log.md).
 
@@ -9,10 +9,10 @@
 - **Intents:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-4 (local half), [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-1, [INT-0006](../../../intents/INT-0006-format-v1.md) AC-3 (local half)
 - **Input:** `git clone -c core.autocrlf=true --branch dev` of the committed head into a new Windows temp directory. This is the line-ending setting most likely to corrupt files on Windows.
 - **Observed:**
-  - the clone's head is `ac0e010`, with `core.autocrlf=true`;
+  - the clone's head is `6a85e66`, with `core.autocrlf=true`, and it builds into its own `target/`;
   - `sha256sum` over the 23 `crates/codec/tests/golden/v1/*.bin` files matches the original checkout's;
   - no tracked text file has CRLF line endings, because `.gitattributes` (`* text=auto eol=lf`) overrides `core.autocrlf`;
-  - `cargo ci` from a cold build printed `PASS` for fmt, clippy, test, policy and book, then `ci: all 5 steps passed`; exit 0, in 40 s.
+  - `cargo ci` from a cold build printed `PASS` for fmt, clippy, test, policy and book, then `ci: all 5 steps passed`; exit 0, in 47 s.
   - its `policy` step ran the golden rule in the clone: the clone's `core.autocrlf` is not among the settings the rule reads, and the workspace's own `.gitattributes` kept every `.bin` file binary.
 - **Result:** pass
 
@@ -20,7 +20,7 @@
 - **Intent:** [INT-0002](../../../intents/INT-0002-typed-acceptance-criteria.md) AC-4
 - **Input:** `cargo book C:/Users/charl/Animus_Sprint_Loops/docs`. The Animus_Sprint_Loops checkout is at its head, `e8c3a58018e1627a145759fdac1f089c6236ba36` (2026-09-04), with a clean tree. Its marker has `schema-version: 2` and `substrate-version: 4` but no `typed-acceptance` line, so the validator selects the port rule.
 - **Observed:** `book: C:/Users/charl/Animus_Sprint_Loops/docs (undeclared, port rule)`, one line per chapter, then `13 chapters, 82 criteria, 0 violations`; exit 0.
-- **Independent count:** an `awk` count of the top-level `- ` items under each `## Acceptance criteria` heading, skipping fenced code, gives the same number for every chapter:
+- **Independent count:** an `awk` count of the top-level `- ` items under each `## Acceptance criteria` heading, skipping fenced code, gives the same number for every chapter. The log prints each chapter's `awk` count:
 
 | Chapter | `cargo book` | `awk` |
 |---------|--------------|-------|
@@ -46,7 +46,7 @@
 - **Intent:** [INT-0002](../../../intents/INT-0002-typed-acceptance-criteria.md) AC-4, in the sense of its port rule: every Book v2 is already a valid typed Book.
 - **Why added:** the code review showed that the first, line-based validator misread other Books on this host. It merged their ordered lists, for example, reading 696 criteria as 245. INT-0002 AC-4 names only the Animus_Sprint_Loops Book, so this broader scenario is supporting evidence.
 - **Input:** `cargo book <dir>` for every directory `C:/Users/charl/*/docs` with a `.sprint-loop-book` marker: 24 Books, 23 undeclared and this repository's declared Book.
-- **Oracle:** markdown-it-py 4.0.0 (CommonMark preset), an independent parser. For each chapter it counts the top-level list items of the top-level level-2 `Acceptance criteria` section, up to the next top-level heading of level 1 or 2. A code-review verifier also compared every criterion's line, claim and details against a markdown-it-py model, with no differences.
+- **Oracle:** markdown-it-py 4.0.0 (CommonMark preset), an independent parser. For each chapter it counts the top-level list items of the top-level level-2 `Acceptance criteria` section, up to the next top-level heading of level 1 or 2.
 - **Observed:** every chapter's `cargo book` count equals the CommonMark count:
 
 | Book | Rule | Chapters | `cargo book` | CommonMark | Violations | Exit |
