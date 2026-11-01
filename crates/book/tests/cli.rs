@@ -13,8 +13,18 @@ fn repo_root() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
 }
 
+/// A Book directory under the OS temp directory, removed when dropped, so a
+/// failing assertion leaves nothing behind.
+struct TempBook(PathBuf);
+
+impl Drop for TempBook {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 /// A Book directory under the OS temp directory with one chapter.
-fn temp_book(name: &str, marker: Option<&str>, chapter: &str) -> PathBuf {
+fn temp_book(name: &str, marker: Option<&str>, chapter: &str) -> TempBook {
     let root = std::env::temp_dir().join(format!("book-cli-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("intents")).unwrap();
@@ -22,7 +32,7 @@ fn temp_book(name: &str, marker: Option<&str>, chapter: &str) -> PathBuf {
         fs::write(root.join(".sprint-loop-book"), marker).unwrap();
     }
     fs::write(root.join("intents/INT-0001-x.md"), chapter).unwrap();
-    root
+    TempBook(root)
 }
 
 fn assert_usage_error(output: &Output, what: &str) {
@@ -57,15 +67,25 @@ fn cli_exit_codes() {
     let explicit = book().arg(repo_root().join("docs")).output().unwrap();
     assert_eq!(explicit.status.code(), Some(0));
 
-    // Violations: a declared Book with an untyped criterion.
+    // Violations: a declared Book with an untyped criterion at line 4. The
+    // violation names the chapter by the path the binary read it at, the Book
+    // argument joined with `intents` and the file name.
     let violating = temp_book(
         "violating",
         Some("schema-version: 2\ntyped-acceptance: 1\n"),
         "# INT-0001 — X\n\n## Acceptance criteria\n- Untyped claim.\n",
     );
-    let output = book().arg(&violating).output().unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&output.stdout).contains(": untyped: "));
+    let output = book().arg(&violating.0).output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    let chapter = violating.0.join("intents").join("INT-0001-x.md");
+    let untyped = format!("{}:4: untyped: ", chapter.display());
+    let printed = stdout.lines().filter(|line| line.starts_with(&untyped));
+    assert_eq!(
+        printed.count(),
+        1,
+        "one line must start with {untyped:?}: {stdout}"
+    );
 
     // Usage and refusal errors: exit 2, a message on stderr, nothing on stdout.
     let future = temp_book(
@@ -80,20 +100,16 @@ fn cli_exit_codes() {
         "a missing directory",
     );
     assert_usage_error(
-        &book().arg(&future).output().unwrap(),
+        &book().arg(&future.0).output().unwrap(),
         "typed-acceptance: 2",
     );
     assert_usage_error(
-        &book().arg(&unmarked).output().unwrap(),
+        &book().arg(&unmarked.0).output().unwrap(),
         "a Book without a marker",
     );
     for args in [&["--strict"][..], &["-v"], &["docs", "docs"]] {
         let output = book().current_dir(repo_root()).args(args).output().unwrap();
         assert_usage_error(&output, &format!("{args:?}"));
-    }
-
-    for dir in [violating, future, unmarked] {
-        let _ = fs::remove_dir_all(dir);
     }
 }
 
@@ -131,8 +147,7 @@ fn repeated_declaration_exits_2() {
             Some(&marker),
             "# INT-0001 — X\n\n## Acceptance criteria\n- **AC-1** `necessary` `asserted` — x\n",
         );
-        let output = book().arg(&dir).output().unwrap();
-        let _ = fs::remove_dir_all(&dir);
+        let output = book().arg(&dir.0).output().unwrap();
         assert_usage_error(&output, &marker);
     }
 }
@@ -147,8 +162,7 @@ fn undeclared_labels_are_lifted() {
         "# INT-0001 — X\n\n## Acceptance criteria\n\
          - **AC-1:** Users can sign in.\n- **AC-2** Users can sign out.\n",
     );
-    let output = book().arg(&dir).output().unwrap();
-    let _ = fs::remove_dir_all(&dir);
+    let output = book().arg(&dir.0).output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(output.status.code(), Some(0), "{stdout}");
     assert!(

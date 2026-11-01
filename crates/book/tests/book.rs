@@ -106,6 +106,66 @@ fn typed_line_violations_are_reported() {
     );
 }
 
+/// Each modality allows the detail keys the T-006 Notes give it, and every
+/// modality allows `Evidence` and `Note`. Any other key, a key no modality
+/// names included, is one `detail` violation at the detail's line.
+#[test]
+fn detail_keys_follow_each_modality() {
+    let own_keys: [(&str, &[&str]); 5] = [
+        ("formal", &["Obligation", "Proxy"]),
+        ("empirical", &["Threshold", "Sample", "Error"]),
+        ("preference", &["Panel", "Threshold", "Error"]),
+        ("judged", &["Rubric", "Quorum"]),
+        ("asserted", &["Signers"]),
+    ];
+    let every_modality = ["Evidence", "Note"];
+    // The eleven keys the Notes name, then near misses that no modality names.
+    // Keys match exactly, letter case included.
+    let keys = [
+        "Obligation",
+        "Proxy",
+        "Threshold",
+        "Sample",
+        "Error",
+        "Panel",
+        "Rubric",
+        "Quorum",
+        "Signers",
+        "Evidence",
+        "Note",
+        "Treshold",
+        "Signer",
+        "Notes",
+        "threshold",
+    ];
+    for (modality, own) in own_keys {
+        for key in keys {
+            // The criterion is line 7 and its one detail line 8.
+            let text = chapter(&format!(
+                "- **AC-1** `necessary` `{modality}` — x\n  - {key}: value"
+            ));
+            let violations = kinds(&text, Rule::Strict);
+            if own.contains(&key) || every_modality.contains(&key) {
+                assert!(
+                    violations.is_empty(),
+                    "{key} under {modality}: {violations:?}"
+                );
+                let parsed = criteria(&text, Rule::Strict);
+                let [criterion] = parsed.as_slice() else {
+                    panic!("{key} under {modality}: expected one criterion, got {parsed:?}");
+                };
+                assert_eq!(
+                    criterion.details,
+                    [(key.to_owned(), "value".to_owned())],
+                    "{key} under {modality}"
+                );
+            } else {
+                assert_eq!(violations, [(Kind::Detail, 8)], "{key} under {modality}");
+            }
+        }
+    }
+}
+
 /// book-7: `<n>` is ASCII digits with no sign or leading zero, from 1 up to
 /// `u32::MAX`.
 #[test]
@@ -131,6 +191,48 @@ fn missing_criteria_are_reported() {
     // The port rule reads legacy Books as they are: no criteria is no error.
     assert!(kinds(&missing, Rule::Port).is_empty());
     assert!(kinds(&empty, Rule::Port).is_empty());
+}
+
+/// A violation of each rule prints the whole path it was read from, its
+/// 1-based line and the rule's name, before its message.
+#[test]
+fn printed_violations_name_file_line_and_rule() {
+    let path = Path::new("dir").join("INT-0001-x.md");
+    let cases = [
+        ("polarity", 7, chapter("- **AC-1** `bogus` `formal` — x")),
+        ("modality", 7, chapter("- **AC-1** `necessary` `bogus` — x")),
+        ("claim", 7, chapter("- **AC-1** `necessary` `formal` - x")),
+        ("number", 7, chapter("- **AC-x** `necessary` `formal` — x")),
+        (
+            "duplicate",
+            8,
+            chapter("- **AC-1** `necessary` `formal` — x\n- **AC-1** `supporting` `asserted` — y"),
+        ),
+        (
+            "detail",
+            8,
+            chapter("- **AC-1** `necessary` `empirical` — x\n  - Signers: owner"),
+        ),
+        ("untyped", 7, chapter("- Users can export a CSV report.")),
+        // A chapter with no criteria section is reported at its first line.
+        (
+            "missing",
+            1,
+            format!("{CHAPTER_HEAD}## Rationale\nNo criteria section.\n"),
+        ),
+    ];
+    for (rule, line, text) in cases {
+        let (_, violations) = parse_chapter(&path, &text, Rule::Strict);
+        let [violation] = violations.as_slice() else {
+            panic!("{rule}: expected one violation, got {violations:?}");
+        };
+        let printed = violation.to_string();
+        let prefix = format!("{}:{line}: {rule}: ", path.display());
+        assert!(
+            printed.starts_with(&prefix),
+            "{printed:?} must start with {prefix:?}"
+        );
+    }
 }
 
 #[test]
