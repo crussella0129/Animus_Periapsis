@@ -137,15 +137,46 @@ pub fn cargo_command(program: &OsStr, root: &Path, args: &[&str]) -> Command {
     command
 }
 
+/// Variables a cargo step never inherits, set or not: golden-file create
+/// mode, the proptest case count, and those that change what Clippy denies,
+/// how code is compiled or which toolchain compiles it.
+const ALWAYS_SCRUBBED: [&str; 10] = [
+    GOLDEN_CREATE,
+    "PROPTEST_CASES",
+    CLIPPY_CONF_DIR,
+    "RUSTFLAGS",
+    "RUSTDOCFLAGS",
+    "RUSTC",
+    "RUSTDOC",
+    "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER",
+    "RUSTUP_TOOLCHAIN",
+];
+
+/// Prefixes of variables a cargo step does not inherit when they are set:
+/// proptest settings, and the cargo settings for builds, targets (their
+/// runners and linkers too), profiles, encoded flags and command aliases.
+const SCRUBBED_PREFIXES: [&str; 6] = [
+    PROPTEST_PREFIX,
+    "CARGO_BUILD_",
+    "CARGO_TARGET_",
+    "CARGO_PROFILE_",
+    "CARGO_ENCODED_",
+    "CARGO_ALIAS_",
+];
+
 /// The variables a cargo step does not inherit, given the names set where
-/// `cargo ci` runs: golden-file create mode, `PROPTEST_CASES` and
-/// `CLIPPY_CONF_DIR` always, and every other proptest variable that is set.
+/// `cargo ci` runs: `ALWAYS_SCRUBBED`, and every set name, in any letter
+/// case, that starts with one of `SCRUBBED_PREFIXES`.
 fn scrubbed(set: impl IntoIterator<Item = OsString>) -> BTreeSet<OsString> {
-    let mut names =
-        BTreeSet::from([GOLDEN_CREATE, "PROPTEST_CASES", CLIPPY_CONF_DIR].map(OsString::from));
+    let mut names = BTreeSet::from(ALWAYS_SCRUBBED.map(OsString::from));
     names.extend(set.into_iter().filter(|name| {
-        name.to_str()
-            .is_some_and(|name| name.to_ascii_uppercase().starts_with(PROPTEST_PREFIX))
+        name.to_str().is_some_and(|name| {
+            let name = name.to_ascii_uppercase();
+            SCRUBBED_PREFIXES
+                .iter()
+                .any(|prefix| name.starts_with(prefix))
+        })
     }));
     names
 }
@@ -391,7 +422,18 @@ mod tests {
             panic!("test runs cargo");
         };
         let command = cargo_command(OsStr::new("cargo"), Path::new("."), args);
-        for name in ["PERI_GOLDEN_CREATE", "PROPTEST_CASES", "CLIPPY_CONF_DIR"] {
+        for name in [
+            "PERI_GOLDEN_CREATE",
+            "PROPTEST_CASES",
+            "CLIPPY_CONF_DIR",
+            "RUSTFLAGS",
+            "RUSTDOCFLAGS",
+            "RUSTC",
+            "RUSTDOC",
+            "RUSTC_WRAPPER",
+            "RUSTC_WORKSPACE_WRAPPER",
+            "RUSTUP_TOOLCHAIN",
+        ] {
             let removed = command
                 .get_envs()
                 .any(|(key, value)| key == OsStr::new(name) && value.is_none());
@@ -401,18 +443,41 @@ mod tests {
 
     #[test]
     fn proptest_variables_are_never_inherited() {
+        // Set where `cargo ci` runs: the ones a step must not inherit, in
+        // any letter case, and the ones it needs.
         let set = [
             "PATH",
             "PROPTEST_MAX_SHRINK_ITERS",
             "proptest_rng_seed",
             "CARGO",
+            "CARGO_HOME",
+            "CARGO_NET_OFFLINE",
+            "CARGO_BUILD_RUSTFLAGS",
+            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER",
+            "CARGO_TARGET_DIR",
+            "cargo_profile_test_debug_assertions",
+            "CARGO_ENCODED_RUSTFLAGS",
+            "CARGO_ALIAS_CLIPPY",
         ];
         let names: BTreeSet<OsString> = [
             "CLIPPY_CONF_DIR",
             "PERI_GOLDEN_CREATE",
             "PROPTEST_CASES",
+            "RUSTC",
+            "RUSTC_WORKSPACE_WRAPPER",
+            "RUSTC_WRAPPER",
+            "RUSTDOC",
+            "RUSTDOCFLAGS",
+            "RUSTFLAGS",
+            "RUSTUP_TOOLCHAIN",
             "PROPTEST_MAX_SHRINK_ITERS",
             "proptest_rng_seed",
+            "CARGO_BUILD_RUSTFLAGS",
+            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER",
+            "CARGO_TARGET_DIR",
+            "cargo_profile_test_debug_assertions",
+            "CARGO_ENCODED_RUSTFLAGS",
+            "CARGO_ALIAS_CLIPPY",
         ]
         .map(OsString::from)
         .into();
@@ -585,6 +650,20 @@ mod tests {
             assert!(
                 !workflow::problems(&mutant).is_empty(),
                 "this trigger must fail:\n{from}{filter}"
+            );
+        }
+        // A later `!` pattern excludes a branch the list names.
+        for (from, to) in [
+            (
+                PUSH,
+                "    branches: [dev, main, '!dev', '!main']\n".to_owned(),
+            ),
+            (PR, format!("{PR}    branches: [dev, main, '!**']\n")),
+        ] {
+            let mutant = replace(&workflow, from, &to);
+            assert!(
+                !workflow::problems(&mutant).is_empty(),
+                "this trigger must fail:\n{to}"
             );
         }
         let inline = replace(&workflow, PR, "  pull_request: {types: [closed]}\n");

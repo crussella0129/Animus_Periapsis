@@ -280,7 +280,7 @@ fn golden_create_mode_never_overwrites() {
 #[test]
 fn create_mode_is_exactly_one() {
     assert!(create_mode(Some(OsStr::new("1"))));
-    for value in ["0", "true", "", " 1", "yes"] {
+    for value in ["0", "true", "", " 1", "1 ", "01", "10", "yes"] {
         assert!(!create_mode(Some(OsStr::new(value))), "{value:?}");
     }
     assert!(!create_mode(None));

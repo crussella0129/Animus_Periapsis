@@ -786,6 +786,22 @@ fn unsupported_declaration_is_an_error() {
         check(&book.0),
         Err(CheckError::UnsupportedDeclaration { .. })
     ));
+    // Only exactly `1` declares the contract: an empty or blank value is not
+    // a missing one, and `10` or `1.1` is not version 1.
+    for value in ["", "   ", "10", "1.1", "01", "2"] {
+        let marker = format!("schema-version: 2\ntyped-acceptance: {value}\n");
+        assert!(
+            matches!(
+                rule_from_marker(&marker),
+                Err(CheckError::UnsupportedDeclaration { value: found }) if found == value.trim()
+            ),
+            "{value:?}"
+        );
+    }
+    assert!(matches!(
+        rule_from_marker("schema-version: 2\ntyped-acceptance: 1\n"),
+        Ok(Rule::Strict)
+    ));
 }
 
 /// book-8: a marker that declares typed-acceptance twice names no single

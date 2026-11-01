@@ -22,6 +22,11 @@ pub fn problems(workflow: &str) -> Vec<String> {
             problems.push(format!("push does not trigger on {branch}"));
         }
     }
+    // GitHub applies branch patterns in order, so a later `!` pattern can
+    // exclude a branch an earlier one names.
+    if branches.iter().any(|branch| branch.starts_with('!')) {
+        problems.push("push excludes branches with a `!` pattern".to_owned());
+    }
     if under(&top, &["on", "pull_request"]).is_none() {
         problems.push("there is no pull_request trigger".to_owned());
     }
@@ -52,6 +57,9 @@ pub fn problems(workflow: &str) -> Vec<String> {
             if !branches.contains(&branch) {
                 problems.push(format!("pull_request does not trigger on {branch}"));
             }
+        }
+        if branches.iter().any(|branch| branch.starts_with('!')) {
+            problems.push("pull_request excludes branches with a `!` pattern".to_owned());
         }
     }
     if field(&top, "defaults").is_some() {

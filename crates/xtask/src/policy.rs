@@ -152,20 +152,15 @@ fn forbid_unsafe(root: &Path, members: &[PathBuf]) -> Vec<String> {
     problems
 }
 
-/// Whether a crate root carries `#![forbid(unsafe_code)]` as its own: among
-/// its leading lines, where only blank lines, line comments and other one-line
-/// inner attributes may come first. Inside a block comment or a nested module
-/// the line would not apply to the crate.
+/// Whether a crate root carries `#![forbid(unsafe_code)]` as its own: as its
+/// first line that is neither blank nor a line comment. Anywhere else the line
+/// could sit inside a block comment, a string or a nested module, where it
+/// would not apply to the crate.
 fn opens_with_forbid_unsafe(text: &str) -> bool {
-    for line in text.lines().map(str::trim) {
-        if line == FORBID_UNSAFE {
-            return true;
-        }
-        if !(line.is_empty() || line.starts_with("//") || line.starts_with("#![")) {
-            return false;
-        }
-    }
-    false
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with("//"))
+        == Some(FORBID_UNSAFE)
 }
 
 fn toolchain(root: &Path, _members: &[PathBuf]) -> Vec<String> {
@@ -758,11 +753,16 @@ mod tests {
         );
         fixture.fails_only("unsafe", "crates/hash/src/lib.rs");
 
-        // The line only counts as the crate root's own attribute: not inside
-        // a block comment, nor inside a nested module.
+        // The line counts only as the crate root's first line that is neither
+        // blank nor a line comment: anywhere else it could sit inside a block
+        // comment, a string or a nested module.
         for (i, text) in [
             "/*\n#![forbid(unsafe_code)]\n*/\npub fn f() {}\n",
             "mod inner {\n    #![forbid(unsafe_code)]\n}\n",
+            "#![allow(dead_code)] /*\n#![forbid(unsafe_code)]\n*/\n",
+            "#![doc = \"\n#![forbid(unsafe_code)]\n\"]\n",
+            "#![doc = \"]\n#![forbid(unsafe_code)]\n\"]\n",
+            "#![deny(missing_docs)]\n#![forbid(unsafe_code)]\n",
         ]
         .into_iter()
         .enumerate()
@@ -774,7 +774,7 @@ mod tests {
         let fixture = Fixture::new("unsafe-after-docs");
         fixture.write(
             "crates/hash/src/lib.rs",
-            "//! Docs come first.\n\n#![deny(missing_docs)]\n#![forbid(unsafe_code)]\n",
+            "//! Docs come first.\n\n// A plain comment too.\n#![forbid(unsafe_code)]\n#![deny(missing_docs)]\n",
         );
         fixture.passes();
     }

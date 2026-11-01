@@ -10,6 +10,8 @@ mod deny;
 #[cfg(test)]
 mod docs;
 mod manifest;
+#[cfg(test)]
+mod pins;
 mod policy;
 #[cfg(test)]
 mod workflow;
