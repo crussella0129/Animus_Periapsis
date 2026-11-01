@@ -6,7 +6,8 @@
 //! which reads them too), so the tests run every rule against small fixture
 //! trees. TOML files are parsed, as Cargo, rustup and Clippy parse them.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use toml_edit::{DocumentMut, Item, Value};
@@ -40,7 +41,13 @@ const DISALLOWED: [&str; 2] = ["std::collections::HashMap", "std::collections::H
 const CLIPPY_CONFIGS: [&str; 2] = [".clippy.toml", "clippy.toml"];
 const C_ALLOWED: &str = "C allowed:";
 /// A path in the golden corpus for Git to judge; it need not exist.
+/// Where the committed golden files live.
+const GOLDEN_DIR: &str = "crates/codec/tests/golden/v1";
+/// A path that stands for any golden file added later.
 const GOLDEN_PROBE: &str = "crates/codec/tests/golden/v1/probe.bin";
+/// Attributes under which Git can rewrite a file's bytes on checkout or
+/// commit: line endings, filters, `$Id$` expansion and re-encoding.
+const BYTE_ATTRIBUTES: [&str; 4] = ["text", "filter", "ident", "working-tree-encoding"];
 const SPEC_PATH: &str = "docs/spec/format-v1.md";
 const SPEC_SECTIONS: [&str; 11] = [
     "Conventions",
@@ -413,16 +420,50 @@ fn spec(root: &Path, _members: &[PathBuf]) -> Vec<String> {
 
 /// Golden encodings must reach every platform byte for byte, so the
 /// workspace's `.gitattributes` files must make Git treat them as binary
-/// (INT-0006 AC-3, INT-0004 AC-1). Later lines and deeper files override
-/// earlier ones, so Git evaluates the files (see `attributes`), inside a
-/// checkout or out of one.
+/// (INT-0006 AC-3, INT-0004 AC-1): `text` unset, as `binary` sets it, and
+/// nothing else that rewrites bytes. Later lines and deeper files override
+/// earlier ones, so Git evaluates the files (see `attributes`), for every
+/// committed golden file and a probe that stands for any added later, inside
+/// a checkout or out of one.
 fn golden(root: &Path, _members: &[PathBuf]) -> Vec<String> {
-    match attributes::value(root, "text", GOLDEN_PROBE) {
-        Ok(text) if text == "unset" => Vec::new(),
-        Ok(text) => vec![format!(
-            "*.bin files are not binary: the .gitattributes files give them `text: {text}`"
-        )],
-        Err(problem) => vec![format!("*.bin files cannot be checked: {problem}")],
+    let mut paths: Vec<String> = fs::read_dir(root.join(GOLDEN_DIR))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.ends_with(".bin"))
+        .map(|name| format!("{GOLDEN_DIR}/{name}"))
+        .collect();
+    paths.sort();
+    paths.push(GOLDEN_PROBE.to_owned());
+    let values = match attributes::values(root, &BYTE_ATTRIBUTES, &paths) {
+        Ok(values) => values,
+        Err(problem) => return vec![format!("*.bin files cannot be checked: {problem}")],
+    };
+    // One problem per attribute and value, naming the first path it affects.
+    let mut wrong: BTreeMap<(String, String), (String, usize)> = BTreeMap::new();
+    for (path, attribute, value) in values {
+        if !keeps_bytes(&attribute, &value) {
+            wrong.entry((attribute, value)).or_insert((path, 0)).1 += 1;
+        }
+    }
+    wrong
+        .into_iter()
+        .map(|((attribute, value), (path, count))| {
+            format!(
+                "{count} *.bin paths are not binary: the .gitattributes files give {path} \
+                 `{attribute}: {value}`"
+            )
+        })
+        .collect()
+}
+
+/// Whether `attribute: value` leaves a file's bytes as committed.
+fn keeps_bytes(attribute: &str, value: &str) -> bool {
+    match attribute {
+        "text" => value == "unset",
+        "ident" => value == "unset" || value == "unspecified",
+        _ => value == "unspecified",
     }
 }
 
@@ -499,7 +540,7 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use super::{check, is_exact_version, is_single_word};
+    use super::{check, golden, is_exact_version, is_single_word};
 
     const SPEC: &str = "\
 # Format\n## Conventions\n## Primitives\n### Canonical order\n## Hash algorithms\n\
@@ -1012,6 +1053,62 @@ mod tests {
         fixture.passes();
         fixture.write(".gitattributes", "* text=auto eol=lf\n");
         fixture.fails_exactly(&["golden"], &["*.bin", "text: auto"]);
+
+        // Nothing marks the files at all.
+        for (i, attributes) in ["", "* eol=lf\n"].into_iter().enumerate() {
+            let fixture = Fixture::new(&format!("golden-unspecified-{i}"));
+            fixture.write(".gitattributes", attributes);
+            fixture.fails_exactly(&["golden"], &["*.bin", "text: unspecified"]);
+        }
+
+        // The deepest level, where the files themselves live.
+        let fixture = Fixture::new("golden-nested-v1");
+        fixture.write(
+            "crates/codec/tests/golden/v1/.gitattributes",
+            "*.bin text\n",
+        );
+        fixture.fails_exactly(&["golden"], &["*.bin", "text: set"]);
+
+        // `binary` alone is not enough when another attribute rewrites bytes.
+        for (i, (extra, needle)) in [
+            ("filter=lfs", "filter: lfs"),
+            ("ident", "ident: set"),
+            (
+                "working-tree-encoding=UTF-16LE",
+                "working-tree-encoding: UTF-16LE",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = Fixture::new(&format!("golden-rewrites-{i}"));
+            fixture.write(
+                ".gitattributes",
+                &format!("* text=auto eol=lf\n*.bin binary {extra}\n"),
+            );
+            fixture.fails_exactly(&["golden"], &["*.bin", needle]);
+        }
+
+        // A committed golden file is checked, not only the probe.
+        let fixture = Fixture::new("golden-real-file");
+        fixture.write("crates/codec/tests/golden/v1/u32-max.bin", "x");
+        fixture.write(".gitattributes", "* text=auto eol=lf\nprobe.bin binary\n");
+        fixture.fails_exactly(&["golden"], &["u32-max.bin", "text: auto"]);
+
+        // A file Git warns about, here a macro defined below the root (which
+        // Git ignores), fails rather than passing on what Git chose to skip.
+        let fixture = Fixture::new("golden-warning");
+        fixture.write("crates/.gitattributes", "[attr]golden binary\n");
+        fixture.fails_exactly(&["golden"], &["*.bin", "not allowed"]);
+
+        // When Git cannot answer, the rule fails.
+        let missing = Path::new(env!("CARGO_MANIFEST_DIR")).join("no-such-workspace");
+        let problems = golden(&missing, &[]);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(
+            problems[0].starts_with("*.bin files cannot be checked: "),
+            "{problems:?}"
+        );
     }
 
     #[test]
