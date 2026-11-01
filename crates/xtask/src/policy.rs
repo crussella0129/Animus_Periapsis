@@ -537,6 +537,7 @@ fn relative(root: &Path, path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -554,8 +555,8 @@ mod tests {
                              [workspace.dependencies]\nblake3 = { version = \"1\", features = [\"pure\"] }\n\
                              hash = { path = \"crates/hash\" }\n\n[workspace.lints.rust]\nunsafe_code = \"forbid\"\n";
 
-    /// A fixture workspace, in its own Git repository, that passes every rule
-    /// until a test breaks one.
+    /// A fixture workspace, in its own directory under the OS temp directory,
+    /// that passes every rule until a test breaks one.
     struct Fixture(PathBuf);
 
     impl Fixture {
@@ -631,13 +632,24 @@ mod tests {
         fn fails_only(&self, rule: &str, needle: &str) {
             self.fails_exactly(&[rule], &[needle]);
         }
+
+        /// `cargo policy` run on the fixture: its exit code, stdout and stderr.
+        fn command(&self) -> (u8, String, String) {
+            let (mut out, mut err) = (Vec::new(), Vec::new());
+            let code = crate::cli(&[OsString::from("policy")], &self.0, &mut out, &mut err);
+            (
+                code,
+                String::from_utf8(out).unwrap(),
+                String::from_utf8(err).unwrap(),
+            )
+        }
     }
 
     impl Drop for Fixture {
         fn drop(&mut self) {
             // On Windows the emptied directory can stay in use for a moment
             // after Git has run in it, so removal backs off for up to about
-            // 5 s. The first try normally succeeds.
+            // 9.5 s. The first try normally succeeds.
             for attempt in 0..100 {
                 if fs::remove_dir_all(&self.0).is_ok() || !self.0.exists() {
                     return;
@@ -1109,6 +1121,42 @@ mod tests {
             problems[0].starts_with("*.bin files cannot be checked: "),
             "{problems:?}"
         );
+    }
+
+    /// The command itself, not only the rules: "`cargo policy` SHALL fail
+    /// with the new rule `golden`" (T-005). It prints one line per rule, in
+    /// the order the T-001, T-002 and T-005 clauses add them, a `FAIL` line
+    /// for each problem, nothing on stderr, and exits 1.
+    #[test]
+    fn policy_command_fails_naming_each_failing_rule() {
+        const GOLDEN: &str = "FAIL golden: 1 *.bin paths are not binary: the .gitattributes \
+                              files give crates/codec/tests/golden/v1/probe.bin `text: auto`\n";
+        let fixture = Fixture::new("command-fails");
+        fixture.write(".gitattributes", "* text=auto eol=lf\n");
+        let report = format!(
+            "PASS lints\nPASS unsafe\nPASS toolchain\nPASS lockfile\nPASS publish\nPASS deps\n\
+             PASS credits\nPASS clippy\nPASS names\nPASS spec\n{GOLDEN}"
+        );
+        assert_eq!(fixture.command(), (1, report, String::new()));
+
+        // Two failing rules: each FAIL line takes its rule's place.
+        fs::remove_file(fixture.0.join("Cargo.lock")).unwrap();
+        let report = format!(
+            "PASS lints\nPASS unsafe\nPASS toolchain\nFAIL lockfile: Cargo.lock is missing\n\
+             PASS publish\nPASS deps\nPASS credits\nPASS clippy\nPASS names\nPASS spec\n{GOLDEN}"
+        );
+        assert_eq!(fixture.command(), (1, report, String::new()));
+
+        // One rule with two problems: a FAIL line for each.
+        let fixture = Fixture::new("command-two-problems");
+        fixture.write(".gitattributes", "* text=auto eol=lf\n*.bin filter=lfs\n");
+        let report = format!(
+            "PASS lints\nPASS unsafe\nPASS toolchain\nPASS lockfile\nPASS publish\nPASS deps\n\
+             PASS credits\nPASS clippy\nPASS names\nPASS spec\n\
+             FAIL golden: 1 *.bin paths are not binary: the .gitattributes files give \
+             crates/codec/tests/golden/v1/probe.bin `filter: lfs`\n{GOLDEN}"
+        );
+        assert_eq!(fixture.command(), (1, report, String::new()));
     }
 
     #[test]

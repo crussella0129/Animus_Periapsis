@@ -304,6 +304,47 @@ mod tests {
         }
     }
 
+    /// A Book with violations fails the `book` step with their count. In a
+    /// declared Book each untyped criterion is one `untyped` violation
+    /// (T-006).
+    #[test]
+    fn book_step_fails_on_a_violation() {
+        let root = std::env::temp_dir().join(format!("xtask-ci-{}-book", std::process::id()));
+        let chapter = root.join("docs/intents/INT-0001-x.md");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("docs/intents")).unwrap();
+        fs::write(
+            root.join("docs/.sprint-loop-book"),
+            "schema-version: 2\ntyped-acceptance: 1\n",
+        )
+        .unwrap();
+        let book = Step {
+            name: "book",
+            action: Action::Book,
+        };
+        let mut outcomes = Vec::new();
+        // The second chapter text has two violations in one chapter, so the
+        // count is of violations, not chapters.
+        for criteria in ["- Untyped claim.\n", "- Untyped claim.\n- Another.\n"] {
+            fs::write(
+                &chapter,
+                format!("# INT-0001 — X\n\n## Acceptance criteria\n{criteria}"),
+            )
+            .unwrap();
+            outcomes.push(execute_with(&root, &book, |_| {
+                panic!("the Book step runs no cargo")
+            }));
+        }
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(
+            outcomes,
+            [
+                Outcome::Fail("1 Book violations; run `cargo book`".to_owned()),
+                Outcome::Fail("2 Book violations; run `cargo book`".to_owned()),
+            ]
+        );
+    }
+
     #[test]
     fn ci_failures_do_not_stop_later_steps() {
         let steps = [
