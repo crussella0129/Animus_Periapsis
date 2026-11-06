@@ -1,6 +1,6 @@
 # Sprint 0 Test Matrix Log
 
-The raw output of the final test-matrix run at `0a9fd40`, produced by the scripts reproduced at the end of this page: `test_matrix.sh`, its WSL leg `wsl_ci.sh`, and `port_corpus.py`. [integration-tests.md](integration-tests.md) and [e2e-tests.md](e2e-tests.md) summarize it.
+The raw output of the final test-matrix run at `c342412`, produced by the scripts reproduced at the end of this page: `test_matrix.sh`, its WSL leg `wsl_ci.sh`, and `port_corpus.py`. [integration-tests.md](integration-tests.md) and [e2e-tests.md](e2e-tests.md) summarize it.
 
 ```text
 
@@ -16,7 +16,7 @@ LLVM version: 23.1.1
 cargo-deny 0.20.2
 git version 2.56.0.windows.3
 PROPTEST_*, PERI_*, CLIPPY_CONF_DIR, GIT_*, RUSTFLAGS, RUSTDOCFLAGS, RUSTC*, RUSTDOC, RUSTUP_TOOLCHAIN, CARGO_BUILD_*, CARGO_TARGET_*, CARGO_PROFILE_*, CARGO_ENCODED_* or CARGO_ALIAS_* set: GIT_EDITOR 
-head 0a9fd40c203e1448fdda09b9150b035142e3df5c on dev; uncommitted paths: 0
+head c342412a2951c70d7db68608f09e300e55e745be on dev; uncommitted paths: 0
 target directory: C:\Users\charl\Animus_Periapsis\target
 cargo config files above the working checkout or in CARGO_HOME: none
 
@@ -32,7 +32,7 @@ cargo ci exit 0
 ==== int_deny_windows
 advisories ok, bans ok, licenses ok, sources ok
 cargo deny exit 0
-advisory db advisory-db-3157b0e258782691: 2295466c4e9df26647fd67d8fa1c705ac2fc7f81 2026-10-30
+advisory db advisory-db-3157b0e258782691: 26fd2d43f7280a1fb925a3743ec463017afe7119 2026-11-05
 
 ==== unit listing (Windows working checkout)
      Running unittests src\lib.rs
@@ -40,9 +40,9 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
      Running unittests src\main.rs
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests\book.rs
-test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.81s
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.83s
      Running tests\cli.rs
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.51s
      Running unittests src\lib.rs
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests\alloc.rs
@@ -52,15 +52,15 @@ test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
      Running tests\mutants.rs
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
      Running tests\properties.rs
-test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.50s
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.54s
      Running tests\spec.rs
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running unittests src\lib.rs
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests\vectors.rs
-test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.79s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.34s
      Running unittests src\main.rs
-test result: ok. 59 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.44s
+test result: ok. 59 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.77s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
@@ -77,13 +77,13 @@ C-build yes rows:
   `blake3` 
 
 ==== int_disallowed_types_probe (two scratch clones, discarded)
--- planted std::collections::HashMap at 0a9fd40:  1 file changed, 5 insertions(+)
+-- planted std::collections::HashMap at c342412:  1 file changed, 5 insertions(+)
 target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
 cargo config files above the clone or in CARGO_HOME: none
 error: use of a disallowed type `std::collections::HashMap`
 clippy exit 101 (non-zero required)
 scratch clone removed: yes
--- planted std::collections::HashSet at 0a9fd40:  1 file changed, 5 insertions(+)
+-- planted std::collections::HashSet at c342412:  1 file changed, 5 insertions(+)
 target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\probe\target
 cargo config files above the clone or in CARGO_HOME: none
 error: use of a disallowed type `std::collections::HashSet`
@@ -183,18 +183,18 @@ cargo ci exit 101 (101 required); Cargo.lock changed: 0
 scratch clone removed: yes
 
 ==== e2e_fresh_clone_windows (core.autocrlf=true)
-clone head 0a9fd40c203e1448fdda09b9150b035142e3df5c, core.autocrlf=true
+clone head c342412a2951c70d7db68608f09e300e55e745be, core.autocrlf=true
 target directory: C:\Users\charl\AppData\Local\Temp\claude\C--Users-charl--claude-spares-spare-61ekw4\5eb9caae-ac3b-41b6-a91c-2cad206f0660\scratchpad\e2e-autocrlf\target
 cargo config files above the clone or in CARGO_HOME: none
 golden: all 23 .bin files byte-identical to the original
-tracked files: 130; with CRLF or mixed line ends in the working tree: 0
+tracked files: 132; with CRLF or mixed line ends in the working tree: 0
 PASS fmt
 PASS clippy
 PASS test
 PASS policy
 PASS book
 ci: all 5 steps passed
-cargo ci exit 0 (cold build, 62 s)
+cargo ci exit 0 (cold build, 59 s)
 
 ==== e2e_port_rule_sprint_loops_book
 Animus_Sprint_Loops head e8c3a58018e1627a145759fdac1f089c6236ba36, uncommitted paths: 0
@@ -261,12 +261,12 @@ markdown-it-py 4.0.0
 port_corpus exit 0
   Animus_Amalgam: 7a6786b3e1, docs/intents uncommitted: 0
   Animus_Ferric: 508edfd, docs/intents uncommitted: 0
-  Animus_Periapsis: 0a9fd40, docs/intents uncommitted: 0
+  Animus_Periapsis: c342412, docs/intents uncommitted: 0
   Animus_Sprint_Loops: e8c3a58, docs/intents uncommitted: 0
   Animus_Unitarity: 4f82372, docs/intents uncommitted: 0
   CubiKan: 77642b4, docs/intents uncommitted: 0
   Feel_of_the_Wheel: 804a1dd, docs/intents uncommitted: 2
-  Gnash_Equilibrium: 353bd2a, docs/intents uncommitted: 0
+  Gnash_Equilibrium: 10c269c, docs/intents uncommitted: 0
   Kinesin: 6fc2710, docs/intents uncommitted: 0
   Leibniz: 3660b96, docs/intents uncommitted: 0
   Lovers_Lagoon: 850c7cd, docs/intents uncommitted: 0
@@ -282,7 +282,7 @@ port_corpus exit 0
   oxidizer: d6555c3, docs/intents uncommitted: 0
   sdr.rs: ca127fe, docs/intents uncommitted: 0
   sprint-loops: 0bdbe66, docs/intents uncommitted: 0
-  yarduluv: c941400, docs/intents uncommitted: 0
+  yarduluv: 08922c5, docs/intents uncommitted: 0
 
 ==== WSL leg (int_ci_wsl, int_tooling_is_idempotent, int_ci_reports_failures, int_ci_reports_book_violation, int_policy_reports_failures, int_disallowed_types_probe, int_aliases_refuse_flags_and_stale_locks)
 == host
@@ -291,7 +291,7 @@ PRETTY_NAME="Ubuntu 26.04.1 LTS"
 git version 2.53.0
 PROPTEST_*, PERI_*, CLIPPY_CONF_DIR, GIT_*, RUSTFLAGS, RUSTDOCFLAGS, RUSTC*, RUSTDOC, RUSTUP_TOOLCHAIN, CARGO_BUILD_*, CARGO_TARGET_*, CARGO_PROFILE_*, CARGO_ENCODED_* or CARGO_ALIAS_* set: none
 == clone
-head 0a9fd40c203e1448fdda09b9150b035142e3df5c
+head c342412a2951c70d7db68608f09e300e55e745be
 checkout on ext4
 rustc 1.99.1 (58cf8f9c3 2026-10-13)
 binary: rustc
@@ -392,7 +392,7 @@ wsl exit 0
 
 ==== after
 working checkout uncommitted paths: 0
-tested head 0a9fd40c203e1448fdda09b9150b035142e3df5c
+tested head c342412a2951c70d7db68608f09e300e55e745be
 ```
 
 ## Scripts

@@ -7,8 +7,8 @@ Test critique rounds 3 to 7 each blocked on three to five material concerns, mos
   2. An independent verifier applied each kept mutant to a fresh clone and ran the whole suite. All 108 reproduced.
   3. Six implementers, each on its own files, added or tightened tests until each mutant failed one, and fixed the one code defect found.
   4. One verifier per implementer re-applied every mutant, with variants (225 in all), and tried new ones of its own. 214 failed a test. The 11 that did not were all in the `spec` rule's new hand-written Markdown reader, or equivalent to the code; see [Second pass](#second-pass).
-  5. The session then replaced that reader with pulldown-cmark, in `cargo policy` and in codec's spec test, closed the verifiers' other issues, and mutated both new readers: 26 mutants, each failing a test.
-- **Outcome at `0a9fd40`:** each of the 108 mutants fails at least one test. One finding was a code defect: the `spec` rule's line scan counted headings and table rows that GitHub shows as code, a comment or plain text (T-002). The other 107 were weak or missing assertions. The suite grew from 157 tests at `d7b0484` to 171.
+  5. The session then replaced that reader with pulldown-cmark, in `cargo policy` and in codec's spec test, closed the verifiers' other issues, and mutated both new readers (25 mutants: 15 of the `spec` rule's reader and 10 of the spec test's), and the golden corpus once (a case removed): each of the 26 failed a test.
+- **Outcome at `0a9fd40`:** each of the 108 mutants fails at least one test. One finding was a code defect: the `spec` rule's line scan counted headings and table rows that GitHub shows as code, a comment or plain text (T-002). The other 107 were weak or missing assertions. The round-8 critique found the same defect in the `credits` rule, which read `docs/prior-art.md` line by line; `c342412` reads its table rows with pulldown-cmark too ([critique-round8.md](critique-round8.md)). The suite grew from 157 tests at `d7b0484` to 171.
 
 | Task | Mutants kept | Reproduced |
 |------|--------------|------------|

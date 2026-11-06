@@ -1,7 +1,7 @@
 # Sprint 0 End-to-End Test Results
 
 - **Status:** possible. Both planned scenarios ran, plus one added scenario, `e2e_port_rule_local_books`.
-- **Tested head:** `0a9fd40c203e1448fdda09b9150b035142e3df5c` on `dev`, committed. The head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques. Later commits change only the Book.
+- **Tested head:** `c342412a2951c70d7db68608f09e300e55e745be` on `dev`, committed. The head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques. Later commits change only the Book.
 - **Host:** Microsoft Windows 11 Pro 10.0.26300; rustc 1.99.1 (58cf8f9c3 2026-10-13), `x86_64-pc-windows-msvc`, LLVM 23.1.1.
 - **Raw output:** [test-matrix-log.md](test-matrix-log.md).
 
@@ -9,10 +9,10 @@
 - **Intents:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-4 (local half), [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-1, [INT-0006](../../../intents/INT-0006-format-v1.md) AC-3 (local half)
 - **Input:** `git clone -c core.autocrlf=true --branch dev` of the committed head into a new Windows temp directory. This is the line-ending setting most likely to corrupt files on Windows.
 - **Observed:**
-  - the clone's head is `0a9fd40`, with `core.autocrlf=true`, and it builds into its own `target/`;
+  - the clone's head is `c342412`, with `core.autocrlf=true`, and it builds into its own `target/`;
   - `sha256sum` over the 23 `crates/codec/tests/golden/v1/*.bin` files matches the original checkout's;
-  - `git ls-files --eol` lists none of the 130 tracked files with CRLF or mixed line endings in the working tree, because `.gitattributes` (`* text=auto eol=lf`) overrides `core.autocrlf`;
-  - `cargo ci` from a cold build printed `PASS` for fmt, clippy, test, policy and book, then `ci: all 5 steps passed`; exit 0, in 62 s.
+  - `git ls-files --eol` lists none of the 132 tracked files with CRLF or mixed line endings in the working tree, because `.gitattributes` (`* text=auto eol=lf`) overrides `core.autocrlf`;
+  - `cargo ci` from a cold build printed `PASS` for fmt, clippy, test, policy and book, then `ci: all 5 steps passed`; exit 0, in 59 s.
   - its `policy` step ran the golden rule in the clone: the clone's `core.autocrlf` is not among the settings the rule reads, and the workspace's own `.gitattributes` kept every `.bin` file binary.
 - **Result:** pass
 

@@ -1,6 +1,6 @@
 # Sprint 0 Integration Test Results
 
-- **Tested head:** `0a9fd40c203e1448fdda09b9150b035142e3df5c` on `dev`, committed. `git status --porcelain` printed nothing in the Windows working checkout before and after the runs; the WSL runs check their own clone. The head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques. Later commits change only the Book.
+- **Tested head:** `c342412a2951c70d7db68608f09e300e55e745be` on `dev`, committed. `git status --porcelain` printed nothing in the Windows working checkout before and after the runs; the WSL runs check their own clone. The head includes the fixes from the Test-phase [code review](code-review.md) and from the test critiques. Later commits change only the Book.
 - **Canonical runner:** `cargo ci` (steps fmt, clippy, test, policy, book). `cargo deny check` (cargo-deny 0.20.2) runs beside it.
 - **Raw output:** [test-matrix-log.md](test-matrix-log.md). It holds the final run, which produced every result below except the two task-boundary deny runs, and the scripts that ran it.
 - **Toolchain:** rustc 1.99.1 (58cf8f9c3 2026-10-13), LLVM 23.1.1, installed from `rust-toolchain.toml` on each host. Git 2.56.0.windows.3 on Windows, Git 2.53.0 in WSL.
@@ -88,14 +88,14 @@
 ### `int_deny_windows`
 - **Intent:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-3 (local half)
 - **Run:** `cargo deny check` on the Windows host at the tested head.
-- **Observed:** "advisories ok, bans ok, licenses ok, sources ok"; exit 0. Dev-dependencies' licences are checked too (`include-dev = true`). The licences `deny.toml` allows are themselves checked against a GPL-3.0-compatible list by `deny_allows_only_gpl3_compatible_licences` ([unit-tests.md](unit-tests.md), T-001). The RustSec advisory database was `advisory-db-3157b0e258782691` at `2295466c4e9df26647fd67d8fa1c705ac2fc7f81` (2026-10-30).
+- **Observed:** "advisories ok, bans ok, licenses ok, sources ok"; exit 0. Dev-dependencies' licences are checked too (`include-dev = true`). The licences `deny.toml` allows are themselves checked against a GPL-3.0-compatible list by `deny_allows_only_gpl3_compatible_licences` ([unit-tests.md](unit-tests.md), T-001). The RustSec advisory database was `advisory-db-3157b0e258782691` at `26fd2d43f7280a1fb925a3743ec463017afe7119` (2026-11-05), fetched for this run.
 - **Result:** pass
 
 ### `int_ci_wsl`
 - **Intents:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-4 (local half), [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-1, [INT-0006](../../../intents/INT-0006-format-v1.md) AC-3 (local half)
 - **Run:** clone the committed `dev` head into the WSL ext4 home directory, install the pinned toolchain, run `cargo ci`, then list the tests with `cargo test --workspace --locked`.
 - **Observed:**
-  - The clone's head is `0a9fd40` and `df` reports ext4.
+  - The clone's head is `c342412` and `df` reports ext4.
   - `cargo ci` printed `PASS` for all five steps, then `ci: all 5 steps passed`; exit 0.
   - 171 tests passed on Linux, the same count as on Windows.
   - The golden test ran inside the `test` step, so the 23 `.bin` files matched the Linux encoder byte for byte.
@@ -132,8 +132,8 @@
   3. Run `cargo clippy --workspace --all-targets -- -D warnings`, building into the clone's own target directory.
   4. Delete the clone.
 - **Observed:**
-  - Windows, HashMap clone (at `0a9fd40`, 1 file changed): "error: use of a disallowed type `std::collections::HashMap`", exit 101.
-  - Windows, HashSet clone (at `0a9fd40`, 1 file changed): "error: use of a disallowed type `std::collections::HashSet`", exit 101.
+  - Windows, HashMap clone (at `c342412`, 1 file changed): "error: use of a disallowed type `std::collections::HashMap`", exit 101.
+  - Windows, HashSet clone (at `c342412`, 1 file changed): "error: use of a disallowed type `std::collections::HashSet`", exit 101.
   - WSL, each type in turn: the same error naming the type, and a non-zero exit (101).
   - Both clones were removed.
 - **Result:** pass
