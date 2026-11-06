@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-001 (sprint 1) [intent: INT-0006]: Specify and implement the provisional operation object kind — touches: docs/spec/format-v1.md, crates/codec/src/operation.rs, crates/codec/src/envelope.rs, crates/codec/src/lib.rs, crates/codec/tests/
 - [ ] T-002 (sprint 1) [intent: INT-0005, INT-0004]: Filesystem and randomness traits in the sim crate — touches: crates/sim/, Cargo.toml, Cargo.lock, docs/prior-art.md
 - [ ] T-003 (sprint 1) [intent: INT-0005, INT-0003]: Filesystem boundary: only sim's real half touches the real filesystem — touches: crates/sim/clippy.toml, crates/sim/src/real.rs, crates/xtask/src/policy.rs
 - [ ] T-004 (sprint 1) [intent: INT-0007]: Object and op-file store with derived heads and fsck in the store crate — touches: crates/store/, Cargo.toml, Cargo.lock, docs/prior-art.md

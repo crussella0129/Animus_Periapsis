@@ -9,28 +9,27 @@ pub const FORMAT_VERSION: u8 = 1;
 
 /// Kinds the registry names but whose bodies are not yet specified, as
 /// (id, name). They are rejected until the spec defines them.
-pub const RESERVED_KINDS: [(u8, &str); 4] = [
-    (0x02, "changeset"),
-    (0x03, "operation"),
-    (0x04, "view"),
-    (0x05, "event"),
-];
+pub const RESERVED_KINDS: [(u8, &str); 3] = [(0x02, "changeset"), (0x04, "view"), (0x05, "event")];
 
 /// An object kind whose body format v1 defines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ObjectKind {
     /// File content. The body is the raw bytes, with no length prefix.
     Blob,
+    /// An op-log entry, *provisional* until the Phase 1 exit gate; see
+    /// [`crate::Operation`].
+    Operation,
 }
 
 impl ObjectKind {
     /// Every defined kind, in id order.
-    pub const ALL: [ObjectKind; 1] = [ObjectKind::Blob];
+    pub const ALL: [ObjectKind; 2] = [ObjectKind::Blob, ObjectKind::Operation];
 
     /// The one-byte registry id.
     pub const fn id(self) -> u8 {
         match self {
             ObjectKind::Blob => 0x01,
+            ObjectKind::Operation => 0x03,
         }
     }
 
@@ -38,6 +37,7 @@ impl ObjectKind {
     pub const fn name(self) -> &'static str {
         match self {
             ObjectKind::Blob => "blob",
+            ObjectKind::Operation => "operation",
         }
     }
 

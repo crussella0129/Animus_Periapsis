@@ -14,7 +14,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use codec::{
-    Bytes, Decode, Encode, Envelope, ObjectKind, blob, decode_envelope, from_slice, to_vec,
+    Bytes, Decode, Encode, Envelope, ObjectKind, Operation, blob, decode_envelope, from_slice,
+    to_vec,
 };
 use hash::{HashAlg, HashRef};
 
@@ -57,6 +58,14 @@ fn corpus() -> Vec<Case> {
             Err(error) => Err(error.to_string()),
         }),
     };
+    let operation_root = Operation {
+        parents: BTreeSet::new(),
+        objects: BTreeSet::from([HashAlg::Blake3.hash(b"")]),
+    };
+    let operation_merge = Operation {
+        parents: BTreeSet::from([HashAlg::Blake3.hash(b""), HashAlg::Sha256.hash(b"abc")]),
+        objects: BTreeSet::from([HashAlg::Sha256.hash(b""), HashAlg::Sha256.hash(b"abc")]),
+    };
     vec![
         case("uvarint-0", 0u64),
         case("uvarint-127", 127u64),
@@ -93,7 +102,23 @@ fn corpus() -> Vec<Case> {
         ),
         case("pair", ("key".to_owned(), true)),
         blob_case,
+        operation_case("operation-root", operation_root),
+        operation_case("operation-merge", operation_merge),
     ]
+}
+
+/// An operation is pinned as its whole envelope, like the blob.
+fn operation_case(name: &'static str, value: Operation) -> Case {
+    Case {
+        name,
+        ty: type_name::<Operation>(),
+        bytes: value.to_envelope(),
+        decodes: Box::new(move |file| match Operation::from_envelope(file) {
+            Ok(decoded) if decoded == value => Ok(()),
+            Ok(decoded) => Err(format!("decoded {decoded:?}, expected {value:?}")),
+            Err(error) => Err(error.to_string()),
+        }),
+    }
 }
 
 /// Whether the value of `PERI_GOLDEN_CREATE` turns create mode on: exactly
@@ -226,6 +251,8 @@ fn golden_corpus_has_the_spec_types() {
             ),
             ("pair", type_name::<(String, bool)>()),
             ("blob-envelope", type_name::<Envelope<'static>>()),
+            ("operation-root", type_name::<Operation>()),
+            ("operation-merge", type_name::<Operation>()),
         ]
     );
 }

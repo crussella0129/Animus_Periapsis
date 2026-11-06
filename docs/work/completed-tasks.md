@@ -63,3 +63,11 @@
 - **Files modified:** README.md, crates/xtask/src/main.rs, crates/xtask/src/docs.rs
 - **Evidence:** Windows 11 host, rustc 1.99.1. `prior_art_credits_every_listed_system` passed: all 36 listed systems, projects and test-data sources are named in docs/prior-art.md (prior-art needed no change). `readme_keeps_statement_and_links_book` passed: the two owner paragraphs from 620f99c are verbatim, including the trailing space; there is a `docs/SUMMARY.md` link; all four commands are documented; and the exact sentence "`cargo ci`, `cargo policy` and `cargo book` take no flags." is present. `cargo ci` → all 5 steps PASS, exit 0.
 - **Commit:** `7c0ae6e3a1ebd09af5dbceaf283490ea00f2bd00`
+
+## T-001 (sprint 1)
+- **Description:** Specify and implement the provisional operation object kind
+- **Intent:** [INT-0006](../intents/INT-0006-format-v1.md)
+- **Completed:** 2026-11-06T23:12:28Z
+- **Files modified:** docs/spec/format-v1.md (spec commit e37351d, before the code), crates/codec/src/operation.rs, crates/codec/src/envelope.rs, crates/codec/src/error.rs, crates/codec/src/lib.rs, crates/codec/tests/golden.rs, crates/codec/tests/properties.rs, crates/codec/tests/golden/v1/operation-root.bin, crates/codec/tests/golden/v1/operation-merge.bin
+- **Evidence:** Windows 11 host, rustc 1.99.1. The spec landed first (e37351d): `0x03 operation` defined, body `parents: set<hashref> ‖ objects: set<hashref>`, provisional note and Change-control bullet, worked examples `operation-root` and `operation-merge` derived by hand from the known BLAKE3 and SHA-256 vectors. The golden files written by `PERI_GOLDEN_CREATE=1` equal those examples (`spec_examples_match_golden_files` passes), and `golden_v1_corpus_matches`, `golden_corpus_has_the_spec_types` and `spec_registries_match_code` pass. New tests pass: `operation_round_trips` and `accepted_operation_bytes_reencode` (10,000 cases each), `operation_decoding_never_panics` (100,000 cases), `operation_rejects_unsorted_parents` (at 34), `operation_rejects_duplicate_objects` (at 35), `operation_rejects_trailing_bytes`, `operation_kind_is_defined` (a blob envelope gives `UnexpectedObjectKind`), `other_kinds_stay_reserved` (0x02, 0x04, 0x05). `envelope_rejects_unknown_version_and_kind` now counts 2 defined and 3 reserved kinds. `cargo ci`: PASS fmt, clippy, test (179 tests), policy, book.
+- **Commit:** PENDING

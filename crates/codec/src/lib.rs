@@ -7,6 +7,7 @@
 
 mod envelope;
 mod error;
+mod operation;
 mod wire;
 
 pub use envelope::{
@@ -14,4 +15,5 @@ pub use envelope::{
     object_id,
 };
 pub use error::DecodeError;
+pub use operation::Operation;
 pub use wire::{Bytes, Decode, Decoder, Encode, Encoder, from_slice, to_vec};

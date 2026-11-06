@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 
 use codec::{
-    Bytes, Decode, DecodeError, Decoder, Encode, ObjectKind, RESERVED_KINDS, blob, decode_envelope,
-    encode_object, from_slice, object_id, to_vec,
+    Bytes, Decode, DecodeError, Decoder, Encode, Encoder, ObjectKind, Operation, RESERVED_KINDS,
+    blob, decode_envelope, encode_object, from_slice, object_id, to_vec,
 };
 use hash::{HashAlg, HashRef};
 use proptest::prelude::*;
@@ -49,6 +49,15 @@ fn any_u64() -> impl Strategy<Value = u64> {
 /// in a byte.
 fn any_bytes() -> impl Strategy<Value = Bytes> {
     prop::collection::vec(any::<u8>(), 0..400).prop_map(Bytes)
+}
+
+/// Up to three parents and three objects, over both hash algorithms.
+fn any_operation() -> impl Strategy<Value = Operation> {
+    (
+        prop::collection::btree_set(any_hash(), 0..4),
+        prop::collection::btree_set(any_hash(), 0..4),
+    )
+        .prop_map(|(parents, objects)| Operation { parents, objects })
 }
 
 fn any_nested() -> impl Strategy<Value = Nested> {
@@ -140,6 +149,7 @@ canonical_properties! {
     round_trip_pair, mutants_pair: (String, Option<u64>) =
         (".{0,8}", prop::option::of(any_u64()));
     round_trip_nested, mutants_nested: Nested = any_nested();
+    operation_round_trips, accepted_operation_bytes_reencode: Operation = any_operation();
 }
 
 proptest! {
@@ -188,6 +198,13 @@ proptest! {
         let _ = from_slice::<(String, Option<u64>)>(&bytes);
         let _ = from_slice::<Nested>(&bytes);
         let _ = decode_envelope(&bytes);
+    }
+
+    #[test]
+    fn operation_decoding_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..=256)) {
+        // As a bare body and inside an operation envelope.
+        let _ = from_slice::<Operation>(&bytes);
+        let _ = Operation::from_envelope(&[&[0x01, 0x03][..], &bytes].concat());
     }
 }
 
@@ -519,7 +536,8 @@ fn trailing_bytes_rejected() {
 fn expected_header(version: u8, kind: u8) -> (&'static str, Result<ObjectKind, DecodeError>) {
     match (version, kind) {
         (0x01, 0x01) => ("defined", Ok(ObjectKind::Blob)),
-        (0x01, 0x02..=0x05) => ("reserved", Err(DecodeError::ReservedObjectKind { kind })),
+        (0x01, 0x03) => ("defined", Ok(ObjectKind::Operation)),
+        (0x01, 0x02 | 0x04 | 0x05) => ("reserved", Err(DecodeError::ReservedObjectKind { kind })),
         // 0x00 is invalid and 0x06 to 0xff are unassigned.
         (0x01, _) => ("unknown", Err(DecodeError::UnknownObjectKind { kind })),
         _ => (
@@ -557,8 +575,8 @@ fn envelope_rejects_unknown_version_and_kind() {
     assert_eq!(
         classes,
         BTreeMap::from([
-            ("defined", 1),
-            ("reserved", 4),
+            ("defined", 2),
+            ("reserved", 3),
             ("unknown", 251),
             ("unsupported", 255 * 256),
         ])
@@ -590,8 +608,8 @@ fn envelope_rejects_unknown_version_and_kind() {
     let message = |envelope: &[u8]| decode_envelope(envelope).unwrap_err().to_string();
     assert_eq!(message(&[0x02, 0x01]), "unsupported format version 2");
     assert_eq!(
-        message(&[0x01, 0x03]),
-        "object kind 0x03 is reserved and not yet specified"
+        message(&[0x01, 0x04]),
+        "object kind 0x04 is reserved and not yet specified"
     );
     assert_eq!(message(&[0x01, 0x06]), "unknown object kind 0x06");
 }
@@ -630,19 +648,122 @@ fn kind_registry_is_complete() {
         .into_iter()
         .map(|kind| (kind.id(), kind.name()))
         .collect();
-    assert_eq!(defined, [(0x01, "blob")]);
+    assert_eq!(defined, [(0x01, "blob"), (0x03, "operation")]);
     assert_eq!(
         RESERVED_KINDS,
-        [
-            (0x02, "changeset"),
-            (0x03, "operation"),
-            (0x04, "view"),
-            (0x05, "event"),
-        ]
+        [(0x02, "changeset"), (0x04, "view"), (0x05, "event")]
     );
     for (kind, _) in RESERVED_KINDS {
         assert_eq!(
             ObjectKind::from_id(kind),
+            Err(DecodeError::ReservedObjectKind { kind })
+        );
+    }
+}
+
+fn hash_of(alg: HashAlg, input: &[u8]) -> HashRef {
+    alg.hash(input)
+}
+
+/// Two hashes in canonical order: algorithm id first, then digest.
+fn ordered_pair() -> (HashRef, HashRef) {
+    let (a, b) = (
+        hash_of(HashAlg::Sha256, b"abc"),
+        hash_of(HashAlg::Sha256, b""),
+    );
+    assert!(a < b, "ba78… sorts before e3b0…");
+    (a, b)
+}
+
+#[test]
+fn operation_rejects_unsorted_parents() {
+    let (low, high) = ordered_pair();
+    let mut enc = Encoder::new();
+    enc.uvarint(2);
+    enc.hash_ref(&high);
+    enc.hash_ref(&low);
+    enc.uvarint(0);
+    let body = enc.finish();
+    // The second parent starts after the count byte and the 33-byte first one.
+    assert_eq!(
+        from_slice::<Operation>(&body),
+        Err(DecodeError::UnsortedOrDuplicateKey { at: 34 })
+    );
+}
+
+#[test]
+fn operation_rejects_duplicate_objects() {
+    let (low, _) = ordered_pair();
+    let mut enc = Encoder::new();
+    enc.uvarint(0);
+    enc.uvarint(2);
+    enc.hash_ref(&low);
+    enc.hash_ref(&low);
+    let body = enc.finish();
+    assert_eq!(
+        from_slice::<Operation>(&body),
+        Err(DecodeError::UnsortedOrDuplicateKey { at: 35 })
+    );
+}
+
+#[test]
+fn operation_rejects_trailing_bytes() {
+    let op = Operation {
+        parents: BTreeSet::new(),
+        objects: BTreeSet::from([hash_of(HashAlg::Blake3, b"")]),
+    };
+    let mut body = to_vec(&op);
+    let len = body.len();
+    body.push(0x00);
+    assert_eq!(
+        from_slice::<Operation>(&body),
+        Err(DecodeError::TrailingBytes {
+            at: len,
+            remaining: 1,
+        })
+    );
+    let mut envelope = op.to_envelope();
+    envelope.push(0x00);
+    assert_eq!(
+        Operation::from_envelope(&envelope),
+        Err(DecodeError::TrailingBytes {
+            at: len,
+            remaining: 1,
+        })
+    );
+}
+
+#[test]
+fn operation_kind_is_defined() {
+    assert_eq!(ObjectKind::from_id(0x03), Ok(ObjectKind::Operation));
+    assert_eq!(ObjectKind::Operation.name(), "operation");
+    let op = Operation {
+        parents: BTreeSet::from([hash_of(HashAlg::Blake3, b"p")]),
+        objects: BTreeSet::from([hash_of(HashAlg::Sha256, b"o")]),
+    };
+    let envelope = op.to_envelope();
+    assert_eq!(&envelope[..2], &[0x01, 0x03]);
+    assert_eq!(Operation::from_envelope(&envelope), Ok(op));
+    // A blob envelope is not an operation, even when its body would decode.
+    let body = to_vec(&Operation::default());
+    assert_eq!(
+        Operation::from_envelope(&blob(&body)),
+        Err(DecodeError::UnexpectedObjectKind {
+            expected: 0x03,
+            found: 0x01,
+        })
+    );
+}
+
+#[test]
+fn other_kinds_stay_reserved() {
+    for kind in [0x02, 0x04, 0x05] {
+        assert_eq!(
+            ObjectKind::from_id(kind),
+            Err(DecodeError::ReservedObjectKind { kind })
+        );
+        assert_eq!(
+            Operation::from_envelope(&[0x01, kind]),
             Err(DecodeError::ReservedObjectKind { kind })
         );
     }
