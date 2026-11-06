@@ -16,11 +16,17 @@ forges. The bridge is written against the Git object-format specification, not
 on top of a Git library, and maintains the SHA-1/SHA-256 ↔ BLAKE3 mapping as
 derived data. Periapsis-only metadata (change IDs, intent references,
 signatures, confirmations) travels through a documented mapping onto commit
-trailers or notes. The bridge ships before any public release.
+trailers or notes. File contents are bytes on both sides and cross unchanged.
+Git paths, names and messages that are not valid UTF-8 are never re-encoded or
+dropped: Periapsis holds and shows them in an escaped UTF-8 form and keeps
+their original bytes in an import record, so export reproduces the original
+ids. Export never drops or truncates a file: if a file is larger than the
+target forge accepts, the push stops before sending anything, with an error
+naming each such file. The bridge ships before any public release.
 
 ## Acceptance criteria
-- **AC-1** `necessary` `empirical` — Import followed by export reproduces identical Git commit and tree object ids for at least three real repositories, including this one.
-- **AC-2** `necessary` `empirical` — Incrementally exported public changes form Git commits that stock `git fsck` accepts and a forge accepts on push.
+- **AC-1** `necessary` `empirical` — Import followed by export reproduces identical Git commit and tree object ids for at least three real repositories: this one, one whose history has paths, names or messages that are not valid UTF-8, and one with binary files.
+- **AC-2** `necessary` `empirical` — Incrementally exported public changes form Git commits that stock `git fsck` accepts and a forge accepts on push, or the push stops before sending anything, with an error naming each file larger than the forge accepts.
 - **AC-3** `necessary` `asserted` — The bridge is released before any public release of Periapsis.
   - Signers: project owner.
 - **AC-4** `supporting` `empirical` — Change IDs, intent references and signatures survive a Periapsis → Git → Periapsis round trip through the documented trailer/notes mapping.
@@ -46,6 +52,9 @@ trailers or notes. The bridge ships before any public release.
   (SHA-1 and SHA-256 are needed to reproduce Git ids).
 - The ↔ mapping must be rebuilt deterministically from both histories, which
   makes it derived data under INT-0013.
+- Mirroring files larger than a forge accepts needs Git LFS, which changes
+  those files' Git ids, so it is a separate decision.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 I.5 step 33 and II §4 Phase 4).
+- 2026-11-01: revised while `proposed`, on owner direction: the bridge must carry histories from any toolchain. The Intent says Git paths, names and messages that are not UTF-8 keep their original bytes so that export reproduces the ids, and that export stops before sending a file a forge would refuse instead of dropping it; AC-1's repositories include one with non-UTF-8 history and one with binary files, AC-2 allows that stop, and Consequences leaves Git LFS as a separate decision.

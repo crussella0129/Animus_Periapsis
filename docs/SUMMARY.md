@@ -4,9 +4,11 @@
   - Charter and foundations
     - [INT-0001 Periapsis charter](intents/INT-0001-periapsis-charter.md)
     - [INT-0002 Typed acceptance criteria](intents/INT-0002-typed-acceptance-criteria.md)
+    - [INT-0033 Intent topics and dependencies](intents/INT-0033-intent-topics-and-dependencies.md)
     - [INT-0003 Engineering baseline](intents/INT-0003-engineering-baseline.md)
     - [INT-0004 Windows and Linux](intents/INT-0004-windows-and-linux.md)
     - [INT-0005 Deterministic simulation testing](intents/INT-0005-deterministic-simulation-testing.md)
+    - [INT-0034 Any content](intents/INT-0034-any-content.md)
   - Reversible single-user core
     - [INT-0006 Format v1](intents/INT-0006-format-v1.md)
     - [INT-0007 Crash-safe storage](intents/INT-0007-crash-safe-storage.md)
@@ -30,6 +32,7 @@
     - [INT-0022 Agent and human interfaces](intents/INT-0022-agent-and-human-interfaces.md)
     - [INT-0026 Sprint Loops on Periapsis](intents/INT-0026-sprint-loops-on-periapsis.md)
     - [INT-0027 Porting Sprint Loops projects](intents/INT-0027-port-sprint-loops-projects.md)
+    - [INT-0032 Intent revisions and review flags](intents/INT-0032-intent-revisions-and-review-flags.md)
   - Distribution
     - [INT-0024 Staged sync](intents/INT-0024-staged-sync.md)
     - [INT-0025 Git bridge](intents/INT-0025-git-bridge.md)

@@ -15,13 +15,21 @@ from evidence, never stored as a pointer. `draft → confirmed` requires a
 confirmation: an array-test-style confirmation root over exactly that change's
 tree, together with the result of its proof-pairing certificate
 ([INT-0018](INT-0018-proof-pairing-certificates.md)), signed by a verifier key
-that no agent principal holds. `confirmed → public` follows repository policy
-(for example human approval per intent species, or batched promotion in
-[INT-0021](INT-0021-lanes-and-review-requests.md)). Rewriting `public` history
-is a phase-divergence error, and `secret` changes are never pushed. When a
-change fails confirmation, the verifier orders re-runs and bisection by
-expected information gain, then ranks suspects with Ochiai-style scoring once
-all results are in.
+that no agent principal holds. The root records the results of the checks that
+repository policy names for each kind of content in the tree, such as tests, a
+build, a proof or another checker. Where policy names none, the check is a
+signed sign-off by a non-author principal (tier A of INT-0018). Content that no
+test runner can check, such as prose, a binary or a language no one reads
+([INT-0034](INT-0034-any-content.md)), is therefore confirmed like any other,
+and a root that records no check confirms nothing. `confirmed → public`
+follows repository policy (for example human approval per intent species, or
+batched promotion in [INT-0021](INT-0021-lanes-and-review-requests.md)).
+Rewriting `public` history is a phase-divergence error, and `secret` changes
+are never pushed. When a change fails a confirmation made of tests with
+per-test coverage, the verifier orders re-runs and bisection by expected
+information gain, then ranks suspects with Ochiai-style scoring once all
+results are in. Any other failed check is reported with its result and no
+suspect ranking.
 
 ## Acceptance criteria
 - **AC-1** `necessary` `formal` — Monotonicity: no change reaches `public` without a valid confirmation signed by a verifier key.
@@ -35,13 +43,16 @@ all results are in.
 - **AC-4** `necessary` `empirical` — Any operation that rewrites a `public` change is refused with a phase-divergence error.
 - **AC-5** `supporting` `empirical` — Information-gain ordering reaches full-suite Ochiai localisation quality after a median of at most 20% of the suite on a real suite with injected faults.
   - Note: R2-E16 measured a median of 11 tests (19% of the suite) for 111 of 113 toolz faults; in simulation it needed 9.7 tests against 15.3 for coverage-first and 19.7 for random (R1-E4).
+- **AC-6** `necessary` `empirical` — A change whose files have no tests, such as prose, binaries or files in a synthetic language, is confirmed through the checks that policy names for them, by default a non-author sign-off, and a confirmation root that records no check confirms nothing.
+  - Threshold: every such change in a scenario corpus is confirmed once its checks pass, and 0 changes are confirmed on a root that records no check.
 
 ## Rationale
 - Mercurial phases protect published history; Sprint Loops' rule that phase is
   derived from evidence is the same structure (II §2.2, III §1.3).
 - "Merged" means "measured": structured-merge output can be silently wrong
-  (R2-E22), so admission needs build/test confirmation, signed by keys agents
-  cannot reach (I.3 principles 5 and 7; Biblio §4).
+  (R2-E22), so admission needs a measured confirmation (build and tests, for
+  code), signed by keys agents cannot reach (I.3 principles 5 and 7;
+  Biblio §4).
 - Information-gain test ordering is the part of the entropy work that survived
   validation on a real suite (FLINT/EntBug; R1-E4; R2-E16).
 - Sources: [Master Report v6](../sprints/s0/sprint-research/master-report-v6.md)
@@ -64,3 +75,4 @@ all results are in.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §3.2, I.5 steps 23–25 and R2-E16).
+- 2026-11-01: revised while `proposed`, on owner direction: confirmations must not assume the content is code. The Intent says the confirmation root records the checks repository policy names for each kind of content, by default a non-author sign-off, and keeps information-gain ordering and Ochiai ranking for confirmations made of tests with per-test coverage; AC-6 is added and the Rationale reworded.

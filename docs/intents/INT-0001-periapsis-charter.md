@@ -3,19 +3,27 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0001
 - **State:** proposed
-- **Work evidence:** none
+- **Work evidence:** [T-009 backlog](../work/tasks.md)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none
 - **Documentation evidence:** none
 
 ## Intent
-Build Animus_Periapsis ("Periapsis", command `peri`): a snapshot-based,
+Build Animus_Periapsis ("Periapsis", command `praps`): a snapshot-based,
 content-addressed distributed version control system written from scratch in
-Rust for many concurrent agents and the humans who direct them. Every change
-answers three questions inside the history itself: **why** (the Book intents
-it serves), **who** (a human or named agent holding a signing key) and **is it
-proven** (a verifier-signed confirmation plus a proof-pairing certificate).
+Rust for many concurrent agents and the humans who direct them. Its core works
+on any content as bytes and never needs to understand what it versions, whether
+source code, natural-language text, binaries or a language no human reads
+([INT-0034](INT-0034-any-content.md)). Every change answers three questions
+inside the history itself: **why** (the Book intents it serves), **who** (a
+human or named agent holding a signing key) and **is it proven** (a
+verifier-signed confirmation plus a proof-pairing certificate). A confirmation
+does not assume the content is code: it records the checks that repository
+policy names for each kind of content (tests, a proof, another checker, or by
+default a signed sign-off by a principal other than the author), so content
+that no tool can run or read can still be confirmed and reach `public` under
+AC-3.
 Periapsis folds the Sprint Loops Project Book, CubiKan's intent-unit lifecycle
 and array-test's confirmation DAG into the VCS, so project state is derived
 from evidence rather than stored as mutable pointers.
@@ -24,6 +32,15 @@ Boundaries:
 - From scratch: designs are adopted from Git, Jujutsu, Mercurial/Sapling,
   Mononoke, Radicle, Pijul, Xet and others with credit, but Periapsis depends
   on none of their code ([INT-0003](INT-0003-engineering-baseline.md)).
+- Any content: a file's content may be any bytes of any size. Storage, object
+  identity, history, operations and undo, working copies, sync and
+  distribution, intents and their links, review requests, confirmations,
+  signatures and queries never parse or interpret it. Line diff, diff3,
+  structured merge, blame, test runners and rendering are optional layers
+  chosen per kind of content: a layer changes only presentation and
+  convenience, never how content is stored or identified or whether a core
+  guarantee holds, and every command works on content that no enabled layer
+  can read ([INT-0034](INT-0034-any-content.md)).
 - This charter is realized only through its child intents (map below); each
   child owns its own boundaries and acceptance criteria.
 
@@ -34,7 +51,8 @@ record layer; a patch-theory core in format v1; an "entropy layer"
 
 Intent map (dependency order, no timelines):
 - Foundations — INT-0002 typed acceptance, INT-0003 engineering baseline,
-  INT-0004 Windows + Linux, INT-0005 deterministic simulation testing.
+  INT-0004 Windows + Linux, INT-0005 deterministic simulation testing,
+  INT-0034 any content.
 - Phase 1, reversible single-user core — INT-0006 format v1, INT-0007
   crash-safe storage, INT-0008 compact history, INT-0009 reversibility,
   INT-0013 derived data, INT-0014 working copy and workspaces.
@@ -59,6 +77,8 @@ Intent map (dependency order, no timelines):
   - Obligation: `unstated` (shares the phase-gate monotonicity obligation of INT-0015 AC-1).
   - Proxy: property tests over the promotion path.
 - **AC-4** `necessary` `asserted` — Before Periapsis declares 1.0, every child intent is `realized`, or `deferred`/`abandoned` with a recorded reason.
+- **AC-5** `necessary` `empirical` — Any content: with no content layer enabled, every `praps` command succeeds on a repository whose files mix source code, natural-language text, assembly, binaries and random bytes, and snapshotting that repository gives the same object ids with and without layers enabled.
+  - Threshold: 100% of commands, over the conformance suite of [INT-0034](INT-0034-any-content.md).
 
 ## Rationale
 - Each surveyed system holds part of the design and none has an agent-native
@@ -113,3 +133,5 @@ Intent map (dependency order, no timelines):
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 Part I and the root README).
 - 2026-10-31: revised while `proposed`, after the Sprint 0 plan critique: research-report risk recorded in Consequences — quoted prototype figures are targets until re-measured.
+- 2026-11-01: revised while `proposed`, on owner direction: the command is `praps`, short for periapsis, replacing `peri` ([INT-0003](INT-0003-engineering-baseline.md)).
+- 2026-11-01: revised while `proposed`, on owner direction: Periapsis must work with almost any development system, from natural language to binaries and languages no human reads. The Intent states that the core never needs to understand content and that a confirmation records the checks policy names for each kind of content, so content no tool can run still reaches `public`; Boundaries gain an any-content rule; the intent map adds [INT-0034](INT-0034-any-content.md) under Foundations; AC-5 is added.

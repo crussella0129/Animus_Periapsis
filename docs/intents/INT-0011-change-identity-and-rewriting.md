@@ -13,7 +13,10 @@
 Every change has a stable change ID — 128 random bits minted when the change
 is created — that survives amend, rebase, squash, split and absorb, so reviews,
 review requests and intent links follow the change rather than one snapshot of
-it. Rewrite operations record their old → new mappings; obsolescence
+it. Where no diff layer reads a file ([INT-0034](INT-0034-any-content.md)),
+`split` puts the file's whole change on one side, and `absorb` leaves it in
+place and reports it. Rewrite operations record their old → new mappings;
+obsolescence
 ("evolution") markers are a derived index of those mappings, not stored
 objects. Descendants are rebased automatically, and rebase never fails:
 conflicts become conflict terms ([INT-0012](INT-0012-conflicts-and-merge.md)).
@@ -31,7 +34,7 @@ for agents.
 - **AC-3** `necessary` `formal` — Rebase is total: rebasing any change onto any destination yields a change, possibly with conflict terms, and never an error or a half-finished state.
   - Obligation: `unstated`.
   - Proxy: property tests.
-- **AC-4** `necessary` `empirical` — `squash`, `split`, `absorb`, `abandon` and `restack` preserve change IDs as specified and leave no orphans over a scenario corpus.
+- **AC-4** `necessary` `empirical` — `squash`, `split`, `absorb`, `abandon` and `restack` preserve change IDs as specified and leave no orphans over a scenario corpus that includes files no diff layer reads, which `split` and `absorb` handle as the Intent says.
 - **AC-5** `supporting` `asserted` — The divergence policy rules are written down and approved by the owner before agents rely on them.
   - Signers: project owner.
 
@@ -63,3 +66,4 @@ for agents.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §2.1–2.2, I.5 step 15 and R3-E).
+- 2026-11-01: revised while `proposed`, on owner direction: every command must work on content no layer can read. The Intent says `split` puts such a file's whole change on one side and `absorb` leaves it in place and reports it, and AC-4's corpus includes such files.

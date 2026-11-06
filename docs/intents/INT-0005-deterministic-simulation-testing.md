@@ -4,8 +4,8 @@
 - **Intent ID:** INT-0005
 - **State:** active
 - **Work evidence:** [T-001 build plan](../sprints/s0/sprint-plans/build-plan.md#t-001-workspace-guardrails-policy-checker-and-credits)
-- **Completion evidence:** none
-- **Code evidence:** none
+- **Completion evidence:** [T-001 completion](../work/completed-tasks.md#t-001-sprint-0)
+- **Code evidence:** [clippy.toml](../../clippy.toml)
 - **Test evidence:** [Sprint 0 test report](../sprints/s0/sprint-tests/test-report.md)
 - **Documentation evidence:** none
 

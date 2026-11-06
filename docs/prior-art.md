@@ -30,7 +30,7 @@ confirmed from a primary source.
 | Attestation statements and signing envelopes, as export formats | [in-toto](https://in-toto.io/), [DSSE](https://github.com/secure-systems-lab/dsse) | not verified; Apache-2.0 | INT-0016 |
 | Build provenance trust model (the signer of an evaluation must not be the evaluated party) | [SLSA](https://slsa.dev/) | not verified (specification) | INT-0016 |
 | Per-line AI attribution, as an optional export | Agent Trace (provenance format) | not verified | INT-0016 |
-| Agent interface protocol for `peri mcp` | [Model Context Protocol](https://modelcontextprotocol.io/) | not verified (specification) | INT-0022 |
+| Agent interface protocol for `praps mcp` | [Model Context Protocol](https://modelcontextprotocol.io/) | not verified (specification) | INT-0022 |
 
 ## Designs evaluated and not adopted in core
 

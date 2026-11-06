@@ -16,7 +16,7 @@ and Linux. Each operation is one file (the portable default; a checksummed
 append-only log is an optional local fast path). Objects are durable before the
 operation that references them. Op heads are derived from the checksummed op
 files; there is no HEAD or pointer file. Repository initialisation creates its
-files and makes the directory entries durable. `peri fsck` verifies checksums
+files and makes the directory entries durable. `praps fsck` verifies checksums
 and referential integrity.
 
 ## Acceptance criteria
@@ -60,3 +60,4 @@ and referential integrity.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 I.5 step 8 and R2 §3).
+- 2026-11-01: revised while `proposed`, on owner direction: the command is `praps`, short for periapsis, replacing `peri` ([INT-0003](INT-0003-engineering-baseline.md)).

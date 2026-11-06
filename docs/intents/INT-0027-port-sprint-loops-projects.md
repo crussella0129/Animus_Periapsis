@@ -21,7 +21,9 @@ with Git-based teammates during the transition. The port:
    [INT-0002](INT-0002-typed-acceptance-criteria.md), and typed criteria keep
    their polarity, modality and details;
 3. converts `docs/work/` ledgers into per-task event records and
-   `docs/sprints/sN/` into sprint records that keep their provenance links;
+   `docs/sprints/sN/` into orbit records, sprint N becoming orbit N
+   ([INT-0026](INT-0026-sprint-loops-on-periapsis.md)), that keep their
+   provenance links;
 4. maps the remote profile's `base`/`work` branches onto `main` (the public
    phase) and `dev` (the derived integration view);
 5. re-projects the Book as Markdown compatible with Book v2 for Git mirrors.
@@ -32,14 +34,14 @@ a git-based project can type its intents before it ports. That change lands in
 the Animus_Sprint_Loops repository.
 
 ## Acceptance criteria
-- **AC-1** `necessary` `empirical` — Importing the Animus_Sprint_Loops repository itself yields one intent record per chapter, one task record per ledger entry and one sprint record per `docs/sprints/sN/`.
+- **AC-1** `necessary` `empirical` — Importing the Animus_Sprint_Loops repository itself yields one intent record per chapter, one task record per ledger entry and one orbit record per `docs/sprints/sN/`.
   - Threshold: 0 dropped records or fields, shown by a count reconciliation report.
 - **AC-2** `necessary` `empirical` — Re-projecting an imported Book produces Markdown that Sprint Loops' `check-book.sh` validates and that has an empty diff against the source after the documented normalisations.
 - **AC-3** `necessary` `empirical` — Untyped criteria import as `necessary` `asserted`, and typed criteria keep polarity, modality and details.
   - Threshold: 100% over a fixture corpus covering every modality.
 - **AC-4** `necessary` `asserted` — Animus_Sprint_Loops ships the optional typed-acceptance extension to its intent schema, and every existing Book still validates under it.
   - Signers: the Animus_Sprint_Loops maintainer.
-- **AC-5** `supporting` `empirical` — A mixed team, one member on a Git + Sprint Loops clone and one on Periapsis, completes a sprint with the bridge keeping both views in sync.
+- **AC-5** `supporting` `empirical` — A mixed team, one member on a Git + Sprint Loops clone and one on Periapsis, completes an orbit, a sprint on the Git side, with the bridge keeping both views in sync.
 
 ## Rationale
 - The owner's projects already run Sprint Loops on Git (Animus_Sprint_Loops
@@ -69,3 +71,4 @@ the Animus_Sprint_Loops repository.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; from the owner's sprint request and Master Report v6 II §1 / R4 §2.4).
+- 2026-11-01: revised while `proposed`, on owner direction: sprints import as orbits ([INT-0026](INT-0026-sprint-loops-on-periapsis.md)). Step 3, AC-1 and AC-5 are reworded.

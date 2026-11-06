@@ -25,7 +25,8 @@ trusts nothing from the producer. Evidence tiers:
 | T — tested | Verifier-signed test confirmation |
 | A — asserted | Signed sign-off by a non-author principal |
 
-Certificate fields: change id; code hashes; Lean module hashes and toolchain
+Certificate fields: change id; content hashes (covering every file in the
+change's tree, as bytes, whatever it holds); Lean module hashes and toolchain
 hash; claims {local: theorem names; intents: (intent id, spec term name)}; and
 a kernel report computed by the verifier. Local proofs are required for
 Periapsis's own core algorithms and optional, as the top tier, for user code.
@@ -45,6 +46,8 @@ force.
 - **AC-4** `necessary` `empirical` — The Book view shows each intent's evidence profile: tier per claim, strength and risk.
 - **AC-5** `supporting` `empirical` — The Lean toolchain is pinned per repository at 4.33.1 or later and recorded in every certificate.
 - **AC-6** `supporting` `empirical` — Core Rust modules are extracted to Lean (Aeneas or equivalent) for tier-P proofs about the actual code (Phase 5).
+- **AC-7** `necessary` `empirical` — Changing any byte of any file in a change's tree, whatever the file holds, invalidates the change's certificate.
+  - Threshold: 100% over single-byte edits to source, prose, binary and synthetic-language files.
 
 ## Rationale
 - Intent pairing is cheap and general — it works even when code is not
@@ -77,3 +80,4 @@ force.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 Part VII).
+- 2026-11-01: revised while `proposed`, on owner direction: certificates must cover content that is not code. The code hashes become content hashes over every file in the change's tree, as bytes, and AC-7 checks that changing any byte of any file invalidates the certificate.

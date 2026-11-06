@@ -3,11 +3,11 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0006
 - **State:** active
-- **Work evidence:** [T-002 build plan](../sprints/s0/sprint-plans/build-plan.md#t-002-format-v1-specification), [T-003 build plan](../sprints/s0/sprint-plans/build-plan.md#t-003-algorithm-tagged-hashes-in-the-hash-crate), [T-004 build plan](../sprints/s0/sprint-plans/build-plan.md#t-004-canonical-binary-encoding-in-the-codec-crate), [T-005 build plan](../sprints/s0/sprint-plans/build-plan.md#t-005-golden-corpus-and-spec-consistency)
-- **Completion evidence:** none
-- **Code evidence:** none
+- **Work evidence:** [T-002 build plan](../sprints/s0/sprint-plans/build-plan.md#t-002-format-v1-specification), [T-003 build plan](../sprints/s0/sprint-plans/build-plan.md#t-003-algorithm-tagged-hashes-in-the-hash-crate), [T-004 build plan](../sprints/s0/sprint-plans/build-plan.md#t-004-canonical-binary-encoding-in-the-codec-crate), [T-005 build plan](../sprints/s0/sprint-plans/build-plan.md#t-005-golden-corpus-and-spec-consistency), [T-009 backlog](../work/tasks.md)
+- **Completion evidence:** [T-002 completion](../work/completed-tasks.md#t-002-sprint-0), [T-003 completion](../work/completed-tasks.md#t-003-sprint-0), [T-004 completion](../work/completed-tasks.md#t-004-sprint-0), [T-005 completion](../work/completed-tasks.md#t-005-sprint-0)
+- **Code evidence:** [hash crate](../../crates/hash/src/lib.rs), [codec crate](../../crates/codec/src/lib.rs), [golden test](../../crates/codec/tests/golden.rs)
 - **Test evidence:** [Sprint 0 test report](../sprints/s0/sprint-tests/test-report.md)
-- **Documentation evidence:** none
+- **Documentation evidence:** [format spec v1](../spec/format-v1.md)
 
 ## Intent
 Every object Periapsis persists or transmits has exactly one byte encoding,

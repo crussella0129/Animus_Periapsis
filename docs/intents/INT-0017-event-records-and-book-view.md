@@ -14,7 +14,12 @@ Intents, work items, sprints, reviews, review requests and attestations are
 immutable signed event records in the op DAG — one record per event, typed by
 reverse-domain names such as `dev.animus.intent`. The Book (the Sprint Loops
 `docs/` view of intents, work, sprints and navigation) is a derived projection
-of those records. Concurrent events never conflict spuriously. A genuine
+of those records. A record's content fields, such as an intent's statement or
+an evidence payload, are byte strings that may hold any content
+([INT-0034](INT-0034-any-content.md)). Where a record or field that the Book
+shows has content no rendering rule covers, the Book shows the record's type
+and the content's hash and size in its place; it never fails or leaves the
+record out. Concurrent events never conflict spuriously. A genuine
 collision on one record — two agents claiming the same task — surfaces as
 divergence with an explicit resolution policy (for example leases, claims, or a
 CubiKan-style expected-revision check), and is never resolved silently.
@@ -31,6 +36,8 @@ CubiKan-style expected-revision check), and is never resolved silently.
   - Note: the same path serves INT-0027.
 - **AC-5** `supporting` `asserted` — New record types can be added under new reverse-domain names without a protocol change.
   - Signers: human reviewer of the format spec.
+- **AC-6** `necessary` `empirical` — Records whose content fields hold invalid UTF-8, binary data or text in a synthetic language are stored and synced byte for byte, and the Book view shows every one of them, by type, hash and size where no rendering rule covers its content, without failing or leaving it out.
+  - Threshold: 0 differing bytes, 0 failures and 0 records left out, over a corpus of such records.
 
 ## Rationale
 - Radicle stores issues and patches in the repository as signed, typed
@@ -59,3 +66,4 @@ CubiKan-style expected-revision check), and is never resolved silently.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 I.5 steps 21–22 and R3-D).
+- 2026-11-01: revised while `proposed`, on owner direction: records must hold any content. The Intent says content fields are byte strings, and that the Book shows a record it cannot render by type, hash and size instead of failing or leaving it out; AC-6 checks this.

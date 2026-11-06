@@ -12,7 +12,13 @@
 ## Intent
 The working copy is itself a change. At the start of every command Periapsis
 scans it (using an mtime/inode cache and ignore rules) and snapshots it into
-the working-copy change, so no command discards uncommitted work. Any number of
+the working-copy change, so no command discards uncommitted work. Snapshotting
+stores each file's bytes exactly as found, unless the project has opted into a
+normalisation rule for that path ([INT-0034](INT-0034-any-content.md)). Only a
+line layer may write conflict markers into a conflicted file and read them
+back as a conflict. Any other conflicted file is written as one of its sides,
+and its conflict stays in the working-copy change until a side is chosen or
+the file's bytes change, which makes those bytes the resolution. Any number of
 workspaces share one op log and one object store, each with its own
 working-copy change; agent workspaces can be sparse or API-only (writes without
 a checkout). A workspace is the "lane" of
@@ -27,6 +33,8 @@ git worktrees.
   - Threshold: 0 violations in simulation.
 - **AC-4** `supporting` `empirical` — An agent can create and describe a change touching N files through an API-only workspace without materialising a checkout.
 - **AC-5** `supporting` `empirical` — `status` on an unchanged working copy of 100,000 files completes within a time budget that is fixed before the first measurement and recorded in this chapter.
+- **AC-6** `necessary` `empirical` — A conflicted file that no line layer reads is written as one of its sides and never with conflict markers; it stays conflicted while its bytes are unchanged, and once they change, the bytes found are recorded as its resolution.
+  - Threshold: 100% over a corpus of conflicts in binaries, random bytes and files in a synthetic language.
 
 ## Rationale
 - Snapshot-before-overwrite is what makes the history complete (R1-E2,
@@ -52,3 +60,4 @@ git worktrees.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §4 Phase 1 and R5 §C.1).
+- 2026-11-01: revised while `proposed`, on owner direction: the working copy must hold conflicts in any content. The Intent says snapshots keep each file's bytes exactly unless a normalisation rule is opted in, only a line layer writes and reads conflict markers, and any other conflicted file is written as one of its sides and resolved by choosing a side or changing its bytes; AC-6 checks this.

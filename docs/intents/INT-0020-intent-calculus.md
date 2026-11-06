@@ -11,7 +11,7 @@
 
 ## Intent
 Empirical, preference, judged and asserted acceptance criteria — including
-aesthetic ones such as "`peri log` is calm and pleasant to scan" — are
+aesthetic ones such as "`praps log` is calm and pleasant to scan" — are
 certified by kernel-checked propositions about a verifier-owned, signed
 evidence ledger, never by data the prover supplies. This chapter gives the
 kernel semantics behind the Markdown grammar of
@@ -48,7 +48,7 @@ the panel, which the Book records as attributed, signed facts.
   - Obligation: `unstated` (decided by `decide +kernel`, never native evaluation).
 - **AC-3** `necessary` `formal` — Misconduct is uncertifiable: sock-puppet ballots, dropped trials, post-hoc rubrics, unblinded ballots, double votes, overclaimed confidence, underpowered samples, pre-dated scores and post-hoc seeds (R5 scenarios S1–S9) are each proved to make certification impossible.
   - Obligation: one theorem per scenario.
-- **AC-4** `necessary` `empirical` — The worked example reproduces: the aesthetic `peri log` intent is certified for its honest change with strength `judged` and risk 1020/20000 (5.1%), and the later "cleanup" change is kernel-refuted by its necessary formal proxy.
+- **AC-4** `necessary` `empirical` — The worked example reproduces: the aesthetic `praps log` intent is certified for its honest change with strength `judged` and risk 1020/20000 (5.1%), and the later "cleanup" change is kernel-refuted by its necessary formal proxy.
 - **AC-5** `supporting` `empirical` — Calibration with real human panels: inter-rater reliability is measured, and certified preference evidence is checked against later user satisfaction.
 - **AC-6** `supporting` `asserted` — Panel and signer authority is expressed in an Abadi-style authorisation logic ("A says s", "A speaks for B") rooted in the Book's human signers (Phase 5 design).
   - Signers: project owner.
@@ -83,3 +83,4 @@ the panel, which the Book records as attributed, signed facts.
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 Part VIII §B).
 - 2026-10-31: revised while `proposed`, after the Sprint 0 plan critique: `Certified` requires a non-empty spec list, so an intent with no criteria is never vacuously certified, in line with INT-0002's Semantics.
+- 2026-11-01: revised while `proposed`, on owner direction: the command is `praps`, short for periapsis, replacing `peri` ([INT-0003](INT-0003-engineering-baseline.md)). AC-4 is reworded for the new name only.

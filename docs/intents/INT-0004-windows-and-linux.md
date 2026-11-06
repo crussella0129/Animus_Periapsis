@@ -4,8 +4,8 @@
 - **Intent ID:** INT-0004
 - **State:** active
 - **Work evidence:** [T-005 build plan](../sprints/s0/sprint-plans/build-plan.md#t-005-golden-corpus-and-spec-consistency), [T-007 build plan](../sprints/s0/sprint-plans/build-plan.md#t-007-canonical-suite-runner-and-ci-workflow)
-- **Completion evidence:** none
-- **Code evidence:** none
+- **Completion evidence:** [T-005 completion](../work/completed-tasks.md#t-005-sprint-0), [T-007 completion](../work/completed-tasks.md#t-007-sprint-0)
+- **Code evidence:** [.gitattributes](../../.gitattributes), [golden rule](../../crates/xtask/src/attributes.rs), [CI workflow](../../.github/workflows/ci.yml)
 - **Test evidence:** [Sprint 0 test report](../sprints/s0/sprint-tests/test-report.md)
 - **Documentation evidence:** none
 
@@ -14,7 +14,9 @@ Periapsis produces the same object hashes, the same op log and the same
 working-copy results on Windows (NTFS: case-insensitive by default, `\`
 separators, reserved device names, different directory-durability semantics)
 and on Linux (ext4). Repository paths are stored in one platform-neutral form:
-relative, `/`-separated, UTF-8. Platform differences are isolated behind the
+relative, `/`-separated, UTF-8. A file or directory name in a working copy
+that has no UTF-8 form is reported and left alone, never tracked under another
+name. Platform differences are isolated behind the
 I/O traits of [INT-0005](INT-0005-deterministic-simulation-testing.md). Every
 sprint that changes code records test evidence from both platforms.
 
@@ -38,6 +40,8 @@ watchers.
 - **AC-5** `necessary` `asserted` — The storage layer documents its durability strategy on Windows, where directory fsync is not available as on POSIX, and a reviewer accepts the crash-test evidence for it.
   - Signers: human reviewer.
 - **AC-6** `supporting` `empirical` — End-to-end scenarios (multi-peer sync, crash and restart) also run on the Debian host Nighthawk.
+- **AC-7** `necessary` `empirical` — A working-copy file or directory whose name has no UTF-8 form (bytes that are not UTF-8 on ext4, an unpaired surrogate on NTFS) is reported by an escaped form of its name and otherwise left alone, like an ignored path: it is never tracked under a changed name, overwritten, deleted or skipped without a report.
+  - Threshold: 100% over a fixture corpus on each platform.
 
 ## Rationale
 - Windows and case-insensitive filesystems are explicit gaps in the research
@@ -67,3 +71,4 @@ watchers.
 - 2026-10-31: created as `proposed` (Sprint 0 research; research gap II §7 plus the owner's test-machine inventory).
 - 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-005, T-007: golden bytes and the canonical runner on Windows and WSL, including a fresh Windows clone with `core.autocrlf=true`).
 - 2026-10-31: `planned` → `active` (Sprint 0 build, T-005 starts: golden bytes kept binary on every platform).
+- 2026-11-01: revised while `active`, on owner direction: Periapsis must work with any toolchain, and some write file names that have no UTF-8 form. The Intent and the new AC-7 say such a name is reported by an escaped form and left alone, never tracked under another name, overwritten or deleted; stored paths stay UTF-8.

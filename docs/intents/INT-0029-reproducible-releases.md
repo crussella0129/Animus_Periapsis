@@ -22,7 +22,7 @@ independent bootstrap path are C++ (Biblio §5).
 
 ## Acceptance criteria
 - **AC-1** `necessary` `empirical` — Two independent builders (for example the Windows host and the Debian host Nighthawk, or two CI runners) produce bit-identical release artifacts for the same tag and target.
-- **AC-2** `necessary` `empirical` — Every release has a signed build attestation recorded in Periapsis's ledger, verifiable with `peri`.
+- **AC-2** `necessary` `empirical` — Every release has a signed build attestation recorded in Periapsis's ledger, verifiable with `praps`.
 - **AC-3** `supporting` `empirical` — A release built with an mrustc-bootstrapped toolchain reproduces the official artifact.
 
 ## Rationale
@@ -45,3 +45,4 @@ independent bootstrap path are C++ (Biblio §5).
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from the Biblio report §5 and Master Report v6 I.5 step 39).
+- 2026-11-01: revised while `proposed`, on owner direction: the command is `praps`, short for periapsis, replacing `peri` ([INT-0003](INT-0003-engineering-baseline.md)). AC-2 is reworded for the new name only.
