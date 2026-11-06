@@ -117,6 +117,14 @@ fn ci_workflow_is_the_reviewed_one() {
 #[test]
 fn cargo_aliases_are_the_reviewed_ones() {
     assert_eq!(repo_file(".cargo/config.toml"), CARGO_CONFIG);
+    // Cargo reads a legacy `.cargo/config` in place of `config.toml` when
+    // both exist, so its aliases would replace the pinned ones unseen.
+    let legacy = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.cargo/config");
+    assert!(
+        !legacy.exists(),
+        "{} would override .cargo/config.toml",
+        legacy.display()
+    );
 }
 
 #[test]

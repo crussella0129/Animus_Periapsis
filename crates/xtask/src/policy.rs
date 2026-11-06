@@ -243,7 +243,7 @@ fn credits(root: &Path, _members: &[PathBuf]) -> Vec<String> {
     if !path.is_file() {
         return vec!["docs/prior-art.md is missing".to_owned()];
     }
-    let credits = read(&path);
+    let rows = table_cells(&read(&path));
     let workspace = match parse(root, &root.join("Cargo.toml")) {
         Ok(workspace) => workspace,
         Err(problem) => return vec![problem],
@@ -256,27 +256,21 @@ fn credits(root: &Path, _members: &[PathBuf]) -> Vec<String> {
     dependencies
         .iter()
         .filter(|(_, entry)| lookup(entry, &["path"]).is_none())
-        .filter_map(|(name, entry)| uncredited(&credits, name, entry))
+        .filter_map(|(name, entry)| uncredited(&rows, name, entry))
         .collect()
 }
 
 /// What the prior-art row of workspace dependency `name` lacks, if anything.
-fn uncredited(credits: &str, name: &str, entry: &Item) -> Option<String> {
-    let row_start = format!("| `{name}` |");
-    let Some(row) = credits
-        .lines()
-        .find(|line| line.trim_start().starts_with(&row_start))
-    else {
+/// Its row is the table body row, as GitHub shows it, whose first cell is
+/// the name as code.
+fn uncredited(rows: &[Vec<String>], name: &str, entry: &Item) -> Option<String> {
+    let first = format!("`{name}`");
+    let Some(row) = rows.iter().find(|row| row.first() == Some(&first)) else {
         return Some(format!(
             "dependency `{name}` has no row in docs/prior-art.md"
         ));
     };
-    let cells: Vec<&str> = row
-        .trim()
-        .trim_matches('|')
-        .split('|')
-        .map(str::trim)
-        .collect();
+    let cells: Vec<&str> = row.iter().map(String::as_str).collect();
     let filled = |i: usize| cells.get(i).is_some_and(|c| !c.is_empty() && *c != "—");
     let c_build = cells.get(4).copied().map(first_word);
     let how = cells.get(5).copied().unwrap_or_default();
@@ -509,6 +503,43 @@ enum Block {
     /// A body row of a table at the top level: the code span that starts its
     /// first cell, if one does, and how many of its cells hold anything.
     Row { lead: Option<String>, filled: usize },
+}
+
+/// The body rows of a Markdown file's top-level tables as GitHub shows them
+/// (see `markdown`), each as its cells' text, code spans in backticks.
+fn table_cells(text: &str) -> Vec<Vec<String>> {
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut rows = Vec::new();
+    // How many elements are open, whether the open table is at the top
+    // level, and the open row's cells, in such a table.
+    let mut depth = 0;
+    let mut top_table = false;
+    let mut row: Option<Vec<String>> = None;
+    for event in Parser::new_ext(&text, Options::ENABLE_TABLES) {
+        let top = depth == 0;
+        match event {
+            Event::Start(_) => depth += 1,
+            Event::End(_) => depth -= 1,
+            _ => {}
+        }
+        let cell = row.as_mut().and_then(|cells| cells.last_mut());
+        match event {
+            Event::Start(Tag::Table(_)) => top_table = top,
+            Event::Start(Tag::TableRow) if top_table => row = Some(Vec::new()),
+            Event::End(TagEnd::TableRow) => rows.extend(row.take()),
+            Event::Start(Tag::TableCell) => {
+                if let Some(cells) = &mut row {
+                    cells.push(String::new());
+                }
+            }
+            Event::Text(part) => cell.into_iter().for_each(|cell| cell.push_str(&part)),
+            Event::Code(code) => cell
+                .into_iter()
+                .for_each(|cell| cell.push_str(&format!("`{code}`"))),
+            _ => {}
+        }
+    }
+    rows
 }
 
 /// The headings and table body rows of a Markdown file as GitHub shows it:
@@ -1092,6 +1123,42 @@ mod tests {
         fixture.write("docs/prior-art.md", "Nothing credited.\n");
         fixture.fails_only("credits", "`blake3`");
 
+        // A row counts as GitHub shows it: in a comment, a fence or a quote,
+        // or with the name not as code, it is no row.
+        let header = "| Crate | Version | Licence | Used by | Can build C | How |\n|---|---|---|---|---|---|\n";
+        let row =
+            "| `blake3` | 1 | CC0-1.0 | `hash` | yes | `features = [\"pure\"]`: Rust only |\n";
+        let table = format!("{header}{row}");
+        for (i, text) in [
+            format!("{header}\n<!--\n{row}-->\n"),
+            format!("{header}\n```\n{row}```\n"),
+            table.lines().map(|line| format!("> {line}\n")).collect(),
+            format!("- note\n\n  {}", table.replace('\n', "\n  ")),
+            table.replace("| `blake3` |", "| blake3 |"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = Fixture::new(&format!("credits-hidden-{i}"));
+            assert_eq!(fixture.read("docs/prior-art.md"), table);
+            fixture.write("docs/prior-art.md", &text);
+            fixture.fails_only("credits", "`blake3` has no row");
+        }
+        // The same table after other text, or with CRLF line ends, or with a
+        // lone CR ending each line of a fence and a comment before it, is read.
+        for (i, text) in [
+            format!("# Credits\n\n{table}"),
+            table.replace('\n', "\r\n"),
+            format!("```\ncode\n```\n<!--\nnote\n-->\n{table}").replace('\n', "\r"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = Fixture::new(&format!("credits-shown-{i}"));
+            fixture.write("docs/prior-art.md", &text);
+            fixture.passes();
+        }
+
         // A `[workspace.dependencies.<name>]` table declares a dependency too.
         let fixture = Fixture::new("credits-table");
         fixture.write(
@@ -1155,10 +1222,11 @@ mod tests {
             "| `blake3` | 1 | CC0-1.0 | `hash` | yes | `features = []` |",
             "| `blake3` | 1 | CC0-1.0 | `hash` | yes | `features = [\"pur\"]` |",
         ];
+        let header = "| Crate | Version | Licence | Used by | Can build C | How |\n|---|---|---|---|---|---|\n";
         for (i, row) in failing.into_iter().enumerate() {
             let fixture = Fixture::new(&format!("credits-row-{i}"));
-            fixture.write("docs/prior-art.md", &format!("{row}\n"));
-            fixture.fails_only("credits", "`blake3`");
+            fixture.write("docs/prior-art.md", &format!("{header}{row}\n"));
+            fixture.fails_only("credits", "`blake3` needs a licence");
         }
         let passing = [
             "| `blake3` | 1 | CC0-1.0 | `hash` | yes | `features = [\"pure\"]` |",
@@ -1170,7 +1238,7 @@ mod tests {
         ];
         for (i, row) in passing.into_iter().enumerate() {
             let fixture = Fixture::new(&format!("credits-ok-{i}"));
-            fixture.write("docs/prior-art.md", &format!("{row}\n"));
+            fixture.write("docs/prior-art.md", &format!("{header}{row}\n"));
             assert!(
                 fixture.failures().is_empty(),
                 "{row}: {:?}",
