@@ -22,6 +22,9 @@ toml_edit = { version = "0.25.17", default-features = false, features = ["parse"
 allocation-counter = "0.8.1"
 hash = { path = "crates/hash" }
 book = { path = "crates/book" }
+codec = { path = "crates/codec" }
+sim = { path = "crates/sim" }
+store = { path = "crates/store" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

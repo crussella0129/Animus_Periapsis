@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0007
-- **State:** planned
+- **State:** active
 - **Work evidence:** [Sprint 1 T-004 build plan](../sprints/s1/sprint-plans/build-plan.md#t-004-object-and-op-file-store-with-derived-heads-and-fsck-in-the-store-crate), [Sprint 1 T-005 build plan](../sprints/s1/sprint-plans/build-plan.md#t-005-crash-matrix-with-negative-controls), [Sprint 1 T-006 build plan](../sprints/s1/sprint-plans/build-plan.md#t-006-fsck-corruption-corpus-and-the-praps-fsck-command), [Sprint 1 T-007 build plan](../sprints/s1/sprint-plans/build-plan.md#t-007-windows-durability-strategy-and-real-filesystem-evidence)
 - **Completion evidence:** none
 - **Code evidence:** none
@@ -70,3 +70,4 @@ and referential integrity.
 - 2026-11-01: revised while `proposed`, on owner direction: the command is `praps`, short for periapsis, replacing `peri` ([INT-0003](INT-0003-engineering-baseline.md)).
 - 2026-11-06: AC-3 revised while `proposed`, after the Sprint 1 plan critique (round 1, C-005): an op whose commit was interrupted after its file became durable but before it was acknowledged may survive, so the recovered heads are the last acknowledged heads extended only by such in-flight ops, each wholly present and valid or absent. Consequences gain the on-disk name form (C-007) and the rule that an already-present file is synced before a dependent op is acknowledged (C-004).
 - 2026-11-06: `proposed` → `planned` (Sprint 1 build plan T-004 to T-007: the store, the crash matrix, `fsck` and the Windows durability note; AC-5, four writing processes, is deferred to a later sprint).
+- 2026-11-06: `planned` → `active` (Sprint 1 build, T-004 starts: the store crate).

@@ -336,6 +336,15 @@ name = "sim"
 version = "0.0.0"
 
 [[package]]
+name = "store"
+version = "0.0.0"
+dependencies = [
+ "codec",
+ "hash",
+ "sim",
+]
+
+[[package]]
 name = "syn"
 version = "3.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
