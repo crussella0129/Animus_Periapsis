@@ -14,7 +14,7 @@
   - Format
     - T-001: Specify and implement the provisional `operation` object kind
   - Simulation
-    - T-002: Filesystem, clock and randomness traits in the `sim` crate
+    - T-002: Filesystem and randomness traits in the `sim` crate
     - T-003: Filesystem boundary: only `sim`'s real half touches the real filesystem
   - Storage
     - T-004: Object and op-file store with derived heads and `fsck` in the `store` crate
@@ -47,12 +47,18 @@
   - **WHEN** random byte strings are decoded as operation bodies, **THEN** decoding **SHALL** never panic (100,000 cases).
 - **Notes:**
   - **Reuse:** `Encode`/`Decode` for `BTreeSet<HashRef>` in `crates/codec/src/wire.rs`, and `encode_object`/`object_id` in `envelope.rs`.
-  - **Existing tests:** `properties.rs` (the reserved range `0x02..=0x05`, the class count `("reserved", 4)`, the "object kind 0x03 is reserved" message test) and `spec.rs` (`spec_registries_match_code`) are updated in the same commit; the golden test is `golden_v1_corpus_matches` and the examples test is `spec_examples_match_golden_files`.
+  - **Existing tests:** these are updated in the same commit:
+    - `properties.rs`: the reserved range `0x02..=0x05`, the class count `("reserved", 4)`, the "object kind 0x03 is reserved" message test and `kind_registry_is_complete`;
+    - `spec.rs`: `spec_registries_match_code`;
+    - `golden.rs`: `golden_corpus_has_the_spec_types`, its exact list of names and types.
+
+    The golden test is `golden_v1_corpus_matches` and the examples test is `spec_examples_match_golden_files`.
+  - **Golden form:** like `blob-envelope.bin`, `operation-*.bin` hold full envelopes (`01 03 ‖ body`), and the spec's worked examples show the same bytes.
   - **Deferred fields:** actor, time, view and signature are left to later sprints, as INT-0006 records.
 
-### T-002: Filesystem, clock and randomness traits in the sim crate
+### T-002: Filesystem and randomness traits in the sim crate
 - **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0004](../../../intents/INT-0004-windows-and-linux.md)
-- **Touches:** crates/sim/Cargo.toml, crates/sim/src/lib.rs, crates/sim/src/fs.rs, crates/sim/src/real.rs, crates/sim/src/simfs.rs, crates/sim/src/rng.rs, crates/sim/src/clock.rs, crates/sim/tests/contract.rs, Cargo.toml, Cargo.lock, docs/prior-art.md
+- **Touches:** crates/sim/Cargo.toml, crates/sim/src/lib.rs, crates/sim/src/fs.rs, crates/sim/src/real.rs, crates/sim/src/simfs.rs, crates/sim/src/rng.rs, crates/sim/tests/contract.rs, Cargo.toml, Cargo.lock, docs/prior-art.md
 - **Depends on:** (none)
 - **Acceptance criterion:** INT-0005 AC-1 (same seed and inputs give byte-identical storage and identical traces) and the simulator half of AC-2 (a crash at any syscall, torn or lost unsynced writes, lenient and strict directory semantics)
 - **Success criterion (EARS):**
@@ -62,10 +68,13 @@
   - **WHEN** a crash occurs with written but unsynced file data, **THEN** across seeds the recovered content **SHALL** be observed kept, dropped and torn to a prefix, and never containing bytes that were not written.
   - **WHEN** in strict mode a file is created or renamed, and its data synced, but its directory is not synced, **THEN** across seeds the entry **SHALL** sometimes vanish (and a rename **SHALL** sometimes revert) after a crash; **WHEN** the same happens in lenient mode, **THEN** the entry **SHALL** survive.
   - **WHEN** in strict mode a directory is created but its parent is not synced, **THEN** across seeds the directory **SHALL** sometimes vanish after a crash together with everything below it; **WHEN** the same happens in lenient mode, **THEN** it **SHALL** survive.
+  - **WHEN** a file's data is written but not synced, the file is renamed and its directory synced, and a crash follows, **THEN** across seeds the renamed file's content **SHALL** be observed kept, dropped and torn. Pending data follows the file across a rename, and neither `rename` nor `sync_dir` makes file data durable.
+  - **WHEN** an existing file whose content was synced is overwritten in place (`overwrite`: truncate, then write) without a sync, and a crash follows, **THEN** across seeds the recovered content **SHALL** be observed as the old content, empty, and a torn prefix of the new content.
   - **WHEN** `Rng` (SplitMix64) is seeded with 0 and with 1234567, **THEN** its first outputs **SHALL** match the published reference values.
   - **WHEN** the contract suite runs against `RealFs` in a freshly claimed temporary directory, **THEN** it **SHALL** pass on Windows and Linux, `sync_dir` included.
 - **Notes:**
-  - **Contract:** `create_new` refuses an existing name; `rename` replaces the target, as `std::fs::rename` does on both platforms.
+  - **Syscalls:** `create_dir`, `create_new` (refuses an existing name), `write`, `overwrite` (exists only for the pointer-file negative control), `sync_file`, `rename` (replaces the target, as `std::fs::rename` does on both platforms), `sync_dir`, `read`, `list` and `remove_file`.
+  - **Clock:** deferred. Nothing in this sprint reads time, so the `Clock` trait arrives with the first timestamped record, and `clock.rs` is not built now.
   - **Directory sync:** on Windows, `RealFs::sync_dir` opens the directory with `OpenOptions::read(true).write(true)` and `custom_flags(0x0200_0000)` (`FILE_FLAG_BACKUP_SEMANTICS`), then calls `sync_all`; on Unix it opens it read-only and calls `sync_all`.
   - **Lenient mode:** a file's `sync_file` also makes that file's own directory entry durable, and `create_dir` is durable at once.
   - **Determinism:** ordered maps only (INT-0005 AC-4), and no third-party dependency.
@@ -83,13 +92,16 @@
     - the `std::path::Path` methods that touch the filesystem (`exists`, `try_exists`, `is_file`, `is_dir`, `metadata`, `symlink_metadata`, `read_dir`, `read_link`, `canonicalize`).
 
     The config **SHALL** also keep the root's `HashMap`/`HashSet` bans.
-  - **WHEN** code needs the real filesystem, **THEN** an `#[allow(clippy::disallowed_methods, clippy::disallowed_types)]` **SHALL** appear only in `crates/sim/src/real.rs` and in files under a crate's `tests/` directory.
+  - **WHEN** code needs the real filesystem, **THEN** a lint opt-out **SHALL** appear only in `crates/sim/src/real.rs` and in files under a crate's `tests/` directory. An opt-out is any `allow`, `expect` or `cfg_attr` attribute naming:
+    - `disallowed_methods` or `disallowed_types`;
+    - their former names `disallowed_method` and `disallowed_type`;
+    - the groups that contain them, `clippy::style` and `clippy::all`.
   - **WHEN** `cargo policy` runs:
     - the `clippy` rule **SHALL** accept a member's own `clippy.toml` only if it lists every root `disallowed-types` path;
     - a new `fs-boundary` rule **SHALL** fail if `sim`, `store` or `praps` lacks a config listing the filesystem bans above, or if such an allow appears anywhere else in those crates.
   - **WHEN** the rule's fixtures run, **THEN**:
     - a store crate without the config **SHALL** fail;
-    - an allow in `store/src` **SHALL** fail;
+    - an allow in `store/src` **SHALL** fail, and so **SHALL** `#![allow(clippy::style)]`, `#[expect(clippy::disallowed_methods)]` and a `cfg_attr` allow there;
     - a member config missing a hash-collection ban **SHALL** fail;
     - the real layout **SHALL** pass.
 - **Notes:**
@@ -116,10 +128,11 @@
   - **Acknowledgement:** `commit_op` returns its id only after the final `sync_dir`.
   - **Credits:** `docs/prior-art.md` credits jj's `simple_op_heads_store` (op heads as one file per op id; Periapsis drops head files altogether, after R2-E23b) and ALICE (Pillai et al., OSDI 2014) for the write sequence's fault model.
   - **Filesystem boundary:** `store` gets its `clippy.toml` (T-003) in the same commit.
+  - **Workspace entry:** root `[workspace.dependencies]` gains `store = { path = "crates/store" }`, for `praps` and for T-005's self dev-dependency.
 
 ### T-005: Crash matrix with negative controls
 - **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0007](../../../intents/INT-0007-crash-safe-storage.md)
-- **Touches:** crates/store/Cargo.toml, crates/store/src/lib.rs (the `Variant` switch, behind the `variants` feature), crates/store/tests/crash.rs
+- **Touches:** crates/store/Cargo.toml, crates/store/src/lib.rs (the `Variant` switch, behind the `variants` feature), crates/sim/src/simfs.rs (the interleaving hook), crates/store/tests/common/matrix.rs (the matrix, shared with `tests/fsck.rs`), crates/store/tests/crash.rs, crates/xtask/src/policy.rs (the `deps` rule)
 - **Depends on:** T-004
 - **Acceptance criterion:** INT-0005 AC-1, AC-2 and AC-3; INT-0007 AC-1, AC-2 and AC-3 (as revised)
 - **Success criterion (EARS):**
@@ -127,9 +140,9 @@
     - init alone;
     - init then a five-op chain with objects;
     - a fork and a merge;
-    - two interleaved writers (two `Store` values) in one process.
+    - two writers (two `Store` values on one `SimFs`), interleaved at the syscall level. A seeded hook in `SimFs` runs writer B's whole `put_object` and `commit_op` at a seed-chosen syscall boundary inside writer A's `commit_op`. B's op names an object A is writing, so B can find A's object renamed but its directory not yet synced.
 
-    "Present" means a file whose content hashes to its name and decodes, as `fsck` checks it. The invariants:
+    All invariants are checked on the recovered `SimFs` state directly, whether or not `Store::open` succeeds. A missing `objects/` or `ops/` counts as an empty set. "Present" means a file whose content hashes to its name and decodes, as `fsck`'s per-file check judges it. The invariants:
     - **Layout:** if `init` was acknowledged, `Store::open` succeeds; otherwise either `open` fails as not-a-store, or it succeeds with no ops. In both cases a following `init` succeeds.
     - **Closure:** every recovered op's parents and objects are present (INT-0007 AC-1).
     - **Durability:** every acknowledged op is present (INT-0007 AC-2).
@@ -137,18 +150,19 @@
     - **Atomicity:** in the single-writer chain scenario, the recovered op chain is a prefix of the intended chain (INT-0005 AC-2).
   - **WHEN** the whole matrix is run twice, **THEN** each cell's recovered-state hash and trace **SHALL** be equal between the runs (INT-0005 AC-1 proxy: every scenario twice).
   - **WHEN** the matrix runs the three negative-control variants, **THEN** each **SHALL** produce at least one violation of the closure, durability or heads invariant, counted separately from any layout or stray-file check, in strict mode at least. The variants are:
-    - **Pointer file:** keeps a `HEAD` file holding the head set, rewritten in place (truncate and write, no temporary file, rename or sync), and takes heads from it in recovery.
+    - **Pointer file:** keeps a `HEAD` file holding the head set, rewritten in place with `overwrite` (no temporary file, rename or sync), and takes heads from it in recovery. A missing, empty, torn or undecodable `HEAD` counts as a heads violation, never as a skipped case.
     - **Unsynced objects:** skips `sync_file` on object files but still renames them and syncs `objects/`.
     - **Unsynced init:** `init` performs no `sync_dir`.
   - **WHEN** the matrix finishes, **THEN** it **SHALL** print the number of cells run and violations per variant and mode, and **SHALL** fail if any variant ran zero cells.
+  - **WHEN** `cargo policy` runs, **THEN** its `deps` rule **SHALL** fail if any `[dependencies]` or `[build-dependencies]` entry on `store` enables the `variants` feature; only `[dev-dependencies]` may.
 - **Notes:**
   - **Feature wiring:** `Variant` exists only under the non-default `variants` feature of `store`. `store` lists itself as a dev-dependency with `features = ["variants"]`, so `cargo test --workspace` (which `cargo ci` runs without `--features`) compiles the matrix and the controls; no test uses `required-features`.
-  - **Feature unification:** in test builds this unifies the feature into every `store` build, including the one `praps`'s tests link. Release and non-test builds never enable it, and `cargo policy` fails if any non-dev dependency on `store` enables `variants`.
+  - **Feature unification:** in test builds this unifies the feature into every `store` build, including the one `praps`'s tests link. Release and non-test builds never enable it, which the `deps` clause above enforces. Extending `deps` keeps the number of rules and the `PASS` output unchanged.
   - **Time budget:** the matrix must finish within the `cargo ci` budget (target: under 60 s per run in a debug build). If it does not, scenario sizes shrink before the seed count does, and the measured count goes into the evidence.
 
 ### T-006: fsck corruption corpus and the praps fsck command
 - **Intent:** [INT-0007](../../../intents/INT-0007-crash-safe-storage.md), [INT-0003](../../../intents/INT-0003-engineering-baseline.md)
-- **Touches:** crates/store/tests/fsck.rs, crates/praps/Cargo.toml, crates/praps/clippy.toml, crates/praps/src/main.rs, crates/praps/tests/cli.rs, Cargo.toml, Cargo.lock, README.md
+- **Touches:** crates/store/tests/fsck.rs, crates/store/tests/common/matrix.rs, crates/praps/Cargo.toml, crates/praps/clippy.toml, crates/praps/src/main.rs, crates/praps/tests/cli.rs, Cargo.toml, Cargo.lock, README.md
 - **Depends on:** T-004, T-005
 - **Acceptance criterion:** INT-0007 AC-4 (100% detection, 0 false reports over a corruption corpus); INT-0003 AC-8 and AC-9 for the new binary
 - **Success criterion (EARS):**
@@ -160,10 +174,14 @@
     - a file renamed to a name that does not parse.
   - **WHEN** `fsck` runs on every recovered store from the correct store's crash matrix, **THEN** it **SHALL** report no corruption (temporary files only as leftovers).
   - **WHEN** `praps fsck` runs:
-    - with `DIR` on a healthy store, **THEN** it **SHALL** exit 0;
+    - with `DIR` on a healthy store, or with no `DIR` from inside a healthy store, **THEN** it **SHALL** exit 0;
     - on a corrupt store, **THEN** it **SHALL** list each corrupt file and exit 1;
-    - with an argument starting with `-`, an unknown subcommand, an extra argument, or a directory that is not a store, **THEN** it **SHALL** exit 2.
-- **Notes:** `praps` is a one-word binary package (`publish = false`); reserving the name on crates.io stays an owner action (INT-0003 AC-7). `fsck` with no directory checks the current directory. The CLI tests corrupt files with `std::fs` under a test-file allow (T-003).
+    - on a directory that is not a store or cannot be read, **THEN** it **SHALL** say so and exit 1;
+    - with an argument starting with `-`, no subcommand, an unknown subcommand, or an extra argument, **THEN** it **SHALL** print usage and exit 2.
+- **Notes:**
+  - **Name:** `praps` is a one-word binary package (`publish = false`, INT-0003 AC-8). Reserving the name on crates.io stays an owner action (INT-0003 AC-7).
+  - **Exit codes:** they follow the convention `cargo ci` uses, by design rather than as an INT-0003 AC-9 claim (AC-9 names only the three tooling commands): 2 is a usage error only, and an unusable directory is a failure (1).
+  - **Test setup:** the CLI tests corrupt files with `std::fs` under a test-file allow (T-003). `fsck_is_clean_on_matrix_stores` reuses the matrix through `tests/common/matrix.rs`.
 
 ### T-007: Windows durability strategy and real-filesystem evidence
 - **Intent:** [INT-0004](../../../intents/INT-0004-windows-and-linux.md), [INT-0007](../../../intents/INT-0007-crash-safe-storage.md)
@@ -183,13 +201,14 @@
 
 ### T-008: cargo ci refuses a target directory outside the checkout
 - **Intent:** [INT-0003](../../../intents/INT-0003-engineering-baseline.md)
-- **Touches:** crates/xtask/src/ci.rs, crates/xtask/src/main.rs
+- **Touches:** crates/xtask/src/ci.rs, crates/xtask/src/main.rs, docs/work/tasks.md
 - **Depends on:** (none)
 - **Acceptance criterion:** INT-0003 AC-2 to AC-4, as realized by `cargo ci`: the steps it runs must be this checkout's own (Sprint 0 test critiques round 3, C-005; round 5, C-006; round 6, C-008; round 7, C-007)
 - **Success criterion (EARS):**
-  - **WHEN** the running xtask binary (`std::env::current_exe()`, canonicalized) is not inside `<workspace root>/target`, where the workspace root comes from the build-time `CARGO_MANIFEST_DIR`, **THEN** `cargo ci` and `cargo policy` **SHALL** refuse before doing anything, naming both paths, and exit 1. This is the case when the `cargo ci` alias built xtask into a `CARGO_TARGET_DIR` or `build.target-dir` outside the checkout.
-  - **WHEN** the current directory's workspace (`cargo locate-project --workspace`, run with the inherited environment) is not the build-time workspace root, **THEN** xtask **SHALL** refuse and exit 1, because it was built for another checkout.
-  - **WHEN** xtask runs from the default in-tree `target/` in its own checkout, **THEN** `cargo ci` **SHALL** run its steps as before.
+  - **WHEN** the running xtask binary (`std::env::current_exe()`) is not inside `<workspace root>/target`, both canonicalized with `std::fs::canonicalize` (so Windows `\\?\` prefixes and letter case agree), where the workspace root comes from the build-time `CARGO_MANIFEST_DIR`, **THEN** `cargo ci` and `cargo policy` **SHALL** refuse, naming both paths, and exit 1. This is the case when the `cargo ci` alias built xtask into a `CARGO_TARGET_DIR` or `build.target-dir` outside the checkout.
+  - **WHEN** the current directory's workspace root is not the build-time workspace root, **THEN** xtask **SHALL** refuse and exit 1, because it was built for another checkout. The current root is the parent of the `root` manifest path that `cargo locate-project --workspace` reports, run with the inherited environment; both roots are canonicalized.
+  - **WHEN** these checks run, **THEN** they **SHALL** run in `main` only, after argument validation, so usage errors still exit 2 first, and before any step. `ci::run` and the policy rules stay free of them, so tests that call `ci::run` from a temporary directory are unaffected.
+  - **WHEN** xtask runs from the default in-tree `target/` in its own checkout, on Windows or Linux, **THEN** `cargo ci` **SHALL** run its steps as before.
 - **Notes:**
   - **Exit code:** exit 1, not 2, because this is an environment failure rather than a usage error (INT-0003 AC-9 reserves 2 for usage).
   - **Child steps:** they keep scrubbing `CARGO_TARGET_*` and `CARGO_BUILD_*`, as before.
@@ -197,7 +216,7 @@
 
 ### T-009: Record Sprint 0's GitHub Actions runs and owner sign-offs
 - **Intent:** [INT-0001](../../../intents/INT-0001-periapsis-charter.md), [INT-0002](../../../intents/INT-0002-typed-acceptance-criteria.md), [INT-0003](../../../intents/INT-0003-engineering-baseline.md), [INT-0006](../../../intents/INT-0006-format-v1.md)
-- **Touches:** docs/sprints/s1/sprint-tests/ci-sprint0.md, docs/intents/INT-0001-periapsis-charter.md, docs/intents/INT-0002-typed-acceptance-criteria.md, docs/intents/INT-0003-engineering-baseline.md, docs/intents/INT-0006-format-v1.md
+- **Touches:** docs/sprints/s1/sprint-tests/ci-sprint0.md, docs/intents/INT-0001-periapsis-charter.md, docs/intents/INT-0002-typed-acceptance-criteria.md, docs/intents/INT-0003-engineering-baseline.md, docs/intents/INT-0006-format-v1.md, docs/work/tasks.md
 - **Depends on:** (none)
 - **Acceptance criterion:** the GitHub-matrix halves of INT-0003 AC-2 to AC-4 and INT-0006 AC-3; the sign-off criteria INT-0001 AC-1, INT-0002 AC-1, INT-0003 AC-5, INT-0006 AC-6, as far as the owner has given them
 - **Success criterion (EARS):**
