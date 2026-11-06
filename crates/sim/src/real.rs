@@ -1,6 +1,7 @@
 //! The operating system's filesystem. This is the only module in the core
 //! crates that names `std::fs` (INT-0005; enforced by `cargo policy`, rule
 //! `fs-boundary`, and by the crate's Clippy configuration).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};

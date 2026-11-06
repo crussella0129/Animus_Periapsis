@@ -23,7 +23,7 @@ use crate::workspace::members;
 type Rule = fn(&Path, &[PathBuf]) -> Vec<String>;
 
 /// The rules, in the order they are reported.
-pub const RULES: [(&str, Rule); 11] = [
+pub const RULES: [(&str, Rule); 12] = [
     ("lints", lints),
     ("unsafe", forbid_unsafe),
     ("toolchain", toolchain),
@@ -32,6 +32,7 @@ pub const RULES: [(&str, Rule); 11] = [
     ("deps", deps),
     ("credits", credits),
     ("clippy", clippy),
+    ("fs-boundary", fs_boundary),
     ("names", names),
     ("spec", spec),
     ("golden", golden),
@@ -39,6 +40,60 @@ pub const RULES: [(&str, Rule); 11] = [
 
 const FORBID_UNSAFE: &str = "#![forbid(unsafe_code)]";
 const DISALLOWED: [&str; 2] = ["std::collections::HashMap", "std::collections::HashSet"];
+/// The crates whose filesystem I/O must go through `sim::Fs` (INT-0005), by
+/// directory under `crates/`.
+const FS_BOUNDARY_CRATES: [&str; 3] = ["sim", "store", "praps"];
+/// The one source file in those crates that may touch the real filesystem.
+const FS_REAL_HALF: &str = "crates/sim/src/real.rs";
+/// `std::fs` types a boundary crate's Clippy config must disallow.
+const FS_TYPES: [&str; 3] = [
+    "std::fs::File",
+    "std::fs::OpenOptions",
+    "std::fs::DirBuilder",
+];
+/// Functions and methods that reach the real filesystem, which a boundary
+/// crate's Clippy config must disallow.
+const FS_METHODS: [&str; 28] = [
+    "std::fs::canonicalize",
+    "std::fs::copy",
+    "std::fs::create_dir",
+    "std::fs::create_dir_all",
+    "std::fs::exists",
+    "std::fs::hard_link",
+    "std::fs::metadata",
+    "std::fs::read",
+    "std::fs::read_dir",
+    "std::fs::read_link",
+    "std::fs::read_to_string",
+    "std::fs::remove_dir",
+    "std::fs::remove_dir_all",
+    "std::fs::remove_file",
+    "std::fs::rename",
+    "std::fs::set_permissions",
+    "std::fs::symlink_metadata",
+    "std::fs::write",
+    "std::path::Path::canonicalize",
+    "std::path::Path::exists",
+    "std::path::Path::is_dir",
+    "std::path::Path::is_file",
+    "std::path::Path::is_symlink",
+    "std::path::Path::metadata",
+    "std::path::Path::read_dir",
+    "std::path::Path::read_link",
+    "std::path::Path::symlink_metadata",
+    "std::path::Path::try_exists",
+];
+/// Lint names whose `allow`, `expect` or `cfg_attr` would switch the
+/// boundary off: the two lints, their former names, and the groups that hold
+/// them.
+const FS_OPT_OUTS: [&str; 6] = [
+    "clippy::disallowed_methods",
+    "clippy::disallowed_types",
+    "clippy::disallowed_method",
+    "clippy::disallowed_type",
+    "clippy::style",
+    "clippy::all",
+];
 /// The configs Clippy looks for in each directory, the first one winning.
 const CLIPPY_CONFIGS: [&str; 2] = [".clippy.toml", "clippy.toml"];
 const C_ALLOWED: &str = "C allowed:";
@@ -317,32 +372,161 @@ fn builds_pure_or_justified(how: &str, enabled: &[&str]) -> bool {
 }
 
 /// Clippy rejects the randomly seeded hash collections (INT-0005 AC-4): the
-/// root `clippy.toml` lists both under `disallowed-types`, and no other
-/// config takes its place for any member.
+/// root `clippy.toml` lists both under `disallowed-types`, and the only other
+/// config Clippy may read for a member is that member's own `clippy.toml`,
+/// which must list them too.
 fn clippy(root: &Path, members: &[PathBuf]) -> Vec<String> {
-    let mut problems: Vec<String> = match parse(root, &root.join("clippy.toml")) {
-        Ok(config) => {
-            let listed = disallowed_types(&config);
-            DISALLOWED
-                .into_iter()
-                .filter(|path| !listed.contains(path))
-                .map(|path| format!("clippy.toml does not list {path} under disallowed-types"))
-                .collect()
+    let mut problems = hash_bans(root, &root.join("clippy.toml"));
+    let own: BTreeSet<PathBuf> = members.iter().map(|dir| dir.join("clippy.toml")).collect();
+    for path in shadowing_configs(root, members) {
+        if own.contains(&path) {
+            problems.extend(hash_bans(root, &path));
+        } else {
+            problems.push(format!(
+                "{} would be read instead of clippy.toml",
+                relative(root, &path)
+            ));
         }
-        Err(problem) => vec![problem],
-    };
-    problems.extend(shadowing_configs(root, members).iter().map(|path| {
-        format!(
-            "{} would be read instead of clippy.toml",
-            relative(root, path)
-        )
-    }));
+    }
     problems
 }
 
-/// The paths `disallowed-types` lists, as strings or as tables with a `path`.
-fn disallowed_types(config: &DocumentMut) -> Vec<&str> {
-    match config.get("disallowed-types") {
+/// What the Clippy config at `path` fails to disallow of the hash collections.
+fn hash_bans(root: &Path, path: &Path) -> Vec<String> {
+    let name = relative(root, path);
+    match parse(root, path) {
+        Ok(config) => {
+            let listed = disallowed(&config, "disallowed-types");
+            DISALLOWED
+                .into_iter()
+                .filter(|banned| !listed.contains(banned))
+                .map(|banned| format!("{name} does not list {banned} under disallowed-types"))
+                .collect()
+        }
+        Err(problem) => vec![problem],
+    }
+}
+
+/// Filesystem I/O in `sim`, `store` and `praps` goes through `sim::Fs`
+/// (INT-0005): each has its own `clippy.toml` disallowing the `std::fs` types
+/// and every function or method that reaches the real filesystem, and no
+/// source file switches those lints off except `crates/sim/src/real.rs` and
+/// the crates' `tests/` files. Clippy resolves paths, so a brace import or a
+/// `Path::exists` is caught where a text search would miss it.
+fn fs_boundary(root: &Path, members: &[PathBuf]) -> Vec<String> {
+    let mut problems = Vec::new();
+    for dir in members {
+        let crate_dir = relative(root, dir);
+        if !FS_BOUNDARY_CRATES
+            .iter()
+            .any(|name| crate_dir == format!("crates/{name}"))
+        {
+            continue;
+        }
+        let config_path = dir.join("clippy.toml");
+        let config_name = relative(root, &config_path);
+        if !config_path.is_file() {
+            problems.push(format!("{config_name} is missing"));
+        } else {
+            match parse(root, &config_path) {
+                Ok(config) => {
+                    for (key, banned) in [
+                        ("disallowed-types", &FS_TYPES[..]),
+                        ("disallowed-methods", &FS_METHODS[..]),
+                    ] {
+                        let listed = disallowed(&config, key);
+                        for path in banned.iter().filter(|path| !listed.contains(path)) {
+                            problems
+                                .push(format!("{config_name} does not list {path} under {key}"));
+                        }
+                    }
+                }
+                Err(problem) => problems.push(problem),
+            }
+        }
+        let tests = format!("{crate_dir}/tests/");
+        for file in rust_files(dir) {
+            let name = relative(root, &file);
+            if name == FS_REAL_HALF || name.starts_with(&tests) {
+                continue;
+            }
+            for attribute in opt_outs(&read(&file)) {
+                problems.push(format!(
+                    "{name} switches off the filesystem boundary: {attribute}"
+                ));
+            }
+        }
+    }
+    problems
+}
+
+/// Every `.rs` file under `dir`, except build output, in path order.
+fn rust_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|name| name != "target") {
+                    stack.push(path);
+                }
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+/// The attributes in `source` that would switch off a boundary lint: each
+/// `#[...]` or `#![...]` that is an `allow`, `expect` or `cfg_attr` naming one
+/// of `FS_OPT_OUTS`, shown with whitespace removed. Text that only looks like
+/// an attribute (in a comment or a string) counts too: the rule fails closed.
+fn opt_outs(source: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut rest = source;
+    while let Some(hash) = rest.find('#') {
+        rest = &rest[hash + 1..];
+        let body = rest.trim_start();
+        let body = body.strip_prefix('!').unwrap_or(body).trim_start();
+        let Some(body) = body.strip_prefix('[') else {
+            continue;
+        };
+        let mut depth = 1usize;
+        let mut end = body.len();
+        for (i, c) in body.char_indices() {
+            match c {
+                '[' | '(' => depth += 1,
+                ']' | ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let inner: String = body[..end].chars().filter(|c| !c.is_whitespace()).collect();
+        let switches = ["allow(", "expect(", "cfg_attr("]
+            .iter()
+            .any(|prefix| inner.starts_with(prefix));
+        if switches && FS_OPT_OUTS.iter().any(|lint| inner.contains(lint)) {
+            found.push(format!("#[{inner}]"));
+        }
+    }
+    found
+}
+
+/// The paths a Clippy `disallowed-*` key lists, as strings or as tables with
+/// a `path`.
+fn disallowed<'a>(config: &'a DocumentMut, key: &str) -> Vec<&'a str> {
+    match config.get(key) {
         Some(Item::Value(Value::Array(entries))) => entries
             .iter()
             .filter_map(|entry| {
@@ -1311,11 +1495,12 @@ mod tests {
         }
 
         // Clippy reads the first config it finds walking up from a crate,
-        // preferring `.clippy.toml`, so any other config on that path wins.
+        // preferring `.clippy.toml`, so any other config on that path wins,
+        // except a member's own `clippy.toml` that keeps the bans
+        // (`policy_accepts_only_member_configs_with_the_hash_bans`).
         for shadow in [
             ".clippy.toml",
             "crates/clippy.toml",
-            "crates/hash/clippy.toml",
             "crates/hash/.clippy.toml",
         ] {
             let fixture = Fixture::new(&format!("clippy-shadow-{}", shadow.replace('/', "-")));
@@ -1335,6 +1520,136 @@ mod tests {
             fixture.write("clippy.toml", config);
             fixture.passes();
         }
+    }
+
+    #[test]
+    fn policy_accepts_only_member_configs_with_the_hash_bans() {
+        // A member's own clippy.toml replaces the root's for that crate, so it
+        // is accepted only when it keeps both bans.
+        let fixture = Fixture::new("clippy-member-ok");
+        fixture.write("crates/hash/clippy.toml", &fixture.read("clippy.toml"));
+        fixture.passes();
+
+        for (missing, kept) in [("HashSet", "HashMap"), ("HashMap", "HashSet")] {
+            let fixture = Fixture::new(&format!("clippy-member-{missing}"));
+            fixture.write(
+                "crates/hash/clippy.toml",
+                &format!("disallowed-types = [\"std::collections::{kept}\"]\n"),
+            );
+            fixture.fails_exactly(&["clippy"], &["crates/hash/clippy.toml", missing]);
+        }
+
+        // A config beside the crate that is not its own still shadows.
+        let fixture = Fixture::new("clippy-member-hidden");
+        fixture.write("crates/hash/.clippy.toml", &fixture.read("clippy.toml"));
+        fixture.fails_only("clippy", "crates/hash/.clippy.toml");
+    }
+
+    /// A boundary crate's clippy.toml: the hash bans plus every filesystem
+    /// ban, optionally without one of them.
+    fn boundary_config(without: &str) -> String {
+        let types: Vec<String> = super::DISALLOWED
+            .iter()
+            .chain(super::FS_TYPES.iter())
+            .filter(|path| **path != without)
+            .map(|path| format!("  \"{path}\",\n"))
+            .collect();
+        let methods: Vec<String> = super::FS_METHODS
+            .iter()
+            .filter(|path| **path != without)
+            .map(|path| format!("  \"{path}\",\n"))
+            .collect();
+        format!(
+            "disallowed-types = [\n{}]\ndisallowed-methods = [\n{}]\n",
+            types.concat(),
+            methods.concat()
+        )
+    }
+
+    #[test]
+    fn policy_enforces_the_fs_boundary() {
+        /// A fixture with a `store` crate (one of the boundary crates) whose
+        /// config is complete.
+        fn with_store(name: &str) -> Fixture {
+            let fixture = Fixture::new(name);
+            fixture.write("crates/store/Cargo.toml", &member("store", ""));
+            fixture.write("crates/store/src/lib.rs", "#![forbid(unsafe_code)]\n");
+            fixture.write("crates/store/clippy.toml", &boundary_config(""));
+            fixture
+        }
+        with_store("boundary-ok").passes();
+
+        // Crates outside the boundary need no config.
+        Fixture::new("boundary-other").passes();
+
+        let fixture = with_store("boundary-no-config");
+        fs::remove_file(fixture.0.join("crates/store/clippy.toml")).unwrap();
+        fixture.fails_only("fs-boundary", "crates/store/clippy.toml is missing");
+
+        for missing in ["std::fs::File", "std::fs::read", "std::path::Path::exists"] {
+            let fixture = with_store(&format!("boundary-without-{}", missing.replace(':', "")));
+            fixture.write("crates/store/clippy.toml", &boundary_config(missing));
+            fixture.fails_exactly(&["fs-boundary"], &["crates/store/clippy.toml", missing]);
+        }
+
+        // Every way of switching the lints off, outside the real half and
+        // tests/, fails; whitespace and line breaks do not hide one.
+        for (i, attribute) in [
+            "#![allow(clippy::disallowed_methods)]",
+            "#![allow(clippy::style)]",
+            "#![allow(clippy::all)]",
+            "#[expect(clippy::disallowed_types)]",
+            "#[allow(clippy::disallowed_method)]",
+            "#[allow(clippy::disallowed_type)]",
+            "#[cfg_attr(test, allow(clippy::disallowed_methods))]",
+            "#[allow(\n    unused,\n    clippy :: disallowed_methods,\n)]",
+            "# ! [ allow ( clippy::style ) ]",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = with_store(&format!("boundary-opt-out-{i}"));
+            fixture.write(
+                "crates/store/src/io.rs",
+                &format!("{attribute}\nfn probe() {{}}\n"),
+            );
+            fixture.fails_exactly(
+                &["fs-boundary"],
+                &["crates/store/src/io.rs", "switches off"],
+            );
+        }
+
+        // Unrelated attributes pass.
+        let fixture = with_store("boundary-unrelated");
+        fixture.write(
+            "crates/store/src/io.rs",
+            "#![allow(unused)]\n#[derive(Debug)]\nstruct S;\n#[cfg(test)]\nmod t {}\n",
+        );
+        fixture.passes();
+
+        // The real half of sim and any tests/ file may switch them off.
+        let fixture = with_store("boundary-allowed-places");
+        fixture.write("crates/sim/Cargo.toml", &member("sim", ""));
+        fixture.write("crates/sim/clippy.toml", &boundary_config(""));
+        fixture.write(
+            "crates/sim/src/lib.rs",
+            "#![forbid(unsafe_code)]\nmod real;\n",
+        );
+        fixture.write(
+            "crates/sim/src/real.rs",
+            "#![allow(clippy::disallowed_methods, clippy::disallowed_types)]\n",
+        );
+        fixture.write(
+            "crates/store/tests/real.rs",
+            "#![allow(clippy::disallowed_methods)]\n",
+        );
+        fixture.passes();
+        // ... but not another file of sim.
+        fixture.write(
+            "crates/sim/src/simfs.rs",
+            "#![allow(clippy::disallowed_methods)]\n",
+        );
+        fixture.fails_only("fs-boundary", "crates/sim/src/simfs.rs");
     }
 
     #[test]
@@ -1475,7 +1790,7 @@ mod tests {
         fixture.write(".gitattributes", "* text=auto eol=lf\n");
         let report = format!(
             "PASS lints\nPASS unsafe\nPASS toolchain\nPASS lockfile\nPASS publish\nPASS deps\n\
-             PASS credits\nPASS clippy\nPASS names\nPASS spec\n{GOLDEN}"
+             PASS credits\nPASS clippy\nPASS fs-boundary\nPASS names\nPASS spec\n{GOLDEN}"
         );
         assert_eq!(fixture.command(), (1, report, String::new()));
 
@@ -1483,7 +1798,7 @@ mod tests {
         fs::remove_file(fixture.0.join("Cargo.lock")).unwrap();
         let report = format!(
             "PASS lints\nPASS unsafe\nPASS toolchain\nFAIL lockfile: Cargo.lock is missing\n\
-             PASS publish\nPASS deps\nPASS credits\nPASS clippy\nPASS names\nPASS spec\n{GOLDEN}"
+             PASS publish\nPASS deps\nPASS credits\nPASS clippy\nPASS fs-boundary\nPASS names\nPASS spec\n{GOLDEN}"
         );
         assert_eq!(fixture.command(), (1, report, String::new()));
 
@@ -1492,7 +1807,7 @@ mod tests {
         fixture.write(".gitattributes", "* text=auto eol=lf\n*.bin filter=lfs\n");
         let report = format!(
             "PASS lints\nPASS unsafe\nPASS toolchain\nPASS lockfile\nPASS publish\nPASS deps\n\
-             PASS credits\nPASS clippy\nPASS names\nPASS spec\n\
+             PASS credits\nPASS clippy\nPASS fs-boundary\nPASS names\nPASS spec\n\
              FAIL golden: 1 *.bin paths are not binary: the .gitattributes files give \
              crates/codec/tests/golden/v1/probe.bin `filter: lfs`\n{GOLDEN}"
         );
