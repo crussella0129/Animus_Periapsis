@@ -23,6 +23,8 @@ confirmed from a primary source.
 | Structured merge limited to conflicting regions | [Mergiraf](https://codeberg.org/mergiraf/mergiraf), [Spork](https://github.com/ASSERT-KTH/spork) | GPL-3.0; MIT | INT-0012 |
 | Compression against the previous version as a prefix | [zstd](https://github.com/facebook/zstd) | BSD-3-Clause OR GPL-2.0-only | INT-0008 |
 | Deterministic simulation testing with crash injection | [TigerBeetle](https://github.com/tigerbeetle/tigerbeetle), [turmoil](https://github.com/tokio-rs/turmoil), [madsim](https://github.com/madsim-rs/madsim) | Apache-2.0; MIT; Apache-2.0 | INT-0005 |
+| The simulator's fault model: unsynced data lost or torn, unsynced directory entries lost, writes and renames unordered without a sync (`sim`) | Pillai et al., "All File Systems Are Not Created Equal", OSDI 2014 (paper; the ALICE study) | paper | INT-0005, INT-0007 |
+| The seeded generator `sim::Rng` (SplitMix64) | Steele, Lea and Flood, OOPSLA 2014 (paper); Vigna's [`splitmix64.c`](https://prng.di.unimi.it/splitmix64.c) | public domain (reference code); written anew in Rust | INT-0005 |
 | Speculative gated merge queue with an adaptive window; rollup classes; conflict analysis by build target | [Zuul](https://zuul-ci.org/), [bors](https://github.com/rust-lang/bors), Uber SubmitQueue (EuroSys 2019 paper) | Apache-2.0; Apache-2.0; paper | INT-0021 |
 | Kernel replay, independent statement and axiom checks, second kernel | [Lean 4](https://github.com/leanprover/lean4), [comparator](https://github.com/leanprover/comparator), [nanoda](https://github.com/ammkrn/nanoda_lib), [lean4export](https://github.com/leanprover/lean4export) | Apache-2.0 (all four) | INT-0018, INT-0019 |
 | Rust → Lean extraction for proofs about real code | [Aeneas](https://github.com/AeneasVerif/aeneas) | Apache-2.0 | INT-0018 |
@@ -71,5 +73,6 @@ starts with `C allowed:` and gives the reason.
 
 | Data | Source | Licence | Where |
 |---|---|---|---|
+| SplitMix64 reference outputs (seeds 0 and 1234567) | Vigna's [`splitmix64.c`](https://prng.di.unimi.it/splitmix64.c) | public domain | `crates/sim/tests/contract.rs` |
 | BLAKE3 test vectors (35 cases) | [`test_vectors.json`](https://github.com/BLAKE3-team/BLAKE3/blob/master/test_vectors/test_vectors.json) | CC0-1.0 OR Apache-2.0 | `crates/hash/tests/vectors.rs` |
 | Two Sprint Loops intent chapters and their Book marker (commit `216867f`) | [Animus_Sprint_Loops](https://github.com/crussella0129/Animus_Sprint_Loops) `docs/` | MIT (notice kept in `NOTICE.md` beside the fixtures) | `crates/book/tests/fixtures/sprint-loops/` |
