@@ -342,6 +342,7 @@ dependencies = [
  "codec",
  "hash",
  "sim",
+ "store",
 ]
 
 [[package]]

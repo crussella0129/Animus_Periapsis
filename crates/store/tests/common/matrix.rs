@@ -1,0 +1,413 @@
+//! The crash matrix (INT-0005 AC-1 to AC-3; INT-0007 AC-1 to AC-3).
+//!
+//! Each cell runs one scenario against a store on a [`SimFs`] with one seed,
+//! one directory mode and one crash point, recovers the filesystem a restart
+//! would see, and checks the invariants on that recovered state directly,
+//! whether or not the store opens on it. A missing `objects/` or `ops/` counts
+//! as empty. "Present" means a file whose content hashes to its name and
+//! decodes, as `fsck` judges a file.
+
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io;
+use std::path::Path;
+use std::rc::Rc;
+
+use codec::{Operation, blob, decode_envelope, object_id};
+use hash::{HashAlg, HashRef};
+use sim::{Mode, Node, Rng, SimFs};
+use store::names::{TMP_PREFIX, parse_name};
+use store::{Store, Variant, heads_of};
+
+/// Seeds per scenario and mode (INT-0005 AC-2: at least 40).
+pub const SEEDS: u64 = 40;
+pub const MODES: [Mode; 2] = [Mode::Lenient, Mode::Strict];
+pub const ROOT: &str = "repo";
+const ALG: HashAlg = HashAlg::DEFAULT;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Scenario {
+    /// `init` alone.
+    Init,
+    /// `init`, then a chain of five ops, each with a new object.
+    Chain,
+    /// `init`, a root op, two children, and a merge of both.
+    ForkMerge,
+    /// `init`, writer A commits a root op naming object Y, then puts object
+    /// X and commits a child op naming it. Writer B runs at a seed-chosen
+    /// syscall inside A's put of X: it puts X too, writing nothing else to
+    /// `objects/`, and commits its own op naming X and Y. When B runs after A
+    /// renamed X but before A synced `objects/`, only B's re-sync of the
+    /// present X makes B's acknowledged op safe (INT-0007 Consequences).
+    TwoWriters,
+}
+
+impl Scenario {
+    pub const ALL: [Scenario; 4] = [
+        Scenario::Init,
+        Scenario::Chain,
+        Scenario::ForkMerge,
+        Scenario::TwoWriters,
+    ];
+}
+
+/// What a run attempted and what the store acknowledged.
+#[derive(Clone, Debug, Default)]
+pub struct Log {
+    pub init_acked: bool,
+    /// Every op a commit was attempted for, in order.
+    pub attempted: Vec<HashRef>,
+    /// Every op whose commit returned, in order.
+    pub acked: Vec<HashRef>,
+    /// The intended single-writer chain, for the prefix check.
+    pub chain: Vec<HashRef>,
+}
+
+/// Invariant violations in one recovered state, by kind.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Violations {
+    /// After an acknowledged init the store does not open, or after an
+    /// unacknowledged one it holds ops, or `init` fails on the recovered state.
+    pub layout: u64,
+    /// A present op names a parent op or an object that is not present.
+    pub closure: u64,
+    /// An acknowledged op is not present.
+    pub durability: u64,
+    /// A present op was never attempted, or the heads the store reports differ
+    /// from the heads of the present ops.
+    pub heads: u64,
+    /// The present ops of the chain are not a prefix of the intended chain.
+    pub atomicity: u64,
+    /// A file other than objects, ops and temporary files exists.
+    pub stray: u64,
+}
+
+impl Violations {
+    /// Violations of what a crash may never do to acknowledged state: the
+    /// kinds the negative controls must produce.
+    pub fn semantic(&self) -> u64 {
+        self.closure + self.durability + self.heads + self.atomicity
+    }
+
+    pub fn total(&self) -> u64 {
+        self.semantic() + self.layout + self.stray
+    }
+
+    pub fn add(&mut self, other: &Violations) {
+        self.layout += other.layout;
+        self.closure += other.closure;
+        self.durability += other.durability;
+        self.heads += other.heads;
+        self.atomicity += other.atomicity;
+        self.stray += other.stray;
+    }
+}
+
+/// One cell's outcome.
+#[derive(Clone, Debug)]
+pub struct Outcome {
+    pub violations: Violations,
+    /// A hash of the recovered state.
+    pub state: HashRef,
+    /// A hash of the syscall trace.
+    pub trace: HashRef,
+}
+
+fn id_of(op: &Operation) -> HashRef {
+    object_id(ALG, &op.to_envelope())
+}
+
+fn op(parents: &[HashRef], objects: &[HashRef]) -> Operation {
+    Operation {
+        parents: parents.iter().copied().collect(),
+        objects: objects.iter().copied().collect(),
+    }
+}
+
+fn commit(store: &mut Store<Rc<SimFs>>, op: &Operation, log: &RefCell<Log>) -> io::Result<()> {
+    let id = id_of(op);
+    log.borrow_mut().attempted.push(id);
+    store.commit_op(op)?;
+    log.borrow_mut().acked.push(id);
+    Ok(())
+}
+
+/// Runs a scenario until it ends or the first error (the crash).
+fn run(
+    fs: &Rc<SimFs>,
+    scenario: Scenario,
+    variant: Variant,
+    seed: u64,
+    log: &Rc<RefCell<Log>>,
+) -> io::Result<()> {
+    let root = Path::new(ROOT);
+    let mut a = Store::init_variant(Rc::clone(fs), root, ALG, seed, variant)?;
+    log.borrow_mut().init_acked = true;
+    match scenario {
+        Scenario::Init => Ok(()),
+        Scenario::Chain => {
+            let mut parents = Vec::new();
+            let mut ops = Vec::new();
+            for i in 0..5 {
+                let object = object_id(ALG, &blob(format!("object {i}").as_bytes()));
+                let next = op(&parents, &[object]);
+                parents = vec![id_of(&next)];
+                ops.push((i, next));
+            }
+            log.borrow_mut().chain = ops.iter().map(|(_, op)| id_of(op)).collect();
+            for (i, next) in ops {
+                a.put_object(&blob(format!("object {i}").as_bytes()))?;
+                commit(&mut a, &next, log)?;
+            }
+            Ok(())
+        }
+        Scenario::ForkMerge => {
+            let x = a.put_object(&blob(b"left"))?;
+            let y = a.put_object(&blob(b"right"))?;
+            let base = op(&[], &[]);
+            commit(&mut a, &base, log)?;
+            let left = op(&[id_of(&base)], &[x]);
+            commit(&mut a, &left, log)?;
+            let right = op(&[id_of(&base)], &[y]);
+            commit(&mut a, &right, log)?;
+            commit(&mut a, &op(&[id_of(&left), id_of(&right)], &[x, y]), log)
+        }
+        Scenario::TwoWriters => {
+            let y = a.put_object(&blob(b"Y"))?;
+            let base = op(&[], &[y]);
+            commit(&mut a, &base, log)?;
+            // A's put of X takes six syscalls (read, create_new, write,
+            // sync_file, rename, sync_dir) and its commit begins with two
+            // reads; B runs before one of those eight, chosen by the seed.
+            let trigger = fs.syscalls() + 1 + Rng::new(seed ^ 0x5eed).below(8);
+            let (hook_fs, hook_log) = (Rc::clone(fs), Rc::clone(log));
+            let mut fired = false;
+            fs.set_hook(Some(Box::new(move |next| {
+                if fired || next != trigger {
+                    return;
+                }
+                fired = true;
+                let _ = (|| -> io::Result<()> {
+                    let mut b = Store::open_variant(
+                        Rc::clone(&hook_fs),
+                        Path::new(ROOT),
+                        ALG,
+                        seed.wrapping_add(1_000),
+                        variant,
+                    )?;
+                    let x = b.put_object(&blob(b"X"))?;
+                    let y = object_id(ALG, &blob(b"Y"));
+                    commit(&mut b, &op(&[], &[x, y]), &hook_log)
+                })();
+            })));
+            let result = (|| -> io::Result<()> {
+                let x = a.put_object(&blob(b"X"))?;
+                commit(&mut a, &op(&[id_of(&base)], &[x]), log)
+            })();
+            fs.set_hook(None);
+            result
+        }
+    }
+}
+
+/// The syscalls a run makes when nothing crashes.
+pub fn syscalls(variant: Variant, scenario: Scenario, mode: Mode, seed: u64) -> u64 {
+    let fs = Rc::new(SimFs::new(seed, mode));
+    let log = Rc::new(RefCell::new(Log::default()));
+    run(&fs, scenario, variant, seed, &log).expect("an uncrashed run succeeds");
+    fs.syscalls()
+}
+
+/// Runs one cell: the scenario with a crash at `crash_at`, then recovery and
+/// the checks. Returns the outcome and the recovered filesystem.
+pub fn run_cell(
+    variant: Variant,
+    scenario: Scenario,
+    mode: Mode,
+    seed: u64,
+    crash_at: u64,
+) -> (Outcome, SimFs) {
+    let fs = Rc::new(SimFs::new(seed, mode));
+    fs.set_crash_at(Some(crash_at));
+    let log = Rc::new(RefCell::new(Log::default()));
+    let _ = run(&fs, scenario, variant, seed, &log);
+    let trace = fs.trace().join("\n");
+    let recovered = fs.recover();
+    let log = log.borrow().clone();
+    let violations = check(&recovered, &log, scenario, variant, seed);
+    let outcome = Outcome {
+        violations,
+        state: digest(&recovered),
+        trace: HashAlg::Blake3.hash(trace.as_bytes()),
+    };
+    (outcome, recovered)
+}
+
+/// A hash of everything visible in a filesystem.
+pub fn digest(fs: &SimFs) -> HashRef {
+    let mut bytes = Vec::new();
+    for (path, node) in fs.snapshot() {
+        bytes.extend_from_slice(path.as_bytes());
+        bytes.push(0);
+        match node {
+            Node::Dir => bytes.push(b'd'),
+            Node::File(content) => {
+                bytes.push(b'f');
+                bytes.extend_from_slice(&(content.len() as u64).to_le_bytes());
+                bytes.extend_from_slice(&content);
+            }
+        }
+    }
+    HashAlg::Blake3.hash(&bytes)
+}
+
+/// The present objects and ops under the store root, read from the raw state.
+fn present(snapshot: &BTreeMap<String, Node>) -> (BTreeSet<HashRef>, BTreeMap<HashRef, Operation>) {
+    let mut objects = BTreeSet::new();
+    let mut ops = BTreeMap::new();
+    for (path, node) in snapshot {
+        let Node::File(content) = node else {
+            continue;
+        };
+        let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
+        let Some(id) = parse_name(name) else {
+            continue;
+        };
+        if object_id(id.alg(), content) != id {
+            continue;
+        }
+        if dir == format!("{ROOT}/objects") && decode_envelope(content).is_ok() {
+            objects.insert(id);
+        } else if dir == format!("{ROOT}/ops")
+            && let Ok(op) = Operation::from_envelope(content)
+        {
+            ops.insert(id, op);
+        }
+    }
+    (objects, ops)
+}
+
+fn check(
+    recovered: &SimFs,
+    log: &Log,
+    scenario: Scenario,
+    variant: Variant,
+    seed: u64,
+) -> Violations {
+    let mut v = Violations::default();
+    let snapshot = recovered.snapshot();
+    let (objects, ops) = present(&snapshot);
+    let root = Path::new(ROOT);
+
+    // Closure.
+    for op in ops.values() {
+        v.closure += op.parents.iter().filter(|p| !ops.contains_key(p)).count() as u64;
+        v.closure += op.objects.iter().filter(|o| !objects.contains(o)).count() as u64;
+    }
+    // Durability.
+    v.durability += log.acked.iter().filter(|id| !ops.contains_key(id)).count() as u64;
+    // Heads: only attempted ops, and the heads the store reports.
+    let attempted: BTreeSet<&HashRef> = log.attempted.iter().collect();
+    v.heads += ops.keys().filter(|id| !attempted.contains(id)).count() as u64;
+    match Store::open_variant(recovered, root, ALG, seed, variant) {
+        Ok(store) => {
+            if log.init_acked || !ops.is_empty() {
+                match store.heads() {
+                    Ok(heads) if heads == heads_of(&ops) => {}
+                    _ => v.heads += 1,
+                }
+            }
+            if !log.init_acked && !ops.is_empty() {
+                v.layout += 1;
+            }
+        }
+        Err(error) => {
+            if log.init_acked || error.kind() != io::ErrorKind::NotFound {
+                v.layout += 1;
+            }
+        }
+    }
+    // Atomicity: the present part of the chain is a prefix of it.
+    if scenario == Scenario::Chain {
+        let kept: Vec<bool> = log.chain.iter().map(|id| ops.contains_key(id)).collect();
+        let prefix = kept.iter().take_while(|kept| **kept).count();
+        if kept[prefix..].iter().any(|kept| *kept) {
+            v.atomicity += 1;
+        }
+    }
+    // Stray files.
+    for path in snapshot.keys() {
+        let Some(rest) = path.strip_prefix(&format!("{ROOT}/")) else {
+            continue;
+        };
+        let ok = match rest.split_once('/') {
+            None => rest == "objects" || rest == "ops",
+            Some((dir, name)) => {
+                (dir == "objects" || dir == "ops")
+                    && (parse_name(name).is_some() || name.starts_with(TMP_PREFIX))
+            }
+        };
+        if !ok {
+            v.stray += 1;
+        }
+    }
+    // Init always completes the recovered state.
+    if Store::init(recovered, root, ALG, seed).is_err() {
+        v.layout += 1;
+    }
+    v
+}
+
+/// Per mode: cells run and violations found.
+#[derive(Clone, Debug, Default)]
+pub struct Summary {
+    pub cells: BTreeMap<Mode, u64>,
+    pub violations: BTreeMap<Mode, Violations>,
+}
+
+impl Summary {
+    pub fn print(&self, variant: Variant) {
+        for (mode, cells) in &self.cells {
+            let v = self.violations[mode];
+            println!(
+                "matrix {:<16} {mode:?}: {cells} cells; violations: closure {} durability {} \
+                 heads {} atomicity {} layout {} stray {}",
+                variant.name(),
+                v.closure,
+                v.durability,
+                v.heads,
+                v.atomicity,
+                v.layout,
+                v.stray
+            );
+        }
+    }
+}
+
+/// Runs every cell for `variant`: each scenario, mode and seed, with a crash
+/// at every syscall of the uncrashed run and once after its last syscall.
+/// `visit` sees each cell's outcome and recovered filesystem.
+pub fn run_matrix(
+    variant: Variant,
+    mut visit: impl FnMut(Scenario, Mode, u64, u64, &Outcome, &SimFs),
+) -> Summary {
+    let mut summary = Summary::default();
+    for scenario in Scenario::ALL {
+        for mode in MODES {
+            for seed in 0..SEEDS {
+                let n = syscalls(variant, scenario, mode, seed);
+                for crash_at in 1..=n + 1 {
+                    let (outcome, recovered) = run_cell(variant, scenario, mode, seed, crash_at);
+                    *summary.cells.entry(mode).or_default() += 1;
+                    summary
+                        .violations
+                        .entry(mode)
+                        .or_default()
+                        .add(&outcome.violations);
+                    visit(scenario, mode, seed, crash_at, &outcome, &recovered);
+                }
+            }
+        }
+    }
+    summary
+}

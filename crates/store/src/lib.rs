@@ -16,22 +16,28 @@
 
 mod fsck;
 pub mod names;
+#[cfg(feature = "variants")]
+mod variant;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 
-use codec::{Operation, decode_envelope, object_id};
+use codec::{Operation, decode_envelope, from_slice, object_id, to_vec};
 use hash::{HashAlg, HashRef};
 use sim::{Fs, Rng};
 
 pub use fsck::{Problem, ProblemKind, Report};
 use names::{TMP_PREFIX, file_name, parse_name};
+#[cfg(feature = "variants")]
+pub use variant::Variant;
 
 /// The directory of object files.
 pub const OBJECTS: &str = "objects";
 /// The directory of op files.
 pub const OPS: &str = "ops";
+/// The pointer file only the pointer-file negative control writes.
+const POINTER: &str = "HEAD";
 
 /// A store on a filesystem `F`.
 pub struct Store<F: Fs> {
@@ -41,6 +47,8 @@ pub struct Store<F: Fs> {
     ops: PathBuf,
     alg: HashAlg,
     rng: Rng,
+    #[cfg(feature = "variants")]
+    variant: Variant,
 }
 
 /// The error for a directory that is not a store.
@@ -63,7 +71,62 @@ impl<F: Fs> Store<F> {
             ops: root.join(OPS),
             alg,
             rng: Rng::new(seed),
+            #[cfg(feature = "variants")]
+            variant: Variant::Correct,
         }
+    }
+
+    #[cfg(feature = "variants")]
+    fn pointer_file(&self) -> bool {
+        self.variant == Variant::PointerFile
+    }
+    #[cfg(not(feature = "variants"))]
+    fn pointer_file(&self) -> bool {
+        false
+    }
+    #[cfg(feature = "variants")]
+    fn syncs_object_data(&self) -> bool {
+        self.variant != Variant::UnsyncedObjects
+    }
+    #[cfg(not(feature = "variants"))]
+    fn syncs_object_data(&self) -> bool {
+        true
+    }
+    #[cfg(feature = "variants")]
+    fn syncs_at_init(&self) -> bool {
+        self.variant != Variant::UnsyncedInit
+    }
+    #[cfg(not(feature = "variants"))]
+    fn syncs_at_init(&self) -> bool {
+        true
+    }
+
+    /// [`Store::init`] with a negative-control variant.
+    #[cfg(feature = "variants")]
+    pub fn init_variant(
+        fs: F,
+        root: &Path,
+        alg: HashAlg,
+        seed: u64,
+        variant: Variant,
+    ) -> io::Result<Self> {
+        let mut store = Store::new(fs, root, alg, seed);
+        store.variant = variant;
+        store.finish_init()
+    }
+
+    /// [`Store::open`] with a negative-control variant.
+    #[cfg(feature = "variants")]
+    pub fn open_variant(
+        fs: F,
+        root: &Path,
+        alg: HashAlg,
+        seed: u64,
+        variant: Variant,
+    ) -> io::Result<Self> {
+        let mut store = Store::open(fs, root, alg, seed)?;
+        store.variant = variant;
+        Ok(store)
     }
 
     /// Makes `root` a store: creates whichever of the root, `objects/` and
@@ -72,19 +135,34 @@ impl<F: Fs> Store<F> {
     /// nothing, so `init` is idempotent and completes an interrupted init.
     /// New objects are hashed with `alg`; `seed` drives temporary-file names.
     pub fn init(fs: F, root: &Path, alg: HashAlg, seed: u64) -> io::Result<Self> {
-        let store = Store::new(fs, root, alg, seed);
-        for dir in [&store.root, &store.objects, &store.ops] {
-            if !store.dir_exists(dir)? {
-                store.fs.create_dir(dir)?;
+        Store::new(fs, root, alg, seed).finish_init()
+    }
+
+    fn finish_init(self) -> io::Result<Self> {
+        for dir in [&self.root, &self.objects, &self.ops] {
+            if !self.dir_exists(dir)? {
+                self.fs.create_dir(dir)?;
             }
         }
-        store.fs.sync_dir(&store.objects)?;
-        store.fs.sync_dir(&store.ops)?;
-        store.fs.sync_dir(&store.root)?;
-        if let Some(parent) = root.parent() {
-            store.fs.sync_dir(parent)?;
+        if self.pointer_file() {
+            let pointer = self.root.join(POINTER);
+            match self.fs.create_new(&pointer) {
+                Ok(()) => self
+                    .fs
+                    .overwrite(&pointer, &to_vec(&BTreeSet::<HashRef>::new()))?,
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error),
+            }
         }
-        Ok(store)
+        if self.syncs_at_init() {
+            self.fs.sync_dir(&self.objects)?;
+            self.fs.sync_dir(&self.ops)?;
+            self.fs.sync_dir(&self.root)?;
+            if let Some(parent) = self.root.parent() {
+                self.fs.sync_dir(parent)?;
+            }
+        }
+        Ok(self)
     }
 
     /// Opens an existing store; a directory without `objects/` and `ops/` is
@@ -154,8 +232,10 @@ impl<F: Fs> Store<F> {
                 ));
             }
         }
-        for object in &op.objects {
-            self.fs.sync_file(&self.objects.join(file_name(object)))?;
+        if self.syncs_object_data() {
+            for object in &op.objects {
+                self.fs.sync_file(&self.objects.join(file_name(object)))?;
+            }
         }
         if !op.objects.is_empty() {
             self.fs.sync_dir(&self.objects)?;
@@ -170,6 +250,15 @@ impl<F: Fs> Store<F> {
         let id = object_id(self.alg, &envelope);
         let dir = self.ops.clone();
         self.write_file(&dir, &file_name(&id), &envelope)?;
+        if self.pointer_file() {
+            let mut heads = self.heads()?;
+            for parent in &op.parents {
+                heads.remove(parent);
+            }
+            heads.insert(id);
+            self.fs
+                .overwrite(&self.root.join(POINTER), &to_vec(&heads))?;
+        }
         Ok(id)
     }
 
@@ -198,9 +287,12 @@ impl<F: Fs> Store<F> {
     /// a crash damaged) is replaced through the same temporary-file path.
     fn write_file(&mut self, dir: &Path, name: &str, bytes: &[u8]) -> io::Result<()> {
         let path = dir.join(name);
+        let sync_data = dir != self.objects || self.syncs_object_data();
         match self.fs.read(&path) {
             Ok(existing) if existing == bytes => {
-                self.fs.sync_file(&path)?;
+                if sync_data {
+                    self.fs.sync_file(&path)?;
+                }
                 return self.fs.sync_dir(dir);
             }
             Ok(_) => {}
@@ -216,7 +308,9 @@ impl<F: Fs> Store<F> {
             }
         };
         self.fs.write(&tmp, bytes)?;
-        self.fs.sync_file(&tmp)?;
+        if sync_data {
+            self.fs.sync_file(&tmp)?;
+        }
         self.fs.rename(&tmp, &path)?;
         self.fs.sync_dir(dir)
     }
@@ -243,6 +337,11 @@ impl<F: Fs> Store<F> {
     /// The op heads, derived from the op files: every valid op that no other
     /// valid op names as a parent.
     pub fn heads(&self) -> io::Result<BTreeSet<HashRef>> {
+        if self.pointer_file() {
+            let bytes = self.fs.read(&self.root.join(POINTER))?;
+            return from_slice(&bytes)
+                .map_err(|error| io::Error::new(ErrorKind::InvalidData, error));
+        }
         Ok(heads_of(&self.ops()?))
     }
 

@@ -4,6 +4,7 @@ use std::error::Error;
 use std::fmt;
 use std::io;
 use std::path::Path;
+use std::rc::Rc;
 
 /// The filesystem operations storage code may use. Each method is one
 /// syscall-sized step: [`crate::SimFs`] counts one syscall per call and can
@@ -35,6 +36,41 @@ pub trait Fs {
 }
 
 impl<T: Fs + ?Sized> Fs for &T {
+    fn create_dir(&self, path: &Path) -> io::Result<()> {
+        (**self).create_dir(path)
+    }
+    fn create_new(&self, path: &Path) -> io::Result<()> {
+        (**self).create_new(path)
+    }
+    fn write(&self, path: &Path, data: &[u8]) -> io::Result<()> {
+        (**self).write(path, data)
+    }
+    fn overwrite(&self, path: &Path, data: &[u8]) -> io::Result<()> {
+        (**self).overwrite(path, data)
+    }
+    fn sync_file(&self, path: &Path) -> io::Result<()> {
+        (**self).sync_file(path)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        (**self).rename(from, to)
+    }
+    fn sync_dir(&self, path: &Path) -> io::Result<()> {
+        (**self).sync_dir(path)
+    }
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        (**self).read(path)
+    }
+    fn list(&self, path: &Path) -> io::Result<Vec<String>> {
+        (**self).list(path)
+    }
+    fn remove_file(&self, path: &Path) -> io::Result<()> {
+        (**self).remove_file(path)
+    }
+}
+
+/// Shared ownership, so several stores (and a [`crate::SimFs`] hook) can use
+/// one filesystem.
+impl<T: Fs + ?Sized> Fs for Rc<T> {
     fn create_dir(&self, path: &Path) -> io::Result<()> {
         (**self).create_dir(path)
     }

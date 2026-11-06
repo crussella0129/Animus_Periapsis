@@ -40,6 +40,9 @@ pub const RULES: [(&str, Rule); 12] = [
 
 const FORBID_UNSAFE: &str = "#![forbid(unsafe_code)]";
 const DISALLOWED: [&str; 2] = ["std::collections::HashMap", "std::collections::HashSet"];
+/// The crate and feature that only dev-dependencies may enable: the store's
+/// negative-control variants (INT-0005 AC-3).
+const TEST_ONLY_FEATURE: (&str, &str) = ("store", "variants");
 /// The crates whose filesystem I/O must go through `sim::Fs` (INT-0005), by
 /// directory under `crates/`.
 const FS_BOUNDARY_CRATES: [&str; 3] = ["sim", "store", "praps"];
@@ -273,9 +276,24 @@ fn publish(root: &Path, members: &[PathBuf]) -> Vec<String> {
 
 /// Every dependency of a member crate, in every dependency table including
 /// the target-specific ones, is inherited from the workspace table, which is
-/// the one place licences and credits are checked.
+/// the one place licences and credits are checked. The store's `variants`
+/// feature (the crash matrix's broken negative controls) is enabled only by
+/// `[dev-dependencies]`, so no production build can select a broken store.
 fn deps(root: &Path, members: &[PathBuf]) -> Vec<String> {
-    each_manifest(root, members, |dir, manifest| {
+    let mut problems = match parse(root, &root.join("Cargo.toml")) {
+        Ok(workspace) => lookup(workspace.as_item(), &["workspace", "dependencies", "store"])
+            .filter(|entry| strings(entry, &["features"]).contains(&TEST_ONLY_FEATURE.1))
+            .map(|_| {
+                format!(
+                    "[workspace.dependencies] enables `{}` of `{}` for every member",
+                    TEST_ONLY_FEATURE.1, TEST_ONLY_FEATURE.0
+                )
+            })
+            .into_iter()
+            .collect(),
+        Err(problem) => vec![problem],
+    };
+    problems.extend(each_manifest(root, members, |dir, manifest| {
         let mut problems = Vec::new();
         for (table, entries) in dependency_tables(manifest) {
             for (name, entry) in entries.iter() {
@@ -284,10 +302,21 @@ fn deps(root: &Path, members: &[PathBuf]) -> Vec<String> {
                         "{dir} declares `{name}` directly in [{table}]; use `{name}.workspace = true`"
                     ));
                 }
+                let dev = table.ends_with("dev-dependencies") || table.ends_with("dev_dependencies");
+                if name == TEST_ONLY_FEATURE.0
+                    && !dev
+                    && strings(entry, &["features"]).contains(&TEST_ONLY_FEATURE.1)
+                {
+                    problems.push(format!(
+                        "{dir} enables `{}` of `{name}` in [{table}]; only [dev-dependencies] may",
+                        TEST_ONLY_FEATURE.1
+                    ));
+                }
             }
         }
         problems
-    })
+    }));
+    problems
 }
 
 /// Every third-party workspace dependency has a complete row in the
@@ -1653,6 +1682,73 @@ mod tests {
     }
 
     #[test]
+    fn policy_rejects_variants_outside_dev_dependencies() {
+        let store = "crates/store/Cargo.toml";
+        let with_store = |name: &str, manifest: &str| {
+            let fixture = Fixture::new(name);
+            fixture.write(
+                "Cargo.toml",
+                &replace(
+                    WORKSPACE,
+                    "hash = { path = \"crates/hash\" }\n",
+                    "hash = { path = \"crates/hash\" }\nstore = { path = \"crates/store\" }\n",
+                ),
+            );
+            fixture.write(store, manifest);
+            fixture.write("crates/store/src/lib.rs", "#![forbid(unsafe_code)]\n");
+            fixture.write("crates/store/clippy.toml", &boundary_config(""));
+            fixture
+        };
+        let manifest = |extra: &str| {
+            format!(
+                "[package]\nname = \"store\"\npublish.workspace = true\n\n\
+                 [features]\nvariants = []\n\n{extra}\n[lints]\nworkspace = true\n"
+            )
+        };
+
+        // As a dev-dependency (of itself, as the store does), it is allowed.
+        with_store(
+            "variants-dev",
+            &manifest(
+                "[dev-dependencies]\nstore = { workspace = true, features = [\"variants\"] }\n",
+            ),
+        )
+        .passes();
+
+        for (i, table) in [
+            "[dependencies]",
+            "[build-dependencies]",
+            "[target.'cfg(unix)'.dependencies]",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = with_store(
+                &format!("variants-{i}"),
+                &manifest(&format!(
+                    "{table}\nstore = {{ workspace = true, features = [\"variants\"] }}\n"
+                )),
+            );
+            fixture.fails_exactly(
+                &["deps"],
+                &["`variants` of `store`", table.trim_matches(['[', ']'])],
+            );
+        }
+
+        // Enabled in the workspace table, it would reach every member.
+        let fixture = with_store("variants-workspace", &manifest(""));
+        fixture.write(
+            "Cargo.toml",
+            &replace(
+                &fixture.read("Cargo.toml"),
+                "store = { path = \"crates/store\" }",
+                "store = { path = \"crates/store\", features = [\"variants\"] }",
+            ),
+        );
+        fixture.fails_only("deps", "[workspace.dependencies] enables `variants`");
+    }
+
+    #[test]
     fn policy_requires_single_word_names() {
         // ASCII lowercase letters and digits only, from the first letter on.
         for (i, name) in ["peri-hash", "Hash", "hash_ref", "9hash", "hashRef", "café"]
@@ -2275,8 +2371,9 @@ mod tests {
             "Cargo.toml",
             &format!("{WORKSPACE}unsafe_code = \"forbid\"\n"),
         );
+        // `deps` reads the root too, for the workspace's `store` entry.
         fixture.fails_exactly(
-            &["lints", "publish", "credits"],
+            &["lints", "publish", "deps", "credits"],
             &["Cargo.toml", "not valid TOML"],
         );
 

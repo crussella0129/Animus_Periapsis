@@ -13,5 +13,15 @@ codec.workspace = true
 hash.workspace = true
 sim.workspace = true
 
+[features]
+# The crash matrix's negative controls (`Variant`). Only `[dev-dependencies]`
+# may enable it (`cargo policy`, rule `deps`).
+variants = []
+
+[dev-dependencies]
+# The crate itself with its test-only variants, so `cargo test --workspace`
+# (as `cargo ci` runs it, without `--features`) builds the crash matrix.
+store = { workspace = true, features = ["variants"] }
+
 [lints]
 workspace = true
