@@ -9,8 +9,10 @@ tables below and that every golden file matches its worked example, and
 
 **Status:** draft. Sprint 0 specifies the primitives, `hashref`, the envelope
 header and the blob body. Those encodings freeze when the owner signs off this
-document (INT-0006 AC-6). Object kinds marked *reserved* have no body format
-yet. Format v1 as a whole freezes at the Phase 1 exit gate, once every kind and
+document (INT-0006 AC-6). Sprint 1 specifies the `operation` body as
+*provisional*: it is excluded from that sign-off and may still change (see
+[Change control](#change-control)). Object kinds marked *reserved* have no
+body format yet. Format v1 as a whole freezes at the Phase 1 exit gate, once every kind and
 the storage representation are specified. See [Change control](#change-control).
 
 ## Conventions
@@ -88,7 +90,7 @@ A format version other than `01` is rejected.
 |---|---|---|
 | `0x01` | `blob` | defined |
 | `0x02` | `changeset` | reserved |
-| `0x03` | `operation` | reserved |
+| `0x03` | `operation` | defined |
 | `0x04` | `view` | reserved |
 | `0x05` | `event` | reserved |
 
@@ -98,6 +100,19 @@ until their bodies are specified here.
 
 - **blob** — the body is the file's raw content, with no length prefix: the
   envelope ends where the content ends.
+- **operation** — *provisional* (see [Change control](#change-control)): the
+  body is
+
+  ```text
+  parents: set<hashref> ‖ objects: set<hashref>
+  ```
+
+  `parents` are the ids of the operations this one follows; a root operation
+  has none. `objects` are the ids of the objects this operation makes
+  reachable; they stand in for the view hash until the `view` kind is
+  specified ([INT-0006](../intents/INT-0006-format-v1.md)). Both are sets, so
+  their elements are strictly increasing in `hashref` order and duplicates are
+  rejected. An operation's id is its envelope's id, like any object's.
 
 ### Object identity
 
@@ -138,6 +153,8 @@ table, so the encoder is tested against the spec rather than against itself.
 | `map-nested` | `map<string, map<uvarint, option<bytes>>>` "intent" → (1 → absent, 2 → 78) | `01 06 69 6e 74 65 6e 74 02 01 00 02 01 01 78` |
 | `pair` | `pair<string, bool>` ("key", true) | `03 6b 65 79 01` |
 | `blob-envelope` | blob envelope of "Periapsis" and a newline | `01 01 50 65 72 69 61 70 73 69 73 0a` |
+| `operation-root` | operation envelope: no parents; objects {BLAKE3 of empty input} | `01 03 00 01 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262` |
+| `operation-merge` | operation envelope: parents {BLAKE3 of empty input, SHA-256 of "abc"}; objects {SHA-256 of "abc", SHA-256 of empty input} | `01 03 02 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262 02 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad 02 02 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad 02 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
 
 ## Signatures (reserved)
 
@@ -178,5 +195,11 @@ reserved for Ed25519.
 - Specifying a reserved kind's body, adding a kind or adding a hash algorithm
   adds rows and worked examples here, and lands before the code that
   implements it. It never changes an existing encoding.
+- A kind marked *provisional* is specified, implemented and pinned by golden
+  files like any other, but it is excluded from the owner's sign-off and from
+  freezing until the Phase 1 exit gate. Until then its body, worked examples,
+  golden files and encoder may change together in one commit, and stores
+  written with it are development stores. Before it freezes it must carry the
+  fields INT-0006 names for it. `operation` is provisional.
 - Golden files are marked `binary` in `.gitattributes`, so every platform
   checks out the same bytes.
