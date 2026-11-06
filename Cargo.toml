@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-only"
+repository = "https://github.com/crussella0129/Animus_Periapsis"
+publish = false
+
+# Every dependency of a member crate is declared here and inherited with
+# `<name>.workspace = true`, so licences and credits are checked in one place
+# (`cargo policy`, rules `deps` and `credits`).
+[workspace.dependencies]
+blake3 = { version = "1.8.7", default-features = false, features = ["std", "pure"] }
+sha2 = { version = "0.11.1", default-features = false }
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
+pulldown-cmark = { version = "0.13.6", default-features = false }
+toml_edit = { version = "0.25.17", default-features = false, features = ["parse"] }
+allocation-counter = "0.8.1"
+hash = { path = "crates/hash" }
+book = { path = "crates/book" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

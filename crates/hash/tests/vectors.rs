@@ -1,0 +1,504 @@
+//! Known-answer and property tests for algorithm-tagged hashes (INT-0006 AC-2, AC-4).
+
+use std::cmp::Ordering;
+
+use hash::{HashAlg, HashError, HashRef};
+use proptest::prelude::*;
+
+/// (input length, first 32 bytes of `hash`) for every case in the official
+/// BLAKE3 `test_vectors/test_vectors.json` (BLAKE3-team/BLAKE3,
+/// CC0-1.0 OR Apache-2.0). Input byte `i` is `i % 251`.
+const BLAKE3_VECTORS: [(usize, &str); 35] = [
+    (
+        0,
+        "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+    ),
+    (
+        1,
+        "2d3adedff11b61f14c886e35afa036736dcd87a74d27b5c1510225d0f592e213",
+    ),
+    (
+        2,
+        "7b7015bb92cf0b318037702a6cdd81dee41224f734684c2c122cd6359cb1ee63",
+    ),
+    (
+        3,
+        "e1be4d7a8ab5560aa4199eea339849ba8e293d55ca0a81006726d184519e647f",
+    ),
+    (
+        4,
+        "f30f5ab28fe047904037f77b6da4fea1e27241c5d132638d8bedce9d40494f32",
+    ),
+    (
+        5,
+        "b40b44dfd97e7a84a996a91af8b85188c66c126940ba7aad2e7ae6b385402aa2",
+    ),
+    (
+        6,
+        "06c4e8ffb6872fad96f9aaca5eee1553eb62aed0ad7198cef42e87f6a616c844",
+    ),
+    (
+        7,
+        "3f8770f387faad08faa9d8414e9f449ac68e6ff0417f673f602a646a891419fe",
+    ),
+    (
+        8,
+        "2351207d04fc16ade43ccab08600939c7c1fa70a5c0aaca76063d04c3228eaeb",
+    ),
+    (
+        63,
+        "e9bc37a594daad83be9470df7f7b3798297c3d834ce80ba85d6e207627b7db7b",
+    ),
+    (
+        64,
+        "4eed7141ea4a5cd4b788606bd23f46e212af9cacebacdc7d1f4c6dc7f2511b98",
+    ),
+    (
+        65,
+        "de1e5fa0be70df6d2be8fffd0e99ceaa8eb6e8c93a63f2d8d1c30ecb6b263dee",
+    ),
+    (
+        127,
+        "d81293fda863f008c09e92fc382a81f5a0b4a1251cba1634016a0f86a6bd640d",
+    ),
+    (
+        128,
+        "f17e570564b26578c33bb7f44643f539624b05df1a76c81f30acd548c44b45ef",
+    ),
+    (
+        129,
+        "683aaae9f3c5ba37eaaf072aed0f9e30bac0865137bae68b1fde4ca2aebdcb12",
+    ),
+    (
+        1023,
+        "10108970eeda3eb932baac1428c7a2163b0e924c9a9e25b35bba72b28f70bd11",
+    ),
+    (
+        1024,
+        "42214739f095a406f3fc83deb889744ac00df831c10daa55189b5d121c855af7",
+    ),
+    (
+        1025,
+        "d00278ae47eb27b34faecf67b4fe263f82d5412916c1ffd97c8cb7fb814b8444",
+    ),
+    (
+        2048,
+        "e776b6028c7cd22a4d0ba182a8bf62205d2ef576467e838ed6f2529b85fba24a",
+    ),
+    (
+        2049,
+        "5f4d72f40d7a5f82b15ca2b2e44b1de3c2ef86c426c95c1af0b6879522563030",
+    ),
+    (
+        3072,
+        "b98cb0ff3623be03326b373de6b9095218513e64f1ee2edd2525c7ad1e5cffd2",
+    ),
+    (
+        3073,
+        "7124b49501012f81cc7f11ca069ec9226cecb8a2c850cfe644e327d22d3e1cd3",
+    ),
+    (
+        4096,
+        "015094013f57a5277b59d8475c0501042c0b642e531b0a1c8f58d2163229e969",
+    ),
+    (
+        4097,
+        "9b4052b38f1c5fc8b1f9ff7ac7b27cd242487b3d890d15c96a1c25b8aa0fb995",
+    ),
+    (
+        5120,
+        "9cadc15fed8b5d854562b26a9536d9707cadeda9b143978f319ab34230535833",
+    ),
+    (
+        5121,
+        "628bd2cb2004694adaab7bbd778a25df25c47b9d4155a55f8fbd79f2fe154cff",
+    ),
+    (
+        6144,
+        "3e2e5b74e048f3add6d21faab3f83aa44d3b2278afb83b80b3c35164ebeca205",
+    ),
+    (
+        6145,
+        "f1323a8631446cc50536a9f705ee5cb619424d46887f3c376c695b70e0f0507f",
+    ),
+    (
+        7168,
+        "61da957ec2499a95d6b8023e2b0e604ec7f6b50e80a9678b89d2628e99ada77a",
+    ),
+    (
+        7169,
+        "a003fc7a51754a9b3c7fae0367ab3d782dccf28855a03d435f8cfe74605e7817",
+    ),
+    (
+        8192,
+        "aae792484c8efe4f19e2ca7d371d8c467ffb10748d8a5a1ae579948f718a2a63",
+    ),
+    (
+        8193,
+        "bab6c09cb8ce8cf459261398d2e7aef35700bf488116ceb94a36d0f5f1b7bc3b",
+    ),
+    (
+        16384,
+        "f875d6646de28985646f34ee13be9a576fd515f76b5b0a26bb324735041ddde4",
+    ),
+    (
+        31744,
+        "62b6960e1a44bcc1eb1a611a8d6235b6b4b78f32e7abc4fb4c6cdcce94895c47",
+    ),
+    (
+        102400,
+        "bc3e3d41a1146b069abffad3c0d44860cf664390afce4d9661f7902e7943e085",
+    ),
+];
+
+fn vector_input(len: usize) -> Vec<u8> {
+    (0..len).map(|i| (i % 251) as u8).collect()
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[test]
+fn blake3_matches_official_vectors() {
+    for (len, expected) in BLAKE3_VECTORS {
+        let hash = HashAlg::Blake3.hash(&vector_input(len));
+        assert_eq!(hex(hash.digest()), expected, "input length {len}");
+    }
+}
+
+#[test]
+fn sha256_matches_fips_vectors() {
+    // FIPS 180-2 B.3, one million 'a' in a single `update`: longer than any
+    // buffer, so a hasher that keeps only part of a long input fails.
+    let million_a = vec![b'a'; 1_000_000];
+    let cases = [
+        (
+            &b""[..],
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        ),
+        (
+            &b"abc"[..],
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        ),
+        (
+            &million_a[..],
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+        ),
+    ];
+    for (input, expected) in cases {
+        assert_eq!(hex(HashAlg::Sha256.hash(input).digest()), expected);
+    }
+}
+
+#[test]
+fn only_registered_alg_ids_decode() {
+    for id in 0..=u8::MAX {
+        match HashAlg::from_id(id) {
+            Ok(alg) => {
+                assert!(id == 0x01 || id == 0x02, "unexpected id {id:#04x}");
+                assert_eq!(alg.id(), id);
+            }
+            Err(error) => {
+                assert!(id != 0x01 && id != 0x02, "id {id:#04x} should decode");
+                assert_eq!(error, HashError::UnknownAlgorithm(id));
+            }
+        }
+    }
+}
+
+#[test]
+fn hash_registry_is_complete() {
+    let registry: Vec<(u8, &str, usize)> = HashAlg::ALL
+        .into_iter()
+        .map(|alg| (alg.id(), alg.name(), alg.digest_len()))
+        .collect();
+    assert_eq!(registry, [(0x01, "blake3", 32), (0x02, "sha256", 32)]);
+    assert_eq!(HashAlg::DEFAULT, HashAlg::Blake3);
+    for alg in HashAlg::ALL {
+        assert_eq!(HashAlg::from_name(alg.name()), Ok(alg));
+    }
+}
+
+#[test]
+fn wrong_digest_length_rejected() {
+    // Every length to 300, then 2^16 + 32, so a check that lets a multiple of
+    // 32 through, or compares lengths cut to u8 or u16, fails.
+    for len in (0..=300).chain([65_568]).filter(|&len| len != 32) {
+        for alg in HashAlg::ALL {
+            assert_eq!(
+                HashRef::new(alg, &vec![0u8; len]),
+                Err(HashError::DigestLength {
+                    alg,
+                    expected: 32,
+                    actual: len,
+                })
+            );
+        }
+    }
+}
+
+#[test]
+fn equal_digest_different_alg_unequal() {
+    let digest = [7u8; 32];
+    let blake3 = HashRef::new(HashAlg::Blake3, &digest).unwrap();
+    let sha256 = HashRef::new(HashAlg::Sha256, &digest).unwrap();
+    assert_ne!(blake3, sha256);
+    assert!(
+        blake3 < sha256,
+        "BLAKE3 (id 0x01) orders before SHA-256 (id 0x02)"
+    );
+    let higher_digest = HashRef::new(HashAlg::Blake3, &[0xff; 32]).unwrap();
+    assert!(
+        higher_digest < sha256,
+        "algorithm id is compared before the digest"
+    );
+    // `cmp`, which sorted sets and maps use, agrees with `<`.
+    assert_eq!(blake3.cmp(&sha256), Ordering::Less);
+    assert_eq!(higher_digest.cmp(&sha256), Ordering::Less);
+}
+
+/// The binary form against the spec's worked examples `hashref-blake3` and
+/// `hashref-sha256`, so a writer and reader that agree on a reordered digest
+/// fail.
+#[test]
+fn binary_form_matches_the_spec() {
+    for (hash, expected) in [
+        (
+            HashAlg::Blake3.hash(b""),
+            "01af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        ),
+        (
+            HashAlg::Sha256.hash(b"abc"),
+            "02ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        ),
+    ] {
+        let bytes = hash.to_bytes();
+        assert_eq!(hex(&bytes), expected);
+        assert_eq!(HashRef::from_bytes(&bytes), Ok(hash), "{expected}");
+    }
+}
+
+#[test]
+fn binary_rejects_malformed() {
+    // Id 0x00 is invalid and 0x03 to 0xff are unassigned.
+    for id in (0..=u8::MAX).filter(|&id| id != 0x01 && id != 0x02) {
+        let mut input = [0x09; 33];
+        input[0] = id;
+        assert_eq!(
+            HashRef::from_bytes(&input),
+            Err(HashError::UnknownAlgorithm(id))
+        );
+    }
+    for alg in HashAlg::ALL {
+        let valid = alg.hash(b"x").to_bytes();
+        // Every proper prefix, from the empty input to one byte short.
+        for len in 0..33 {
+            let expected = if len == 0 {
+                HashError::Truncated {
+                    needed: 1,
+                    available: 0,
+                }
+            } else {
+                HashError::Truncated {
+                    needed: 32,
+                    available: len - 1,
+                }
+            };
+            assert_eq!(
+                HashRef::from_bytes(&valid[..len]),
+                Err(expected),
+                "{alg:?}, {len} bytes"
+            );
+        }
+        let mut trailing = valid.clone();
+        trailing.push(0);
+        assert_eq!(
+            HashRef::from_bytes(&trailing),
+            Err(HashError::TrailingBytes { extra: 1 }),
+            "{alg:?}"
+        );
+        // Two hashes back to back are not one.
+        assert_eq!(
+            HashRef::from_bytes(&valid.repeat(2)),
+            Err(HashError::TrailingBytes { extra: 33 }),
+            "{alg:?}"
+        );
+    }
+}
+
+/// The text form against fixed strings, not only by round trip: the spec's
+/// own example (BLAKE3 of empty input) and SHA-256 of "abc" (FIPS 180-2). Each
+/// string must also parse to the hash it names.
+#[test]
+fn text_form_matches_the_spec() {
+    for (hash, text) in [
+        (
+            HashAlg::Blake3.hash(b""),
+            "blake3:af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        ),
+        (
+            HashAlg::Sha256.hash(b"abc"),
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        ),
+    ] {
+        assert_eq!(hash.to_string(), text);
+        assert_eq!(text.parse::<HashRef>(), Ok(hash), "{text}");
+    }
+}
+
+#[test]
+fn text_rejects_malformed() {
+    let valid = HashAlg::Blake3.hash(b"x").to_string();
+    let digest_hex = valid.split_once(':').unwrap().1;
+    let sha256 = HashAlg::Sha256.hash(b"x").to_string();
+    let sha256_hex = sha256.split_once(':').unwrap().1;
+    let unknown = |name: &str| HashError::UnknownAlgorithmName(name.to_owned());
+    let length = |actual| HashError::DigestLength {
+        alg: HashAlg::Blake3,
+        expected: 32,
+        actual,
+    };
+    let cases = [
+        (valid.to_uppercase(), unknown("BLAKE3")),
+        // Names are exact, so a name in another case or spelling is not a
+        // second text form, and a longer, shorter or empty name is unknown.
+        (format!("BLAKE3:{digest_hex}"), unknown("BLAKE3")),
+        (format!("Blake3:{digest_hex}"), unknown("Blake3")),
+        (format!("SHA256:{sha256_hex}"), unknown("SHA256")),
+        (format!("sha-256:{sha256_hex}"), unknown("sha-256")),
+        (format!("SHA-256:{sha256_hex}"), unknown("SHA-256")),
+        (format!("blake3x:{digest_hex}"), unknown("blake3x")),
+        (format!("blake:{digest_hex}"), unknown("blake")),
+        (format!(":{digest_hex}"), unknown("")),
+        (format!("md5:{digest_hex}"), unknown("md5")),
+        // Nothing surrounds the name or the digest.
+        (format!(" {valid}"), unknown(" blake3")),
+        (format!("blake3 :{digest_hex}"), unknown("blake3 ")),
+        (format!("blake3: {digest_hex}"), HashError::InvalidHex),
+        (format!("{valid}\n"), HashError::InvalidHex),
+        (format!("blake3:0x{digest_hex}"), HashError::InvalidHex),
+        // Hex is lowercase for both algorithms and in both nibbles: the last
+        // two are the spec's example with only its high, then only its low,
+        // nibbles in uppercase.
+        (
+            format!("blake3:{}", digest_hex.to_uppercase()),
+            HashError::InvalidHex,
+        ),
+        (
+            format!("sha256:{}", sha256_hex.to_uppercase()),
+            HashError::InvalidHex,
+        ),
+        (
+            "blake3:Af1349B9F5F9A1A6A0404dEa36DcC9499bCb25C9AdC112B7Cc9a93CaE41f3262".to_owned(),
+            HashError::InvalidHex,
+        ),
+        (
+            "blake3:aF1349b9f5f9a1a6a0404DeA36dCc9499BcB25c9aDc112b7cC9A93cAe41F3262".to_owned(),
+            HashError::InvalidHex,
+        ),
+        // Odd lengths fail on their own: the first 64 of 65 digits would make
+        // a digest of the right length.
+        (
+            format!("blake3:{}", &digest_hex[1..]),
+            HashError::InvalidHex,
+        ),
+        (format!("blake3:{digest_hex}0"), HashError::InvalidHex),
+        (
+            format!("blake3:{}zz", &digest_hex[2..]),
+            HashError::InvalidHex,
+        ),
+        (format!("blake3:{}", &digest_hex[2..]), length(31)),
+        (format!("blake3:{digest_hex}00"), length(33)),
+        (digest_hex.to_owned(), HashError::MissingSeparator),
+        ("blake3".to_owned(), HashError::MissingSeparator),
+    ];
+    for (text, expected) in cases {
+        assert_eq!(text.parse::<HashRef>(), Err(expected), "{text:?}");
+    }
+    // ':' is the only separator.
+    for separator in ('\0'..='\x7f').filter(|&c| c != ':') {
+        let text = format!("blake3{separator}{digest_hex}");
+        assert_eq!(
+            text.parse::<HashRef>(),
+            Err(HashError::MissingSeparator),
+            "{text:?}"
+        );
+    }
+}
+
+/// The property below stops at 4 KiB of input. This feeds 1 MiB in pieces of
+/// three sizes, so a hasher that keeps only part of a long `update` fails.
+#[test]
+fn incremental_matches_one_shot_on_large_input() {
+    let data = vector_input(1 << 20);
+    for alg in HashAlg::ALL {
+        let one_shot = alg.hash(&data);
+        for chunk in [1_000, 4_097, 65_537] {
+            let mut hasher = alg.hasher();
+            for piece in data.chunks(chunk) {
+                hasher.update(piece);
+            }
+            assert_eq!(hasher.finalize(), one_shot, "{alg:?}, {chunk}-byte pieces");
+        }
+    }
+}
+
+/// Cases per property below.
+const CASES: u32 = 10_000;
+
+#[test]
+fn case_count_is_not_overridden() {
+    // proptest lets PROPTEST_CASES replace a configured count, which would let
+    // the properties pass on fewer cases than the record states.
+    let config = proptest::test_runner::contextualize_config(ProptestConfig::with_cases(CASES));
+    assert_eq!(config.cases, CASES, "unset PROPTEST_CASES to run the suite");
+}
+
+fn any_hash() -> impl Strategy<Value = HashRef> {
+    (
+        prop::sample::select(HashAlg::ALL.to_vec()),
+        any::<[u8; 32]>(),
+    )
+        .prop_map(|(alg, digest)| HashRef::new(alg, &digest).unwrap())
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(CASES))]
+
+    #[test]
+    fn binary_round_trip(hash in any_hash()) {
+        let bytes = hash.to_bytes();
+        prop_assert_eq!(bytes.len(), HashRef::ENCODED_LEN);
+        prop_assert_eq!(bytes[0], hash.alg().id());
+        prop_assert_eq!(&bytes[1..], hash.digest());
+        prop_assert_eq!(HashRef::from_bytes(&bytes), Ok(hash));
+    }
+
+    #[test]
+    fn text_round_trip(hash in any_hash()) {
+        let text = hash.to_string();
+        let prefix = format!("{}:", hash.alg().name());
+        prop_assert!(text.starts_with(&prefix));
+        prop_assert_eq!(text.parse::<HashRef>(), Ok(hash));
+    }
+
+    #[test]
+    fn incremental_matches_one_shot(
+        data in prop::collection::vec(any::<u8>(), 0..4096),
+        cuts in prop::collection::vec(any::<prop::sample::Index>(), 0..8),
+    ) {
+        let mut cuts: Vec<usize> = cuts.iter().map(|cut| cut.index(data.len() + 1)).collect();
+        cuts.sort_unstable();
+        for alg in HashAlg::ALL {
+            let mut hasher = alg.hasher();
+            let mut start = 0;
+            for &cut in &cuts {
+                hasher.update(&data[start..cut]);
+                start = cut;
+            }
+            hasher.update(&data[start..]);
+            prop_assert_eq!(hasher.finalize(), alg.hash(&data));
+        }
+    }
+}

@@ -1,0 +1,20 @@
+[package]
+name = "codec"
+description = "Canonical binary encoding and object envelopes for Periapsis format v1"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+hash.workspace = true
+
+[dev-dependencies]
+allocation-counter.workspace = true
+proptest.workspace = true
+pulldown-cmark.workspace = true
+
+[lints]
+workspace = true

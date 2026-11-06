@@ -1,0 +1,18 @@
+[package]
+name = "book"
+description = "Checks a Sprint Loops Book's typed acceptance criteria"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+pulldown-cmark.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true
