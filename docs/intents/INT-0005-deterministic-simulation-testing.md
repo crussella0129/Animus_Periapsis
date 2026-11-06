@@ -6,7 +6,7 @@
 - **Work evidence:** [T-001 build plan](../sprints/s0/sprint-plans/build-plan.md#t-001-workspace-guardrails-policy-checker-and-credits)
 - **Completion evidence:** none
 - **Code evidence:** none
-- **Test evidence:** none
+- **Test evidence:** [Sprint 0 test report](../sprints/s0/sprint-tests/test-report.md)
 - **Documentation evidence:** none
 
 ## Intent

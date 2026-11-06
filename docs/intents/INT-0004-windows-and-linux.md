@@ -6,7 +6,7 @@
 - **Work evidence:** [T-005 build plan](../sprints/s0/sprint-plans/build-plan.md#t-005-golden-corpus-and-spec-consistency), [T-007 build plan](../sprints/s0/sprint-plans/build-plan.md#t-007-canonical-suite-runner-and-ci-workflow)
 - **Completion evidence:** none
 - **Code evidence:** none
-- **Test evidence:** none
+- **Test evidence:** [Sprint 0 test report](../sprints/s0/sprint-tests/test-report.md)
 - **Documentation evidence:** none
 
 ## Intent
