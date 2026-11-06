@@ -49,3 +49,4 @@
   - [Research report](sprints/s0/sprint-research/research-report.md)
   - [Master Report v6 (research artifact)](sprints/s0/sprint-research/master-report-v6.md)
   - [Biblio report (research artifact)](sprints/s0/sprint-research/biblio-report.md)
+- [Sprint 1](sprints/s1/sprint-meta.md)
