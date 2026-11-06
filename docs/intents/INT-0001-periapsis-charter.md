@@ -3,7 +3,7 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0001
 - **State:** proposed
-- **Work evidence:** [T-009 backlog](../work/tasks.md)
+- **Work evidence:** [Sprint 1 T-009 build plan](../sprints/s1/sprint-plans/build-plan.md#t-009-record-sprint-0s-github-actions-runs-and-owner-sign-offs)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none
