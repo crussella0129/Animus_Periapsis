@@ -1,9 +1,11 @@
 //! The `Fs` contract on both implementations, and the simulator's fault model
 //! (INT-0005 AC-1, AC-2; INT-0004 AC-1).
 
-use std::collections::BTreeSet;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use sim::{Fs, Mode, Node, RealFs, Rng, SimFs, is_crash};
 
@@ -190,8 +192,9 @@ fn crash_point_boundary_is_exact() {
         let trace = fs.trace();
         assert_eq!(trace.len() as u64, k);
         assert!(trace[k as usize - 1].ends_with("(crash)"));
-        // Syscall k took no effect: the run without it equals the one with a
-        // crash at k, while the crash at k + 1 shows its effect.
+        // Whether syscall k took effect is checked against the state from just
+        // before it in `every_syscall_has_no_effect_at_its_crash_point`; here,
+        // the crash at k + 1 shows syscall k's effect.
         let before = script(0, Mode::Strict, Some(k)).snapshot();
         let after_k = script(0, Mode::Strict, Some(k + 1)).snapshot();
         if k == 1 {
@@ -439,5 +442,66 @@ fn stale_removals_spare_a_reused_name() {
             Some(&Node::File(b"new".to_vec())),
             "seed {seed}"
         );
+    }
+}
+
+/// Every kind of syscall, once each, with every effect visible in a snapshot:
+/// create_dir, create_new, write, overwrite, sync_file, rename, sync_dir,
+/// read, list, remove_file.
+fn every_kind(fs: &SimFs) -> std::io::Result<()> {
+    fs.create_dir(Path::new("d"))?;
+    fs.create_new(Path::new("d/a"))?;
+    fs.write(Path::new("d/a"), b"one")?;
+    fs.overwrite(Path::new("d/a"), b"two")?;
+    fs.sync_file(Path::new("d/a"))?;
+    fs.rename(Path::new("d/a"), Path::new("d/b"))?;
+    fs.sync_dir(Path::new("d"))?;
+    fs.read(Path::new("d/b"))?;
+    fs.list(Path::new("d"))?;
+    fs.remove_file(Path::new("d/b"))?;
+    Ok(())
+}
+
+const EVERY_KIND_SYSCALLS: u64 = 10;
+
+/// A crash at syscall k leaves exactly the state from just before syscall k
+/// (captured by the hook at that boundary), visible and durable alike, and k
+/// itself returns the crash error (test critique round 1, C-002).
+#[test]
+fn every_syscall_has_no_effect_at_its_crash_point() {
+    let fs = SimFs::new(0, Mode::Strict);
+    every_kind(&fs).unwrap();
+    assert_eq!(fs.syscalls(), EVERY_KIND_SYSCALLS);
+    for mode in [Mode::Lenient, Mode::Strict] {
+        for k in 1..=EVERY_KIND_SYSCALLS {
+            for seed in 0..20 {
+                let fs = Rc::new(SimFs::new(seed, mode));
+                fs.set_crash_at(Some(k));
+                let before: Rc<RefCell<Option<(BTreeMap<String, Node>, BTreeMap<String, Node>)>>> =
+                    Rc::default();
+                let (hook_fs, hook_before) = (Rc::clone(&fs), Rc::clone(&before));
+                fs.set_hook(Some(Box::new(move |next| {
+                    if next == k {
+                        *hook_before.borrow_mut() =
+                            Some((hook_fs.snapshot(), hook_fs.recover().snapshot()));
+                    }
+                })));
+                let error = every_kind(&fs).unwrap_err();
+                fs.set_hook(None);
+                assert!(is_crash(&error), "k {k}: {error}");
+                assert_eq!(fs.trace().len() as u64, k);
+                let (visible, durable) = before.borrow_mut().take().expect("hook ran at k");
+                assert_eq!(
+                    fs.snapshot(),
+                    visible,
+                    "{mode:?} k {k}: syscall k changed what is visible"
+                );
+                assert_eq!(
+                    fs.recover().snapshot(),
+                    durable,
+                    "{mode:?} k {k} seed {seed}: syscall k changed what survives"
+                );
+            }
+        }
     }
 }

@@ -14,17 +14,21 @@ pub enum Variant {
     /// Never syncs object files' data (it still renames them and syncs
     /// `objects/`).
     UnsyncedObjects,
-    /// `init` syncs no directory.
+    /// `init` (and `open`) syncs no directory.
     UnsyncedInit,
+    /// Writes each file directly under its final name, with no temporary
+    /// file or rename (it still syncs the data and the directory).
+    WriteInPlace,
 }
 
 impl Variant {
     /// Every variant, the correct one first.
-    pub const ALL: [Variant; 4] = [
+    pub const ALL: [Variant; 5] = [
         Variant::Correct,
         Variant::PointerFile,
         Variant::UnsyncedObjects,
         Variant::UnsyncedInit,
+        Variant::WriteInPlace,
     ];
 
     /// A short name for reports.
@@ -34,6 +38,7 @@ impl Variant {
             Variant::PointerFile => "pointer-file",
             Variant::UnsyncedObjects => "unsynced-objects",
             Variant::UnsyncedInit => "unsynced-init",
+            Variant::WriteInPlace => "write-in-place",
         }
     }
 }

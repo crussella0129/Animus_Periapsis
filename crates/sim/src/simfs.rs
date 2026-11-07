@@ -275,6 +275,19 @@ impl SimFs {
         self.state.borrow().trace.clone()
     }
 
+    /// Whether the name at `path` would survive a crash now: its directory's
+    /// durable entries hold it, naming the same file or directory as now.
+    /// Not a syscall: it is not counted or traced.
+    pub fn is_durable(&self, path: &Path) -> bool {
+        let Ok((parent, name)) = split(path) else {
+            return false;
+        };
+        let st = self.state.borrow();
+        st.dirs.get(&parent).is_some_and(|dir| {
+            dir.entries.contains_key(&name) && dir.durable.get(&name) == dir.entries.get(&name)
+        })
+    }
+
     /// Everything visible now, keyed by `/`-separated path (the root
     /// excluded).
     pub fn snapshot(&self) -> BTreeMap<String, Node> {

@@ -79,11 +79,33 @@ fn stdout(output: &Output) -> String {
 #[test]
 fn fsck_exits_zero_on_a_healthy_store() {
     let repo = repo("healthy");
+    let before = tree(&repo.dir);
     let output = praps(&["fsck", "repo"], &repo.dir);
     assert_eq!(code(&output), 0, "{output:?}");
     assert_eq!(stdout(&output), "clean\n");
-    // Checking changes nothing: a second run says the same.
+    // Checking changes nothing: the tree is the same, and a second run says
+    // the same.
+    assert_eq!(tree(&repo.dir), before);
     assert_eq!(praps(&["fsck", "repo"], &repo.dir).stdout, output.stdout);
+}
+
+/// Every path under `dir` with its content (`None` for a directory).
+fn tree(dir: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                out.push((path.clone(), None));
+                stack.push(path);
+            } else {
+                out.push((path.clone(), Some(fs::read(&path).unwrap())));
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 #[test]
@@ -135,7 +157,8 @@ fn fsck_lists_corrupt_files_and_exits_one() {
 #[test]
 fn fsck_on_a_non_store_exits_one() {
     let dir = claim("plain");
-    for target in ["nonexistent", "."] {
+    fs::write(dir.join("a-file"), b"not a directory").unwrap();
+    for target in ["nonexistent", ".", "a-file"] {
         let output = praps(&["fsck", target], &dir);
         assert_eq!(code(&output), 1, "{target}: {output:?}");
         assert!(output.stdout.is_empty());

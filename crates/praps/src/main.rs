@@ -49,7 +49,9 @@ fn cli(args: &[OsString], out: &mut impl Write, err: &mut impl Write) -> u8 {
 }
 
 fn fsck(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
-    let report = match Store::open(RealFs, dir, HashAlg::DEFAULT, 0).and_then(|s| s.fsck()) {
+    // `inspect`, not `open`: checking only reads, so it works on a read-only
+    // store and changes nothing.
+    let report = match Store::inspect(RealFs, dir, HashAlg::DEFAULT).and_then(|s| s.fsck()) {
         Ok(report) => report,
         Err(error) => {
             let _ = writeln!(err, "praps fsck: {}: {error}", dir.display());

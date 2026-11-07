@@ -534,10 +534,21 @@ fn fs_boundary(root: &Path, members: &[PathBuf]) -> Vec<String> {
             if real_half.as_deref() == Some(name.as_str()) || name.starts_with(&tests) {
                 continue;
             }
-            for attribute in opt_outs(&read(&file)) {
+            let source = read(&file);
+            for attribute in opt_outs(&source) {
                 problems.push(format!(
                     "{name} switches off the filesystem boundary: {attribute}"
                 ));
+            }
+            // A `#[path]` module or an `include!` could pull exempt code
+            // (from tests/ or the real half) into the crate's own sources.
+            let compact: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+            for (needle, what) in [("#[path", "a #[path] module"), ("include!", "include!")] {
+                if compact.contains(needle) {
+                    problems.push(format!(
+                        "{name} uses {what}, which could pull code past the filesystem boundary"
+                    ));
+                }
             }
         }
     }
@@ -1787,6 +1798,24 @@ mod tests {
             "#![allow(clippy::disallowed_methods)]\n",
         );
         fixture.fails_only("fs-boundary", "crates/store/src/target/mod.rs");
+
+        // A `#[path]` module or `include!` could pull exempt code into src/.
+        for (i, source) in [
+            "#[path = \"../tests/escape.rs\"]\npub mod escape;\n",
+            "# [ path = \"../../sim/src/real.rs\" ]\nmod real;\n",
+            "include!(\"../tests/escape.rs\");\n",
+            "include ! (concat!(\"../tests/\", \"escape.rs\"));\n",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = with_store(&format!("boundary-escape-{i}"));
+            fixture.write("crates/store/src/escape.rs", source);
+            fixture.fails_exactly(
+                &["fs-boundary"],
+                &["crates/store/src/escape.rs", "past the filesystem boundary"],
+            );
+        }
 
         // Unrelated attributes pass.
         let fixture = with_store("boundary-unrelated");

@@ -768,3 +768,31 @@ fn other_kinds_stay_reserved() {
         );
     }
 }
+
+#[test]
+fn operation_rejects_unsorted_objects() {
+    let (low, high) = ordered_pair();
+    let mut enc = Encoder::new();
+    enc.uvarint(0);
+    enc.uvarint(2);
+    enc.hash_ref(&high);
+    enc.hash_ref(&low);
+    assert_eq!(
+        from_slice::<Operation>(&enc.finish()),
+        Err(DecodeError::UnsortedOrDuplicateKey { at: 35 })
+    );
+}
+
+#[test]
+fn operation_rejects_duplicate_parents() {
+    let (low, _) = ordered_pair();
+    let mut enc = Encoder::new();
+    enc.uvarint(2);
+    enc.hash_ref(&low);
+    enc.hash_ref(&low);
+    enc.uvarint(0);
+    assert_eq!(
+        from_slice::<Operation>(&enc.finish()),
+        Err(DecodeError::UnsortedOrDuplicateKey { at: 34 })
+    );
+}

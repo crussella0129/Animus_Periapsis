@@ -16,7 +16,7 @@ use std::rc::Rc;
 use codec::{Operation, blob, decode_envelope, object_id};
 use hash::{HashAlg, HashRef};
 use sim::{Mode, Node, Rng, SimFs};
-use store::names::{TMP_PREFIX, parse_name};
+use store::names::{TMP_PREFIX, file_name, parse_name};
 use store::{Store, Variant, heads_of};
 
 /// Seeds per scenario and mode (INT-0005 AC-2: at least 40).
@@ -64,6 +64,9 @@ pub struct Log {
     pub objects_acked: Vec<HashRef>,
     /// The intended single-writer chain, for the prefix check.
     pub chain: Vec<HashRef>,
+    /// Two writers: B's op was acknowledged while X's name, which A had
+    /// renamed into place, was not yet durable: the race the re-sync guards.
+    pub raced: bool,
 }
 
 /// Invariant violations in one recovered state, by kind.
@@ -81,6 +84,10 @@ pub struct Violations {
     pub heads: u64,
     /// The present ops of the chain are not a prefix of the intended chain.
     pub atomicity: u64,
+    /// A file under an object or op name that is not wholly that object or
+    /// op: its content does not hash to its name or does not decode
+    /// (INT-0007 AC-3: in-flight ops are wholly present and valid, or absent).
+    pub torn: u64,
     /// A file other than objects, ops and temporary files exists.
     pub stray: u64,
 }
@@ -89,7 +96,7 @@ impl Violations {
     /// Violations of what a crash may never do to acknowledged state: the
     /// kinds the negative controls must produce.
     pub fn semantic(&self) -> u64 {
-        self.closure + self.durability + self.heads + self.atomicity
+        self.closure + self.durability + self.heads + self.atomicity + self.torn
     }
 
     pub fn total(&self) -> u64 {
@@ -102,6 +109,7 @@ impl Violations {
         self.durability += other.durability;
         self.heads += other.heads;
         self.atomicity += other.atomicity;
+        self.torn += other.torn;
         self.stray += other.stray;
     }
 }
@@ -110,6 +118,8 @@ impl Violations {
 #[derive(Clone, Debug)]
 pub struct Outcome {
     pub violations: Violations,
+    /// Whether the cell ran the two-writer race (see [`Log::raced`]).
+    pub raced: bool,
     /// A hash of the recovered state.
     pub state: HashRef,
     /// A hash of the syscall trace.
@@ -198,15 +208,24 @@ fn run(
             // sync_file, rename, sync_dir) and its commit begins with two
             // reads; B runs before one of those eight, chosen by the seed.
             let trigger = fs.syscalls() + 1 + Rng::new(seed ^ 0x5eed).below(8);
-            let hook_log = Rc::clone(log);
+            let (hook_fs, hook_log) = (Rc::clone(fs), Rc::clone(log));
             let x_id = object_id(ALG, &blob(b"X"));
+            let x_path = Path::new(ROOT).join("objects").join(file_name(&x_id));
             let mut fired = false;
             fs.set_hook(Some(Box::new(move |next| {
                 if fired || next != trigger {
                     return;
                 }
                 fired = true;
-                let _ = commit(&mut b, &op(&[], &[x_id, y]), &hook_log);
+                // Neither check is a syscall, so neither moves the crash point.
+                let shown = format!("{ROOT}/objects/{}", file_name(&x_id));
+                let pending =
+                    hook_fs.snapshot().contains_key(&shown) && !hook_fs.is_durable(&x_path);
+                // B's commit may fail (X not yet renamed, or the crash); the
+                // log shows whether it was acknowledged.
+                if commit(&mut b, &op(&[], &[x_id, y]), &hook_log).is_ok() && pending {
+                    hook_log.borrow_mut().raced = true;
+                }
             })));
             let result = (|| -> io::Result<()> {
                 let x = put(&mut a, &blob(b"X"), log)?;
@@ -248,6 +267,7 @@ pub fn run_cell(
     let violations = check(&fs.recover(), &log, scenario, variant, seed);
     let outcome = Outcome {
         violations,
+        raced: log.raced,
         state: digest(&recovered),
         trace: HashAlg::Blake3.hash(trace.as_bytes()),
     };
@@ -310,6 +330,27 @@ fn check(
     let (objects, ops) = present(&snapshot);
     let root = Path::new(ROOT);
 
+    // Torn: a file under an object or op name that is not wholly it.
+    for (path, node) in &snapshot {
+        let Node::File(content) = node else {
+            continue;
+        };
+        let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
+        let Some(id) = parse_name(name) else {
+            continue;
+        };
+        let valid = object_id(id.alg(), content) == id
+            && if dir == format!("{ROOT}/objects") {
+                decode_envelope(content).is_ok()
+            } else if dir == format!("{ROOT}/ops") {
+                Operation::from_envelope(content).is_ok()
+            } else {
+                true
+            };
+        if !valid {
+            v.torn += 1;
+        }
+    }
     // Closure.
     for op in ops.values() {
         v.closure += op.parents.iter().filter(|p| !ops.contains_key(p)).count() as u64;
@@ -378,6 +419,8 @@ fn check(
 #[derive(Clone, Debug, Default)]
 pub struct Summary {
     pub cells: BTreeMap<Mode, u64>,
+    /// Cells per mode that ran the two-writer race.
+    pub races: BTreeMap<Mode, u64>,
     pub violations: BTreeMap<Mode, Violations>,
 }
 
@@ -386,13 +429,15 @@ impl Summary {
         for (mode, cells) in &self.cells {
             let v = self.violations[mode];
             println!(
-                "matrix {:<16} {mode:?}: {cells} cells; violations: closure {} durability {} \
-                 heads {} atomicity {} layout {} stray {}",
+                "matrix {:<16} {mode:?}: {cells} cells ({} two-writer races); violations: \
+                 closure {} durability {} heads {} atomicity {} torn {} layout {} stray {}",
                 variant.name(),
+                self.races.get(mode).copied().unwrap_or(0),
                 v.closure,
                 v.durability,
                 v.heads,
                 v.atomicity,
+                v.torn,
                 v.layout,
                 v.stray
             );
@@ -415,6 +460,7 @@ pub fn run_matrix(
                 for crash_at in 1..=n + 1 {
                     let (outcome, recovered) = run_cell(variant, scenario, mode, seed, crash_at);
                     *summary.cells.entry(mode).or_default() += 1;
+                    *summary.races.entry(mode).or_default() += u64::from(outcome.raced);
                     summary
                         .violations
                         .entry(mode)

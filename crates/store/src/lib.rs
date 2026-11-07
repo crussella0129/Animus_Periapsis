@@ -93,6 +93,14 @@ impl<F: Fs> Store<F> {
         true
     }
     #[cfg(feature = "variants")]
+    fn writes_in_place(&self) -> bool {
+        self.variant == Variant::WriteInPlace
+    }
+    #[cfg(not(feature = "variants"))]
+    fn writes_in_place(&self) -> bool {
+        false
+    }
+    #[cfg(feature = "variants")]
     fn syncs_at_init(&self) -> bool {
         self.variant != Variant::UnsyncedInit
     }
@@ -124,9 +132,9 @@ impl<F: Fs> Store<F> {
         seed: u64,
         variant: Variant,
     ) -> io::Result<Self> {
-        let mut store = Store::open(fs, root, alg, seed)?;
+        let mut store = Store::new(fs, root, alg, seed);
         store.variant = variant;
-        Ok(store)
+        store.finish_open()
     }
 
     /// Makes `root` a store: creates whichever of the root, `objects/` and
@@ -175,14 +183,29 @@ impl<F: Fs> Store<F> {
     /// Opens an existing store; a directory without `objects/` and `ops/` is
     /// not one.
     pub fn open(fs: F, root: &Path, alg: HashAlg, seed: u64) -> io::Result<Self> {
-        let store = Store::new(fs, root, alg, seed);
-        if store.dir_exists(&store.objects)? && store.dir_exists(&store.ops)? {
-            if store.syncs_at_init() {
-                store.sync_layout()?;
-            }
-            Ok(store)
+        Store::new(fs, root, alg, seed).finish_open()
+    }
+
+    fn finish_open(self) -> io::Result<Self> {
+        let store = self.inspected()?;
+        if store.syncs_at_init() {
+            store.sync_layout()?;
+        }
+        Ok(store)
+    }
+
+    /// Opens a store only to read it: `open` without its layout syncs, so it
+    /// makes no syscall that writes or flushes and works on read-only media.
+    /// `fsck` uses it. A store opened this way must not be written to.
+    pub fn inspect(fs: F, root: &Path, alg: HashAlg) -> io::Result<Self> {
+        Store::new(fs, root, alg, 0).inspected()
+    }
+
+    fn inspected(self) -> io::Result<Self> {
+        if self.dir_exists(&self.objects)? && self.dir_exists(&self.ops)? {
+            Ok(self)
         } else {
-            Err(not_a_store(root))
+            Err(not_a_store(&self.root))
         }
     }
 
@@ -308,6 +331,17 @@ impl<F: Fs> Store<F> {
             Ok(_) => {}
             Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => return Err(error),
+        }
+        if self.writes_in_place() {
+            match self.fs.create_new(&path) {
+                Ok(()) => self.fs.write(&path, bytes)?,
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                    self.fs.overwrite(&path, bytes)?;
+                }
+                Err(error) => return Err(error),
+            }
+            self.fs.sync_file(&path)?;
+            return self.fs.sync_dir(dir);
         }
         let tmp = loop {
             let tmp = dir.join(format!("{TMP_PREFIX}{:016x}", self.rng.next_u64()));

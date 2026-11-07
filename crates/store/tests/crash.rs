@@ -39,6 +39,12 @@ fn crash_matrix_finds_no_violations() {
     for violations in summary.violations.values() {
         assert_eq!(violations.total(), 0);
     }
+    // The two-writer race must actually run: some cells acknowledge B's op
+    // while X's name is not yet durable, so the re-sync is what saves it.
+    for mode in [Mode::Lenient, Mode::Strict] {
+        let races = summary.races.get(&mode).copied().unwrap_or(0);
+        assert!(races > 0, "no {mode:?} cell ran the two-writer race");
+    }
 }
 
 #[test]
@@ -88,4 +94,9 @@ fn unsynced_objects_variant_is_caught() {
 #[test]
 fn unsynced_init_variant_is_caught() {
     caught(Variant::UnsyncedInit);
+}
+
+#[test]
+fn write_in_place_variant_is_caught() {
+    caught(Variant::WriteInPlace);
 }
