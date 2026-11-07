@@ -8,7 +8,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use codec::{Operation, blob};
+use codec::{Operation, View, blob};
 use hash::{HashAlg, HashRef};
 use sim::{Fs, RealFs, Rng};
 use store::Store;
@@ -45,16 +45,21 @@ fn repo(label: &str) -> Repo {
     let root = dir.join("repo");
     let mut store = Store::init(RealFs, &root, HashAlg::DEFAULT, 1).unwrap();
     let object = store.put_object(&blob(b"hello\n")).unwrap();
+    let view = View {
+        heads: [object].into(),
+        workspaces: Default::default(),
+    };
+    let view = store.put_object(&view.to_envelope()).unwrap();
     let first = store
         .commit_op(&Operation {
             parents: Default::default(),
-            objects: [object].into(),
+            view,
         })
         .unwrap();
     let op = store
         .commit_op(&Operation {
             parents: [first].into(),
-            objects: [object].into(),
+            view,
         })
         .unwrap();
     Repo { dir, object, op }

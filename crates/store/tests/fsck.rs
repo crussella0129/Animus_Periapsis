@@ -5,7 +5,7 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use codec::{Operation, blob};
+use codec::{Operation, View, blob};
 use common::matrix::{ROOT, run_matrix};
 use hash::{HashAlg, HashRef};
 use sim::{Fs, Mode, SimFs};
@@ -29,13 +29,24 @@ fn build() -> Built {
     .unwrap();
     let a = store.put_object(&blob(b"abc")).unwrap();
     let b = store.put_object(&blob(b"second object")).unwrap();
-    let op = |parents: &[HashRef], objects: &[HashRef]| Operation {
-        parents: parents.iter().copied().collect(),
-        objects: objects.iter().copied().collect(),
+    // Each op's view has the objects as its heads: the store checks only that
+    // a view's references are present.
+    let mut commit = |parents: &[HashRef], objects: &[HashRef]| {
+        let view = View {
+            heads: objects.iter().copied().collect(),
+            workspaces: Default::default(),
+        };
+        let view = store.put_object(&view.to_envelope()).unwrap();
+        store
+            .commit_op(&Operation {
+                parents: parents.iter().copied().collect(),
+                view,
+            })
+            .unwrap()
     };
-    let root = store.commit_op(&op(&[], &[a])).unwrap();
-    let child = store.commit_op(&op(&[root], &[b])).unwrap();
-    let merge = store.commit_op(&op(&[root, child], &[a, b])).unwrap();
+    let root = commit(&[], &[a]);
+    let child = commit(&[root], &[b]);
+    let merge = commit(&[root, child], &[a, b]);
     assert!(store.fsck().unwrap().is_clean());
     Built {
         store,
@@ -125,7 +136,8 @@ fn fsck_detects_every_bit_flip() {
 
 #[test]
 fn fsck_detects_missing_references() {
-    // A missing object: the ops naming it report it.
+    // A missing object: the views naming it, one per op that reaches it,
+    // report it.
     let built = build();
     built
         .store
@@ -142,8 +154,8 @@ fn fsck_detects_missing_references() {
         .collect();
     assert_eq!(
         kinds,
-        vec![ProblemKind::MissingObject(built.objects[1]); 2],
-        "the child and the merge name it"
+        vec![ProblemKind::MissingReference(built.objects[1]); 2],
+        "the child's and the merge's views name it"
     );
 
     // A missing parent op.

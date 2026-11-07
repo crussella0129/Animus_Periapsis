@@ -52,13 +52,10 @@ fn any_bytes() -> impl Strategy<Value = Bytes> {
     prop::collection::vec(any::<u8>(), 0..400).prop_map(Bytes)
 }
 
-/// Up to three parents and three objects, over both hash algorithms.
+/// Up to three parents and a view, over both hash algorithms.
 fn any_operation() -> impl Strategy<Value = Operation> {
-    (
-        prop::collection::btree_set(any_hash(), 0..4),
-        prop::collection::btree_set(any_hash(), 0..4),
-    )
-        .prop_map(|(parents, objects)| Operation { parents, objects })
+    (prop::collection::btree_set(any_hash(), 0..4), any_hash())
+        .prop_map(|(parents, view)| Operation { parents, view })
 }
 
 /// A repository path of one to three components; no component is `.` or
@@ -762,25 +759,22 @@ fn operation_rejects_unsorted_parents() {
 }
 
 #[test]
-fn operation_rejects_duplicate_objects() {
-    let (low, _) = ordered_pair();
+fn operation_needs_a_view() {
+    // Sprint 2: the body ends with the view's hashref, so a body holding only
+    // the parent set fails where the view should start.
     let mut enc = Encoder::new();
     enc.uvarint(0);
-    enc.uvarint(2);
-    enc.hash_ref(&low);
-    enc.hash_ref(&low);
-    let body = enc.finish();
-    assert_eq!(
-        from_slice::<Operation>(&body),
-        Err(DecodeError::UnsortedOrDuplicateKey { at: 35 })
-    );
+    assert!(matches!(
+        from_slice::<Operation>(&enc.finish()),
+        Err(DecodeError::Hash { at: 1, .. })
+    ));
 }
 
 #[test]
 fn operation_rejects_trailing_bytes() {
     let op = Operation {
         parents: BTreeSet::new(),
-        objects: BTreeSet::from([hash_of(HashAlg::Blake3, b"")]),
+        view: hash_of(HashAlg::Blake3, b""),
     };
     let mut body = to_vec(&op);
     let len = body.len();
@@ -809,13 +803,13 @@ fn operation_kind_is_defined() {
     assert_eq!(ObjectKind::Operation.name(), "operation");
     let op = Operation {
         parents: BTreeSet::from([hash_of(HashAlg::Blake3, b"p")]),
-        objects: BTreeSet::from([hash_of(HashAlg::Sha256, b"o")]),
+        view: hash_of(HashAlg::Sha256, b"o"),
     };
     let envelope = op.to_envelope();
     assert_eq!(&envelope[..2], &[0x01, 0x03]);
-    assert_eq!(Operation::from_envelope(&envelope), Ok(op));
+    assert_eq!(Operation::from_envelope(&envelope), Ok(op.clone()));
     // A blob envelope is not an operation, even when its body would decode.
-    let body = to_vec(&Operation::default());
+    let body = to_vec(&op);
     assert_eq!(
         Operation::from_envelope(&blob(&body)),
         Err(DecodeError::UnexpectedObjectKind {
@@ -845,20 +839,6 @@ fn other_kinds_stay_reserved() {
             })
         );
     }
-}
-
-#[test]
-fn operation_rejects_unsorted_objects() {
-    let (low, high) = ordered_pair();
-    let mut enc = Encoder::new();
-    enc.uvarint(0);
-    enc.uvarint(2);
-    enc.hash_ref(&high);
-    enc.hash_ref(&low);
-    assert_eq!(
-        from_slice::<Operation>(&enc.finish()),
-        Err(DecodeError::UnsortedOrDuplicateKey { at: 35 })
-    );
 }
 
 #[test]

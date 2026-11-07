@@ -6,16 +6,22 @@
 //! whether or not the store opens on it. A missing `objects/` or `ops/` counts
 //! as empty. "Present" means a file whose content hashes to its name and
 //! decodes, as `fsck` judges a file.
+//!
+//! Every op names a view; a view names a changeset; a changeset names blobs
+//! (Sprint 2). Closure follows those references.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use codec::{Operation, blob, decode_envelope, object_id};
+use codec::{
+    Changeset, Entry, Mode as FileMode, ObjectKind, Operation, RepoPath, View, blob,
+    decode_envelope, object_id, references,
+};
 use hash::{HashAlg, HashRef};
-use sim::{Mode, Node, Rng, SimFs};
+use sim::{Mode, Node, SimFs};
 use store::names::{TMP_PREFIX, file_name, parse_name};
 use store::{Store, Variant, heads_of};
 
@@ -29,17 +35,22 @@ const ALG: HashAlg = HashAlg::DEFAULT;
 pub enum Scenario {
     /// `init` alone.
     Init,
-    /// `init`, then a chain of five ops, each with a new object.
+    /// `init`, then a chain of five ops, each with a new recorded state.
     Chain,
     /// `init`, a root op, two children, and a merge of both.
     ForkMerge,
-    /// `init`, then writer A commits a root op naming object Y, puts object X
-    /// and commits a child op naming it. Writer B, opened before A puts X,
-    /// runs at a seed-chosen syscall inside A's put of X and commits its own
-    /// op naming X and Y without putting X itself. When B runs after A renamed
-    /// X but before A synced `objects/`, only `commit_op`'s re-sync of the
-    /// objects it names makes B's acknowledged op safe (INT-0007
-    /// Consequences).
+    /// `init`, then writer A records state Y and commits a root op naming its
+    /// view, records state X and commits a child op naming X's view. Writer
+    /// B, opened after the root op, runs at one fixed boundary in every seed
+    /// and never writes what it names:
+    /// - even seeds (the view race): after A's `rename` of X's view and
+    ///   before A's `sync_dir(objects)`, B commits an op naming X's view;
+    /// - odd seeds (the parent race): after A's `rename` of its child op and
+    ///   before A's `sync_dir(ops)`, B commits an op whose parent is A's
+    ///   child op.
+    ///
+    /// Only `commit_op`'s re-sync of the view and of the parent ops makes B's
+    /// op safe (INT-0007 Consequences).
     TwoWriters,
 }
 
@@ -50,6 +61,15 @@ impl Scenario {
         Scenario::ForkMerge,
         Scenario::TwoWriters,
     ];
+}
+
+/// Which race a two-writer cell ran.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Race {
+    /// B named A's view while its name was not yet durable.
+    View,
+    /// B named A's op as a parent while its name was not yet durable.
+    Parent,
 }
 
 /// What a run attempted and what the store acknowledged.
@@ -64,9 +84,9 @@ pub struct Log {
     pub objects_acked: Vec<HashRef>,
     /// The intended single-writer chain, for the prefix check.
     pub chain: Vec<HashRef>,
-    /// Two writers: B's op was acknowledged while X's name, which A had
-    /// renamed into place, was not yet durable: the race the re-sync guards.
-    pub raced: bool,
+    /// Two writers: B's op was acknowledged while the name it depends on,
+    /// which A had renamed into place, was not yet durable.
+    pub raced: Option<Race>,
 }
 
 /// Invariant violations in one recovered state, by kind.
@@ -75,7 +95,8 @@ pub struct Violations {
     /// After an acknowledged init the store does not open, or after an
     /// unacknowledged one it holds ops, or `init` fails on the recovered state.
     pub layout: u64,
-    /// A present op names a parent op or an object that is not present.
+    /// A present op names a parent op or a view that is not present, or an
+    /// object reachable from a present op names an object that is not.
     pub closure: u64,
     /// An acknowledged op or object is not present.
     pub durability: u64,
@@ -118,8 +139,8 @@ impl Violations {
 #[derive(Clone, Debug)]
 pub struct Outcome {
     pub violations: Violations,
-    /// Whether the cell ran the two-writer race (see [`Log::raced`]).
-    pub raced: bool,
+    /// The two-writer race the cell ran, if any (see [`Log::raced`]).
+    pub raced: Option<Race>,
     /// A hash of the recovered state.
     pub state: HashRef,
     /// A hash of the syscall trace.
@@ -130,17 +151,69 @@ fn id_of(op: &Operation) -> HashRef {
     object_id(ALG, &op.to_envelope())
 }
 
-fn op(parents: &[HashRef], objects: &[HashRef]) -> Operation {
+fn op(parents: &[HashRef], view: HashRef) -> Operation {
     Operation {
         parents: parents.iter().copied().collect(),
-        objects: objects.iter().copied().collect(),
+        view,
     }
+}
+
+/// The objects one recorded state needs, in put order: a blob per file, a
+/// changeset holding them, and a view whose head and `default` workspace are
+/// that changeset.
+fn state(tag: &str, files: &[&str]) -> Vec<Vec<u8>> {
+    let mut envelopes = Vec::new();
+    let mut changes = BTreeMap::new();
+    for (i, content) in files.iter().enumerate() {
+        let envelope = blob(content.as_bytes());
+        changes.insert(
+            RepoPath::new(format!("f{i}")).unwrap(),
+            Entry::Put {
+                blob: object_id(ALG, &envelope),
+                mode: FileMode::Regular,
+            },
+        );
+        envelopes.push(envelope);
+    }
+    let changeset = Changeset {
+        parents: Vec::new(),
+        change_id: *ALG.hash(tag.as_bytes()).digest().first_chunk().unwrap(),
+        changes,
+        description: tag.as_bytes().to_vec(),
+    }
+    .to_envelope();
+    let changeset_id = object_id(ALG, &changeset);
+    envelopes.push(changeset);
+    envelopes.push(
+        View {
+            heads: [changeset_id].into(),
+            workspaces: [("default".to_owned(), changeset_id)].into(),
+        }
+        .to_envelope(),
+    );
+    envelopes
+}
+
+fn view_of(state: &[Vec<u8>]) -> HashRef {
+    object_id(ALG, state.last().unwrap())
 }
 
 fn put(store: &mut Store<Rc<SimFs>>, envelope: &[u8], log: &RefCell<Log>) -> io::Result<HashRef> {
     let id = store.put_object(envelope)?;
     log.borrow_mut().objects_acked.push(id);
     Ok(id)
+}
+
+/// Puts a state's objects in order and returns its view.
+fn record(
+    store: &mut Store<Rc<SimFs>>,
+    state: &[Vec<u8>],
+    log: &RefCell<Log>,
+) -> io::Result<HashRef> {
+    for envelope in state {
+        put(store, envelope, log)?;
+    }
+    Ok(view_of(state))
 }
 
 fn commit(store: &mut Store<Rc<SimFs>>, op: &Operation, log: &RefCell<Log>) -> io::Result<()> {
@@ -165,71 +238,73 @@ fn run(
     match scenario {
         Scenario::Init => Ok(()),
         Scenario::Chain => {
+            let states: Vec<_> = (0..5)
+                .map(|i| state(&format!("chain {i}"), &[&format!("object {i}")]))
+                .collect();
             let mut parents = Vec::new();
             let mut ops = Vec::new();
-            for i in 0..5 {
-                let object = object_id(ALG, &blob(format!("object {i}").as_bytes()));
-                let next = op(&parents, &[object]);
+            for state in &states {
+                let next = op(&parents, view_of(state));
                 parents = vec![id_of(&next)];
-                ops.push((i, next));
+                ops.push(next);
             }
-            log.borrow_mut().chain = ops.iter().map(|(_, op)| id_of(op)).collect();
-            for (i, next) in ops {
-                put(&mut a, &blob(format!("object {i}").as_bytes()), log)?;
-                commit(&mut a, &next, log)?;
+            log.borrow_mut().chain = ops.iter().map(id_of).collect();
+            for (state, next) in states.iter().zip(&ops) {
+                record(&mut a, state, log)?;
+                commit(&mut a, next, log)?;
             }
             Ok(())
         }
         Scenario::ForkMerge => {
-            let x = put(&mut a, &blob(b"left"), log)?;
-            let y = put(&mut a, &blob(b"right"), log)?;
-            let base = op(&[], &[]);
+            let base = op(&[], record(&mut a, &state("base", &[]), log)?);
             commit(&mut a, &base, log)?;
-            let left = op(&[id_of(&base)], &[x]);
+            let left = op(
+                &[id_of(&base)],
+                record(&mut a, &state("left", &["left"]), log)?,
+            );
             commit(&mut a, &left, log)?;
-            let right = op(&[id_of(&base)], &[y]);
+            let right = op(
+                &[id_of(&base)],
+                record(&mut a, &state("right", &["right"]), log)?,
+            );
             commit(&mut a, &right, log)?;
-            commit(&mut a, &op(&[id_of(&left), id_of(&right)], &[x, y]), log)
+            let merged = record(&mut a, &state("merge", &["left", "right"]), log)?;
+            commit(&mut a, &op(&[id_of(&left), id_of(&right)], merged), log)
         }
         Scenario::TwoWriters => {
-            let y = put(&mut a, &blob(b"Y"), log)?;
-            let base = op(&[], &[y]);
+            let y = record(&mut a, &state("Y", &["Y"]), log)?;
+            let base = op(&[], y);
             commit(&mut a, &base, log)?;
-            // B opens now: `open` syncs the layout, which inside A's put of
-            // X would also make X's name durable and hide the race.
-            let mut b = Store::open_variant(
+            // B opens now: `open` syncs the layout, which inside A's writes
+            // would also make A's pending names durable and hide the race.
+            let b = Store::open_variant(
                 Rc::clone(fs),
                 Path::new(ROOT),
                 ALG,
                 seed.wrapping_add(1_000),
                 variant,
             )?;
-            // A's put of X takes six syscalls (read, create_new, write,
-            // sync_file, rename, sync_dir) and its commit begins with two
-            // reads; B runs before one of those eight, chosen by the seed.
-            let trigger = fs.syscalls() + 1 + Rng::new(seed ^ 0x5eed).below(8);
-            let (hook_fs, hook_log) = (Rc::clone(fs), Rc::clone(log));
-            let x_id = object_id(ALG, &blob(b"X"));
-            let x_path = Path::new(ROOT).join("objects").join(file_name(&x_id));
-            let mut fired = false;
-            fs.set_hook(Some(Box::new(move |next| {
-                if fired || next != trigger {
-                    return;
-                }
-                fired = true;
-                // Neither check is a syscall, so neither moves the crash point.
-                let shown = format!("{ROOT}/objects/{}", file_name(&x_id));
-                let pending =
-                    hook_fs.snapshot().contains_key(&shown) && !hook_fs.is_durable(&x_path);
-                // B's commit may fail (X not yet renamed, or the crash); the
-                // log shows whether it was acknowledged.
-                if commit(&mut b, &op(&[], &[x_id, y]), &hook_log).is_ok() && pending {
-                    hook_log.borrow_mut().raced = true;
-                }
-            })));
+            let x = state("X", &["X"]);
+            let child = op(&[id_of(&base)], view_of(&x));
+            let (race, target, b_op) = if seed.is_multiple_of(2) {
+                (
+                    Race::View,
+                    Path::new(ROOT)
+                        .join("objects")
+                        .join(file_name(&view_of(&x))),
+                    op(&[], view_of(&x)),
+                )
+            } else {
+                (
+                    Race::Parent,
+                    Path::new(ROOT).join("ops").join(file_name(&id_of(&child))),
+                    op(&[id_of(&child)], y),
+                )
+            };
+            install_race(fs, log, race, target, b, b_op);
             let result = (|| -> io::Result<()> {
-                let x = put(&mut a, &blob(b"X"), log)?;
-                commit(&mut a, &op(&[id_of(&base)], &[x]), log)
+                record(&mut a, &x, log)?;
+                commit(&mut a, &child, log)
             })();
             fs.set_hook(None);
             result
@@ -237,11 +312,54 @@ fn run(
     }
 }
 
+/// Fires B once, at the first syscall boundary right after A renamed
+/// `target` into place while its name is not yet durable.
+fn install_race(
+    fs: &Rc<SimFs>,
+    log: &Rc<RefCell<Log>>,
+    race: Race,
+    target: PathBuf,
+    mut b: Store<Rc<SimFs>>,
+    b_op: Operation,
+) {
+    let (hook_fs, hook_log) = (Rc::clone(fs), Rc::clone(log));
+    let shown = target.to_string_lossy().replace('\\', "/");
+    let mut fired = false;
+    fs.set_hook(Some(Box::new(move |_next| {
+        if fired {
+            return;
+        }
+        // None of these checks is a syscall, so none moves the crash point.
+        let after_rename = hook_fs
+            .trace()
+            .last()
+            .is_some_and(|line| line.starts_with("rename "));
+        if !after_rename || !hook_fs.snapshot().contains_key(&shown) || hook_fs.is_durable(&target)
+        {
+            return;
+        }
+        fired = true;
+        // B's commit may fail (the crash); the log shows whether it was
+        // acknowledged.
+        if commit(&mut b, &b_op, &hook_log).is_ok() {
+            hook_log.borrow_mut().raced = Some(race);
+        }
+    })));
+}
+
 /// The syscalls a run makes when nothing crashes.
 pub fn syscalls(variant: Variant, scenario: Scenario, mode: Mode, seed: u64) -> u64 {
     let fs = Rc::new(SimFs::new(seed, mode));
     let log = Rc::new(RefCell::new(Log::default()));
     run(&fs, scenario, variant, seed, &log).expect("an uncrashed run succeeds");
+    // Every seed races in the correct store; a variant may never reach the
+    // boundary (write-in-place has no rename).
+    if scenario == Scenario::TwoWriters && variant == Variant::Correct {
+        assert!(
+            log.borrow().raced.is_some(),
+            "seed {seed}: the uncrashed two-writer run must race"
+        );
+    }
     fs.syscalls()
 }
 
@@ -292,9 +410,29 @@ pub fn digest(fs: &SimFs) -> HashRef {
     HashAlg::Blake3.hash(&bytes)
 }
 
+/// A valid object: its kind and the ids it names.
+struct Object {
+    kind: ObjectKind,
+    refs: Vec<HashRef>,
+}
+
+/// An object file's content, if it is wholly a valid object (not an op).
+fn as_object(content: &[u8]) -> Option<Object> {
+    let kind = decode_envelope(content).ok()?.kind;
+    if kind == ObjectKind::Operation {
+        return None;
+    }
+    Some(Object {
+        kind,
+        refs: references(content).ok()?,
+    })
+}
+
 /// The present objects and ops under the store root, read from the raw state.
-fn present(snapshot: &BTreeMap<String, Node>) -> (BTreeSet<HashRef>, BTreeMap<HashRef, Operation>) {
-    let mut objects = BTreeSet::new();
+fn present(
+    snapshot: &BTreeMap<String, Node>,
+) -> (BTreeMap<HashRef, Object>, BTreeMap<HashRef, Operation>) {
+    let mut objects = BTreeMap::new();
     let mut ops = BTreeMap::new();
     for (path, node) in snapshot {
         let Node::File(content) = node else {
@@ -307,8 +445,10 @@ fn present(snapshot: &BTreeMap<String, Node>) -> (BTreeSet<HashRef>, BTreeMap<Ha
         if object_id(id.alg(), content) != id {
             continue;
         }
-        if dir == format!("{ROOT}/objects") && decode_envelope(content).is_ok() {
-            objects.insert(id);
+        if dir == format!("{ROOT}/objects")
+            && let Some(object) = as_object(content)
+        {
+            objects.insert(id, object);
         } else if dir == format!("{ROOT}/ops")
             && let Ok(op) = Operation::from_envelope(content)
         {
@@ -316,6 +456,34 @@ fn present(snapshot: &BTreeMap<String, Node>) -> (BTreeSet<HashRef>, BTreeMap<Ha
         }
     }
     (objects, ops)
+}
+
+/// Closure violations: missing parents and views of present ops, and missing
+/// references of every object those views reach.
+fn closure(objects: &BTreeMap<HashRef, Object>, ops: &BTreeMap<HashRef, Operation>) -> u64 {
+    let mut count = 0;
+    let mut stack = Vec::new();
+    for op in ops.values() {
+        count += op.parents.iter().filter(|p| !ops.contains_key(p)).count() as u64;
+        match objects.get(&op.view) {
+            Some(object) if object.kind == ObjectKind::View => stack.push(op.view),
+            _ => count += 1,
+        }
+    }
+    let mut seen = BTreeSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        for reference in &objects[&id].refs {
+            if objects.contains_key(reference) {
+                stack.push(*reference);
+            } else {
+                count += 1;
+            }
+        }
+    }
+    count
 }
 
 fn check(
@@ -341,7 +509,7 @@ fn check(
         };
         let valid = object_id(id.alg(), content) == id
             && if dir == format!("{ROOT}/objects") {
-                decode_envelope(content).is_ok()
+                as_object(content).is_some()
             } else if dir == format!("{ROOT}/ops") {
                 Operation::from_envelope(content).is_ok()
             } else {
@@ -351,17 +519,13 @@ fn check(
             v.torn += 1;
         }
     }
-    // Closure.
-    for op in ops.values() {
-        v.closure += op.parents.iter().filter(|p| !ops.contains_key(p)).count() as u64;
-        v.closure += op.objects.iter().filter(|o| !objects.contains(o)).count() as u64;
-    }
+    v.closure += closure(&objects, &ops);
     // Durability, of acknowledged ops and of acknowledged objects.
     v.durability += log.acked.iter().filter(|id| !ops.contains_key(id)).count() as u64;
     v.durability += log
         .objects_acked
         .iter()
-        .filter(|id| !objects.contains(id))
+        .filter(|id| !objects.contains_key(id))
         .count() as u64;
     // Heads: only attempted ops, and the heads the store reports.
     let attempted: BTreeSet<&HashRef> = log.attempted.iter().collect();
@@ -419,20 +583,26 @@ fn check(
 #[derive(Clone, Debug, Default)]
 pub struct Summary {
     pub cells: BTreeMap<Mode, u64>,
-    /// Cells per mode that ran the two-writer race.
-    pub races: BTreeMap<Mode, u64>,
+    /// Cells per mode and race kind that ran a two-writer race.
+    pub races: BTreeMap<(Mode, Race), u64>,
     pub violations: BTreeMap<Mode, Violations>,
 }
 
 impl Summary {
+    pub fn races(&self, mode: Mode, race: Race) -> u64 {
+        self.races.get(&(mode, race)).copied().unwrap_or(0)
+    }
+
     pub fn print(&self, variant: Variant) {
         for (mode, cells) in &self.cells {
             let v = self.violations[mode];
             println!(
-                "matrix {:<16} {mode:?}: {cells} cells ({} two-writer races); violations: \
-                 closure {} durability {} heads {} atomicity {} torn {} layout {} stray {}",
+                "matrix {:<16} {mode:?}: {cells} cells ({} view races, {} parent races); \
+                 violations: closure {} durability {} heads {} atomicity {} torn {} layout {} \
+                 stray {}",
                 variant.name(),
-                self.races.get(mode).copied().unwrap_or(0),
+                self.races(*mode, Race::View),
+                self.races(*mode, Race::Parent),
                 v.closure,
                 v.durability,
                 v.heads,
@@ -460,7 +630,9 @@ pub fn run_matrix(
                 for crash_at in 1..=n + 1 {
                     let (outcome, recovered) = run_cell(variant, scenario, mode, seed, crash_at);
                     *summary.cells.entry(mode).or_default() += 1;
-                    *summary.races.entry(mode).or_default() += u64::from(outcome.raced);
+                    if let Some(race) = outcome.raced {
+                        *summary.races.entry((mode, race)).or_default() += 1;
+                    }
                     summary
                         .violations
                         .entry(mode)

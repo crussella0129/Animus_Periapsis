@@ -60,11 +60,11 @@ fn corpus() -> Vec<Case> {
     };
     let operation_root = Operation {
         parents: BTreeSet::new(),
-        objects: BTreeSet::from([HashAlg::Blake3.hash(b"")]),
+        view: HashAlg::Blake3.hash(b""),
     };
     let operation_merge = Operation {
         parents: BTreeSet::from([HashAlg::Blake3.hash(b""), HashAlg::Sha256.hash(b"abc")]),
-        objects: BTreeSet::from([HashAlg::Sha256.hash(b""), HashAlg::Sha256.hash(b"abc")]),
+        view: HashAlg::Sha256.hash(b""),
     };
     let path = |p: &str| RepoPath::new(p).unwrap();
     let changeset_root = Changeset {

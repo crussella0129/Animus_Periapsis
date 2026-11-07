@@ -19,16 +19,21 @@ pub enum Variant {
     /// Writes each file directly under its final name, with no temporary
     /// file or rename (it still syncs the data and the directory).
     WriteInPlace,
+    /// `commit_op` does not re-sync the view it names (with `objects/`) or
+    /// its parent ops (with `ops/`), which another writer may have renamed
+    /// into place without syncing yet.
+    UnsyncedReferences,
 }
 
 impl Variant {
     /// Every variant, the correct one first.
-    pub const ALL: [Variant; 5] = [
+    pub const ALL: [Variant; 6] = [
         Variant::Correct,
         Variant::PointerFile,
         Variant::UnsyncedObjects,
         Variant::UnsyncedInit,
         Variant::WriteInPlace,
+        Variant::UnsyncedReferences,
     ];
 
     /// A short name for reports.
@@ -39,6 +44,7 @@ impl Variant {
             Variant::UnsyncedObjects => "unsynced-objects",
             Variant::UnsyncedInit => "unsynced-init",
             Variant::WriteInPlace => "write-in-place",
+            Variant::UnsyncedReferences => "unsynced-refs",
         }
     }
 }

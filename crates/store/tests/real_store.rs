@@ -6,8 +6,8 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
 
-use codec::{Operation, blob};
-use hash::HashAlg;
+use codec::{Operation, View, blob};
+use hash::{HashAlg, HashRef};
 use sim::{RealFs, Rng};
 use store::Store;
 
@@ -31,24 +31,17 @@ fn real_store_reopens_clean() {
         let mut store = Store::init(RealFs, &root, HashAlg::DEFAULT, 7).unwrap();
         let a = store.put_object(&blob(b"first")).unwrap();
         let b = store.put_object(&blob(b"second")).unwrap();
-        let base = store
-            .commit_op(&Operation {
-                parents: BTreeSet::new(),
-                objects: [a].into(),
-            })
-            .unwrap();
-        let left = store
-            .commit_op(&Operation {
-                parents: [base].into(),
-                objects: [b].into(),
-            })
-            .unwrap();
-        let right = store
-            .commit_op(&Operation {
-                parents: [base].into(),
-                objects: [a, b].into(),
-            })
-            .unwrap();
+        let mut commit = |parents: BTreeSet<HashRef>, heads: BTreeSet<HashRef>| {
+            let view = View {
+                heads,
+                workspaces: Default::default(),
+            };
+            let view = store.put_object(&view.to_envelope()).unwrap();
+            store.commit_op(&Operation { parents, view }).unwrap()
+        };
+        let base = commit(BTreeSet::new(), [a].into());
+        let left = commit([base].into(), [b].into());
+        let right = commit([base].into(), [a, b].into());
         assert_eq!(store.heads().unwrap(), BTreeSet::from([left, right]));
         (
             [(a, blob(b"first")), (b, blob(b"second"))],

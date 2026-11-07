@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-003 (sprint 2) [intent: INT-0006, INT-0007, INT-0005]: The operation names its view; closure through references inside objects (part of backlog T-012) — touches: docs/spec/, crates/codec/, crates/store/, crates/praps/tests/cli.rs
 - [ ] T-004 (sprint 2) [intent: INT-0005, INT-0004]: A scan syscall, an executable-bit capability and operating-system randomness in sim — touches: crates/sim/, crates/store/tests/common/matrix.rs, crates/xtask/src/policy.rs, Cargo.toml, Cargo.lock
 - [ ] T-005 (sprint 2) [intent: INT-0014, INT-0004, INT-0013]: The workspace crate: init, snapshot, new and status — touches: crates/workspace/, crates/xtask/src/policy.rs, Cargo.toml, Cargo.lock
 - [ ] T-006 (sprint 2) [intent: INT-0014]: praps init, praps new and praps status — touches: crates/praps/, Cargo.lock

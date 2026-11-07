@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::matrix::{Outcome, Scenario, Summary, run_matrix};
+use common::matrix::{Outcome, Race, Scenario, Summary, run_matrix};
 use hash::HashAlg;
 use sim::Mode;
 use store::Variant;
@@ -39,11 +39,16 @@ fn crash_matrix_finds_no_violations() {
     for violations in summary.violations.values() {
         assert_eq!(violations.total(), 0);
     }
-    // The two-writer race must actually run: some cells acknowledge B's op
-    // while X's name is not yet durable, so the re-sync is what saves it.
+    // Both two-writer races must actually run: some cells acknowledge B's
+    // op while the view or parent op it names is not yet durable, so the
+    // re-sync is what saves it.
     for mode in [Mode::Lenient, Mode::Strict] {
-        let races = summary.races.get(&mode).copied().unwrap_or(0);
-        assert!(races > 0, "no {mode:?} cell ran the two-writer race");
+        for race in [Race::View, Race::Parent] {
+            assert!(
+                summary.races(mode, race) > 0,
+                "no {mode:?} cell ran the {race:?} race"
+            );
+        }
     }
 }
 
@@ -71,14 +76,15 @@ fn matrix_runs_are_reproducible() {
     );
 }
 
-fn caught(variant: Variant) {
-    let (summary, _) = matrix(variant);
+fn caught(variant: Variant) -> Cells {
+    let (summary, cells) = matrix(variant);
     let strict = summary.violations[&Mode::Strict];
     assert!(
         strict.semantic() > 0,
         "{} produced no closure, durability, heads or atomicity violation: {strict:?}",
         variant.name()
     );
+    cells
 }
 
 #[test]
@@ -86,9 +92,35 @@ fn pointer_file_variant_is_caught() {
     caught(Variant::PointerFile);
 }
 
+/// Every data sync of an object file is skipped: acknowledged objects are
+/// lost or torn (Sprint 2 T-003).
 #[test]
 fn unsynced_objects_variant_is_caught() {
-    caught(Variant::UnsyncedObjects);
+    let cells = caught(Variant::UnsyncedObjects);
+    let strict = cells.iter().filter(|c| c.1 == Mode::Strict);
+    let durability: u64 = strict.clone().map(|c| c.4.violations.durability).sum();
+    let torn: u64 = strict.map(|c| c.4.violations.torn).sum();
+    assert!(
+        durability > 0 && torn > 0,
+        "durability {durability}, torn {torn}"
+    );
+}
+
+/// `commit_op` does not re-sync the view and parent ops it names: B's op can
+/// survive while what it names is lost, in both race kinds (Sprint 2 T-003;
+/// INT-0007 Consequences).
+#[test]
+fn unsynced_references_variant_is_caught() {
+    let cells = caught(Variant::UnsyncedReferences);
+    for race in [Race::View, Race::Parent] {
+        let closure: u64 = cells
+            .iter()
+            .filter(|c| c.1 == Mode::Strict && c.0 == Scenario::TwoWriters)
+            .filter(|c| c.2.is_multiple_of(2) == (race == Race::View))
+            .map(|c| c.4.violations.closure)
+            .sum();
+        assert!(closure > 0, "no closure violation in {race:?}-race cells");
+    }
 }
 
 #[test]

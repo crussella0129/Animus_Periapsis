@@ -228,3 +228,55 @@ fn event_kind_stays_reserved() {
         Err(DecodeError::ReservedObjectKind { kind: 0x05 })
     );
 }
+
+#[test]
+fn references_of_each_kind() {
+    use codec::{Operation, blob, references};
+    let h = |s: &[u8]| HashAlg::Blake3.hash(s);
+    assert_eq!(references(&blob(b"content")), Ok(Vec::new()));
+    let changeset = Changeset {
+        parents: vec![h(b"p2"), h(b"p1")],
+        change_id: [3; 16],
+        changes: [
+            (
+                path("a"),
+                Entry::Put {
+                    blob: h(b"a"),
+                    mode: Mode::Regular,
+                },
+            ),
+            (path("b"), Entry::Delete),
+            (
+                path("c"),
+                Entry::Put {
+                    blob: h(b"c"),
+                    mode: Mode::Executable,
+                },
+            ),
+        ]
+        .into(),
+        description: Vec::new(),
+    };
+    assert_eq!(
+        references(&changeset.to_envelope()),
+        Ok(vec![h(b"p2"), h(b"p1"), h(b"a"), h(b"c")])
+    );
+    let view = View {
+        heads: [h(b"head")].into(),
+        workspaces: [("default".to_owned(), h(b"wc"))].into(),
+    };
+    assert_eq!(
+        references(&view.to_envelope()),
+        Ok(vec![h(b"head"), h(b"wc")])
+    );
+    let op = Operation {
+        parents: [h(b"op")].into(),
+        view: h(b"view"),
+    };
+    assert_eq!(
+        references(&op.to_envelope()),
+        Ok(vec![h(b"op"), h(b"view")])
+    );
+    // A body that does not decode as its kind is an error, not "no references".
+    assert!(references(&encode_object(ObjectKind::View, &[0x01])).is_err());
+}

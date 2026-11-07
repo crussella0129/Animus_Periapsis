@@ -38,10 +38,27 @@ but the file and its directory are still synced, because another writer may
 have renamed it without syncing yet. If it holds other bytes (a copy a crash
 damaged), it is replaced through steps 1 to 5.
 
-`commit_op` first checks that every parent op and object the operation names
-is present and hashes to its id, syncs those files and their directories, and
-only then writes the op. It returns after step 5 of the op file; that return
-is the acknowledgement. `init` creates whichever of the root, `objects/` and
+`put_object` first checks that the object decodes as its kind and that every
+object it names (a changeset's parents and blobs, a view's heads and
+workspace changesets) is present and hashes to its id; otherwise it writes
+nothing. `commit_op` checks that every parent op and its view are present,
+hash to their ids and (for the view) decode as a view, then syncs the view
+with `objects/` and each parent op with `ops/`, and only then writes the op.
+It returns after step 5 of the op file; that return is the acknowledgement.
+
+Closure (INT-0007 AC-1) follows the references inside objects: op → view →
+changesets → blobs. It holds through reachability. No op can name an object
+before that object's put is acknowledged, and an acknowledged put is durable
+with everything it reaches, by induction: its references were acknowledged
+before it, and its own write ends with a sync of their shared directory. So
+`put_object` does not re-sync its references. An object that a crash leaves
+behind unacknowledged, with a reference lost, is reachable from no op, and
+`fsck` lists it as a leftover, not as corruption. `commit_op` does re-sync,
+because the op it writes can name another writer's view or parent op that is
+present but not yet durable. That includes a parent in the same directory: a
+crash between the new op's rename and its own directory sync could otherwise
+keep the in-flight op and lose the parent. The crash matrix probes both
+re-syncs with a race of each kind and a negative control. `init` creates whichever of the root, `objects/` and
 `ops/` is missing and then syncs `objects/`, `ops/`, the root and the
 directory holding the root's entry (its parent, or `root/..` for a bare
 relative name), so an interrupted `init` is completed by running it again.
@@ -125,8 +142,9 @@ Evidence:
   FAT, network shares (where a directory flush fails with an error) and
   macOS are not.
 - Concurrent writers in separate processes (INT-0007 AC-5) are not yet
-  tested. Two writers in one process are: the second runs at one of eight
-  syscall boundaries inside the first's put of an object, chosen by the seed.
+  tested. Two writers in one process are. The second commits an op at a fixed
+  boundary: right after the first renames its view into place, in even seeds,
+  or its op, in odd seeds, and before the first syncs that directory.
 - The simulator models a whole-system crash, in which everything not yet
   durable is resolved at once. A process that dies while the system keeps
   running leaves its unsynced changes visible to the next process; the store

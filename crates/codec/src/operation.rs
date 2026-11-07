@@ -1,7 +1,7 @@
 //! The `operation` object (kind `0x03`), *provisional* until the Phase 1 exit
 //! gate (`docs/spec/format-v1.md`, INT-0006).
 //!
-//! Body: `parents: set<hashref> ‖ objects: set<hashref>`.
+//! Body: `parents: set<hashref> ‖ view: hashref`.
 
 use std::collections::BTreeSet;
 
@@ -12,12 +12,12 @@ use crate::error::DecodeError;
 use crate::wire::{Decode, Decoder, Encode, Encoder, to_vec};
 
 /// One entry of the op log.
-#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Operation {
     /// The operations this one follows; empty for a root operation.
     pub parents: BTreeSet<HashRef>,
-    /// The objects this operation makes reachable.
-    pub objects: BTreeSet<HashRef>,
+    /// The id of the view this operation leaves.
+    pub view: HashRef,
 }
 
 impl Operation {
@@ -35,7 +35,7 @@ impl Operation {
 impl Encode for Operation {
     fn encode(&self, enc: &mut Encoder) {
         self.parents.encode(enc);
-        self.objects.encode(enc);
+        self.view.encode(enc);
     }
 }
 
@@ -43,7 +43,7 @@ impl Decode for Operation {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self, DecodeError> {
         Ok(Operation {
             parents: BTreeSet::decode(dec)?,
-            objects: BTreeSet::decode(dec)?,
+            view: HashRef::decode(dec)?,
         })
     }
 }
