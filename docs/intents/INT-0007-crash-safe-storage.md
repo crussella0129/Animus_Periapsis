@@ -6,7 +6,7 @@
 - **Work evidence:** [Sprint 1 T-004 build plan](../sprints/s1/sprint-plans/build-plan.md#t-004-object-and-op-file-store-with-derived-heads-and-fsck-in-the-store-crate), [Sprint 1 T-005 build plan](../sprints/s1/sprint-plans/build-plan.md#t-005-crash-matrix-with-negative-controls), [Sprint 1 T-006 build plan](../sprints/s1/sprint-plans/build-plan.md#t-006-fsck-corruption-corpus-and-the-praps-fsck-command), [Sprint 1 T-007 build plan](../sprints/s1/sprint-plans/build-plan.md#t-007-windows-durability-strategy-and-real-filesystem-evidence)
 - **Completion evidence:** none
 - **Code evidence:** none
-- **Test evidence:** none
+- **Test evidence:** [Sprint 1 test report](../sprints/s1/sprint-tests/test-report.md)
 - **Documentation evidence:** none
 
 ## Intent

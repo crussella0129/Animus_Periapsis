@@ -1,6 +1,6 @@
 # Sprint 1 End-to-End Test Results
 
-- **Status:** possible, and run, at tested head `499fb8c` ([test-matrix-log.md](test-matrix-log.md)).
+- **Status:** possible, and run, at tested head `9f138f4` ([test-matrix-log.md](test-matrix-log.md)).
 
 ### praps_fsck_end_to_end
 - **Intents:**
@@ -22,8 +22,8 @@
   - [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-1
 - **Run:** a fresh `git clone --branch dev` into the WSL ext4 home directory. Then `rustup toolchain install` from `rust-toolchain.toml`, then a cold `cargo ci`.
 - **Result:**
-  - Every step PASS, exit 0 in 64 s.
-  - 240 tests passed.
+  - Every step PASS, exit 0 in 358 s, on a busy host.
+  - 242 tests passed.
   - The run left no tracked file changed. The clone was removed afterwards.
 
 ### Not yet possible

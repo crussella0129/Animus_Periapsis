@@ -1,8 +1,8 @@
 # Sprint 1 Unit Test Results
 
-- **Tested head:** `499fb8c11f4461fe14900b13e3364d761cf9af78` on `dev`, committed. It includes the fixes from the Test-phase [code review](code-review.md) (`133127a`) and from the [round-1 test critique](critique-round1.md) (`a62632a`, `499fb8c`).
+- **Tested head:** `9f138f4df0f2dff4451ab22b1c81511de5d32811` on `dev`, committed, with a clean working tree. It includes the fixes from the Test-phase [code review](code-review.md) (`133127a`), the [round-1 test critique](critique-round1.md) (`a62632a`, `499fb8c`) and the [round-2 test critique](critique.md) (`9f138f4`).
 - **Runner:** the `test` step of `cargo ci` (`cargo test --workspace --locked`), run in the Windows working checkout and in a fresh WSL ext4 clone ([test-matrix-log.md](test-matrix-log.md), sections `int_ci_windows` and `e2e fresh_clone_ci`).
-- **Result:** 240 passed, 0 failed, 0 ignored on both systems. Sprint 0 ended with 171; Sprint 1 adds 69.
+- **Result:** 242 passed, 0 failed, 0 ignored on both systems. Sprint 0 ended with 171; Sprint 1 adds 71.
   - Two tests are platform-gated. `directory_flush_needs_write_access` has a Windows variant (write access needed for a directory flush) and a Unix variant (a read-only flush succeeds). `real_fs_meets_the_contract` runs on both.
 - **Toolchain:** rustc 1.99.1 (58cf8f9c3 2026-10-13) on `x86_64-pc-windows-msvc` (Windows 11 Pro 10.0.26300) and `x86_64-unknown-linux-gnu` (Ubuntu 26.04.1 LTS, WSL2 kernel 6.6.114.1).
 - **Randomness:**
@@ -19,12 +19,12 @@
 | `book` `tests/book.rs`, `tests/cli.rs` | 33, 4 |
 | `sim` `tests/contract.rs` | 17 |
 | `sim` `tests/real_durability.rs` | 2 |
-| `store` `tests/store.rs` | 15 |
+| `store` `tests/store.rs` | 17 |
 | `store` `tests/crash.rs` | 6 |
 | `store` `tests/fsck.rs` | 5 |
 | `store` `tests/real_store.rs`, `tests/relative_root.rs` | 1, 1 |
 | `praps` `tests/cli.rs` | 5 |
-| **Total** | **240** |
+| **Total** | **242** |
 
 Each table maps one task's EARS clauses (from the locked [build plan](../sprint-plans/build-plan.md)) to the tests that assert them. Tests added for code-review findings sit beside the clause they strengthen.
 
@@ -63,7 +63,7 @@ Each table maps one task's EARS clauses (from the locked [build plan](../sprint-
 | EARS clause | Test | Result |
 |---|---|---|
 | Crate configs of `sim`, `store`, `praps` ban the filesystem API and keep the hash bans | `policy_enforces_the_fs_boundary` (missing config; missing `File`, `read`, `Path::exists` bans); probe in `test-matrix-log.md` ("real filesystem calls in store/src fail Clippy": `std::fs::read` and `Path::exists` rejected) | pass |
-| Opt-outs only in `sim/src/real.rs` and `tests/` | `policy_enforces_the_fs_boundary`: ten attribute forms (including `allow(warnings)` after code review 3), four Cargo `[lints]` settings, a moved crate found by package name (code review 7), a `src/target` module scanned (code review 8), and four `#[path]`/`include!` escapes (test critique C-003) | pass |
+| Opt-outs only in `sim/src/real.rs` and `tests/` | `policy_enforces_the_fs_boundary`: ten attribute forms (including `allow(warnings)` after code review 3), four Cargo `[lints]` settings, a moved crate found by package name (code review 7), a `src/target` module scanned (code review 8), eight escapes: `#[path]`, `cfg_attr(…, path = …)`, `include!` called directly, spaced or renamed through `use` (test critique round 1 C-003, round 2 C-001), with data includes, comments and `#[doc]` passing | pass |
 | The `clippy` rule accepts only member configs that keep the hash bans | `policy_accepts_only_member_configs_with_the_hash_bans`, `policy_requires_disallowed_hash_collections` | pass |
 
 ## T-004: Object and op-file store
@@ -79,6 +79,7 @@ Each table maps one task's EARS clauses (from the locked [build plan](../sprint-
 | A commit with a missing parent or object writes nothing | `commit_with_missing_parent_writes_nothing`, `commit_with_missing_object_writes_nothing` | pass |
 | Heads of chains, forks and merges are derived from op files | `heads_of_a_chain`, `heads_of_a_fork_and_merge` | pass |
 | No other file is created; no delete or overwrite API | `store_creates_no_other_files`; the public API (reviewed) | pass |
+| A damaged copy under a final name is replaced through the write sequence (the durability note; round 2 C-003) | `a_damaged_copy_is_replaced` (exact trace `read`, `create_new tmp-…`, `write`, `sync_file`, `rename`, `sync_dir`) | pass |
 | `fsck` reports each fault kind and lists leftovers | `fsck_reports_each_fault_kind`, `fsck_lists_tmp_files_as_leftovers` | pass |
 | Code review 5: relative roots work on `RealFs` | `relative_roots_work_on_the_real_filesystem` (`repo` and `.`) | pass, both systems |
 
@@ -101,7 +102,7 @@ Each table maps one task's EARS clauses (from the locked [build plan](../sprint-
 |---|---|---|
 | 100% detection over truncations, bit flips, missing references and bad names | `fsck_detects_every_truncation` (243 of 243), `fsck_detects_every_bit_flip` (40 of 40), `fsck_detects_missing_references`, `fsck_detects_unparsable_names` | pass |
 | 0 false reports on matrix-recovered stores | `fsck_is_clean_on_matrix_stores` (16,256 raw recovered states that open) | pass |
-| `praps fsck` reads only | `fsck_exits_zero_on_a_healthy_store` compares the whole tree before and after; `praps` uses `Store::inspect`, which makes no writing or flushing syscall (test critique C-008) | pass |
+| `praps fsck` reads only | `inspect_and_fsck_only_read` (every syscall of `Store::inspect` and `fsck` is a `read` or `list`; round 2 C-002); `fsck_exits_zero_on_a_healthy_store` compares the whole tree before and after. That `praps` calls `inspect` is reviewed: `RealFs` keeps no trace | pass |
 | `praps fsck` exits 0, 1 or 2 | `fsck_exits_zero_on_a_healthy_store`, `fsck_without_dir_checks_the_current_directory`, `fsck_lists_corrupt_files_and_exits_one`, `fsck_on_a_non_store_exits_one` (a missing path, a plain directory, a file), `usage_errors_exit_two` | pass, both systems |
 
 ## T-007: Windows durability strategy
