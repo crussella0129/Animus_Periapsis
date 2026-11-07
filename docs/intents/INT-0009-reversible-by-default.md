@@ -2,8 +2,8 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0009
-- **State:** proposed
-- **Work evidence:** none
+- **State:** planned
+- **Work evidence:** [Sprint 3 T-004 build plan](../sprints/s3/sprint-plans/build-plan.md#t-004-specify-writing-the-working-copy-undo-restore-and-log), [Sprint 3 T-005 build plan](../sprints/s3/sprint-plans/build-plan.md#t-005-hazards-materialise-the-working-copy-record-and-log-undo-and-restore-in-workspace), [Sprint 3 T-006 build plan](../sprints/s3/sprint-plans/build-plan.md#t-006-praps-log-praps-undo-and-praps-restore-op), [Sprint 3 T-007 build plan](../sprints/s3/sprint-plans/build-plan.md#t-007-reversibility-and-hazard-corpora-the-materialise-crash-scenario-and-the-extended-edit-corpus), [Sprint 3 T-008 build plan](../sprints/s3/sprint-plans/build-plan.md#t-008-readme-credits-and-backlog)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none
@@ -55,6 +55,18 @@ byte counts.
 - Storage grows until an explicit, signed GC runs, so GC policy and signing
   rights must exist before long-lived repositories do.
 - Redacting sensitive data is itself a visible, attributed erasure operation.
+- `undo` is itself an operation: it restores the view of the head op's parent
+  after the usual snapshot, so edits made since the last command are undone
+  too and stay reachable by `restore`. A second `undo` undoes the first.
+  `restore OP` returns to any earlier view. Neither removes an op (Sprint 3
+  Plan).
+- Writing the working copy is not atomic, so it is journalled: a record in
+  `.praps/`, written durably before the op that needs it, lets the next
+  command finish an interrupted write instead of snapshotting a half-written
+  working copy as user edits. The record is working-copy state, not a store
+  pointer ([INT-0007](INT-0007-crash-safe-storage.md)).
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 III §2 as corrected by R1 and R3).
+- 2026-11-07: revised while `proposed` (Sprint 3 Plan): Consequences record that `undo` and `restore` are themselves operations (undo toggles; edits stay reachable) and that writing the working copy is journalled by a record in `.praps/`.
+- 2026-11-07: `proposed` → `planned` (Sprint 3 build plan T-004 to T-008: AC-1 to AC-3; AC-4 and AC-5 wait for signed erasure and partial clones).
