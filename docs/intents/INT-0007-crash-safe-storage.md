@@ -3,10 +3,10 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0007
 - **State:** active
-- **Work evidence:** [Sprint 1 T-004 build plan](../sprints/s1/sprint-plans/build-plan.md#t-004-object-and-op-file-store-with-derived-heads-and-fsck-in-the-store-crate), [Sprint 1 T-005 build plan](../sprints/s1/sprint-plans/build-plan.md#t-005-crash-matrix-with-negative-controls), [Sprint 1 T-006 build plan](../sprints/s1/sprint-plans/build-plan.md#t-006-fsck-corruption-corpus-and-the-praps-fsck-command), [Sprint 1 T-007 build plan](../sprints/s1/sprint-plans/build-plan.md#t-007-windows-durability-strategy-and-real-filesystem-evidence), [T-011 backlog](../work/tasks.md)
-- **Completion evidence:** [Sprint 1 T-004 completion](../work/completed-tasks.md#t-004-sprint-1), [Sprint 1 T-005 completion](../work/completed-tasks.md#t-005-sprint-1), [Sprint 1 T-006 completion](../work/completed-tasks.md#t-006-sprint-1), [Sprint 1 T-007 completion](../work/completed-tasks.md#t-007-sprint-1)
-- **Code evidence:** [crates/store](../../crates/store/src/lib.rs), [crates/praps](../../crates/praps/src/main.rs)
-- **Test evidence:** [Sprint 1 test report](../sprints/s1/sprint-tests/test-report.md)
+- **Work evidence:** [Sprint 1 T-004 build plan](../sprints/s1/sprint-plans/build-plan.md#t-004-object-and-op-file-store-with-derived-heads-and-fsck-in-the-store-crate), [Sprint 1 T-005 build plan](../sprints/s1/sprint-plans/build-plan.md#t-005-crash-matrix-with-negative-controls), [Sprint 1 T-006 build plan](../sprints/s1/sprint-plans/build-plan.md#t-006-fsck-corruption-corpus-and-the-praps-fsck-command), [Sprint 1 T-007 build plan](../sprints/s1/sprint-plans/build-plan.md#t-007-windows-durability-strategy-and-real-filesystem-evidence), [T-011 backlog](../work/tasks.md), [Sprint 2 T-003 build plan](../sprints/s2/sprint-plans/build-plan.md#t-003-the-operation-names-its-view-closure-through-references-inside-objects), [Sprint 2 T-007 build plan](../sprints/s2/sprint-plans/build-plan.md#t-007-snapshot-crash-scenario-and-edit-corpora)
+- **Completion evidence:** [Sprint 1 T-004 completion](../work/completed-tasks.md#t-004-sprint-1), [Sprint 1 T-005 completion](../work/completed-tasks.md#t-005-sprint-1), [Sprint 1 T-006 completion](../work/completed-tasks.md#t-006-sprint-1), [Sprint 1 T-007 completion](../work/completed-tasks.md#t-007-sprint-1), [Sprint 2 T-003 completion](../work/completed-tasks.md#t-003-sprint-2), [Sprint 2 T-007 completion](../work/completed-tasks.md#t-007-sprint-2)
+- **Code evidence:** [crates/store](../../crates/store/src/lib.rs), [crates/praps](../../crates/praps/src/main.rs), [references.rs](../../crates/codec/src/references.rs)
+- **Test evidence:** [Sprint 1 test report](../sprints/s1/sprint-tests/test-report.md), [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md)
 - **Documentation evidence:** [Storage durability](../spec/storage-durability.md)
 
 ## Intent
@@ -70,6 +70,22 @@ and referential integrity.
   nothing, so it works on read-only media.
 - The directory holding a root's entry is its parent, or `root/..` for a bare
   relative name such as `repo` or `.`, whose parent path is empty.
+- Closure follows references inside objects (op → view → changesets →
+  blobs). The store refuses an object or op whose direct references are not
+  present, valid and of the kind it must be. Closure holds by induction over
+  acknowledged puts, for two reasons. A writer syncs a file's data before
+  renaming it. Every object lives in `objects/`, and each put ends with a
+  sync of that directory, which also makes durable a name that another
+  writer renamed but has not synced. An unacknowledged object that survives
+  a crash with a lost reference is unreachable from every op; `fsck` lists
+  it as a leftover, not a fault.
+- A writer may name another writer's view or parent op that is present but
+  not yet durable, so `commit_op` re-syncs the view with `objects/`, and each
+  parent op with `ops/`, before writing the op. The parent re-sync is needed
+  even within one directory, because a crash between the new op's rename and
+  its own directory sync can keep the in-flight op and lose an unsynced
+  parent. Both re-syncs share one negative control, exercised by a race of
+  each kind.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 I.5 step 8 and R2 §3).
@@ -78,3 +94,8 @@ and referential integrity.
 - 2026-11-06: `proposed` → `planned` (Sprint 1 build plan T-004 to T-007: the store, the crash matrix, `fsck` and the Windows durability note; AC-5, four writing processes, is deferred to a later sprint).
 - 2026-11-06: `planned` → `active` (Sprint 1 build, T-004 starts: the store crate).
 - 2026-11-06: revised while `active` (Sprint 1 Loop): Consequences record that opening for writing syncs the layout, that `fsck` opens read-only, and how a relative root's parent is found (Sprint 1 code review and test critiques). AC-1 to AC-4 are met by the Sprint 1 test report; AC-5 (four writing processes) remains, so the chapter stays `active`.
+- 2026-11-07: revised while `active` (Sprint 2 Plan): Consequences record that closure follows references inside objects and holds by induction, because an object is written only after its direct references are present, valid and synced.
+- 2026-11-07: revised while `active` (Sprint 2 plan critique, round 1): the closure-by-induction Consequence now says which re-syncs are needed: none for references inside `objects/`, which the object's own directory sync covers, and `commit_op`'s cross-directory re-sync of the view and parents.
+- 2026-11-07: revised while `active` (Sprint 2 plan critique, round 2): the closure Consequence is restated through reachability from ops, with unreachable objects reported as leftovers, and the re-sync Consequence names both the view and the same-directory parent re-sync, each probed by its own race.
+- 2026-11-07: revised while `active` (Sprint 2 code review, CR-11 and CR-14): references must also be of the kind they name (a view's heads and workspaces are changesets, a changeset's puts are blobs), and the closure Consequence rests on data-before-names and the shared `objects/` directory sync rather than on acknowledgement order alone.
+- 2026-11-07: evidence while `active` (Sprint 2 Loop): AC-1 to AC-4 hold again with closure through references and reference kinds (Sprint 2 test report). AC-5 (four writing processes) remains in backlog T-011.

@@ -23,6 +23,14 @@
 //! A run with crash point *k* lets syscalls 1 to *k* − 1 take effect; syscall
 //! *k* takes no effect and fails, as does every later one. [`SimFs::recover`]
 //! then gives the filesystem a restart would see.
+//!
+//! Test helpers that are not syscalls add what the [`Fs`] methods cannot
+//! make: executable bits, symbolic links, other special entries, and names
+//! with no UTF-8 form ([`SimFs::set_executable`], [`SimFs::make_symlink`],
+//! [`SimFs::make_other`], [`SimFs::make_raw`]). Each takes effect at once and
+//! is durable, and none is counted or traced. A raw name is held as its
+//! bytes or code units, the same on every host, under a key no `Path` the
+//! simulator accepts can name.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -30,6 +38,7 @@ use std::io::{self, ErrorKind};
 use std::path::{Component, Path, PathBuf};
 
 use crate::fs::{Crash, Fs};
+use crate::name::{DirEntry, Kind, Name, RawName};
 use crate::rng::Rng;
 
 /// Which directory-entry durability the simulator assumes.
@@ -49,12 +58,20 @@ pub enum Node {
     Dir,
     /// A file and its content.
     File(Vec<u8>),
+    /// A file with its executable bit set, and its content.
+    Executable(Vec<u8>),
+    /// A symbolic link.
+    Symlink,
+    /// A special entry: a FIFO, socket or device.
+    Other,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Entry {
     File(u64),
     Dir,
+    Symlink,
+    Other,
 }
 
 #[derive(Clone, Debug)]
@@ -105,10 +122,18 @@ impl DirOp {
     }
 }
 
+/// The key a raw name is held under: a NUL, which no name the simulator
+/// gives out holds, then its display form.
+fn raw_key(raw: &RawName) -> String {
+    format!("\0{}", Name::Raw(raw.clone()).display())
+}
+
 #[derive(Clone, Debug, Default)]
 struct Dir {
     /// What a reader sees now.
     entries: BTreeMap<String, Entry>,
+    /// The names behind raw keys (see [`raw_key`]).
+    raw: BTreeMap<String, RawName>,
     /// The entries as of the last `sync_dir` (plus lenient-mode promotions).
     durable: BTreeMap<String, Entry>,
     /// Entry changes since then, in order.
@@ -119,6 +144,8 @@ struct Dir {
 struct Inode {
     current: Vec<u8>,
     durable: Vec<u8>,
+    /// The owner-execute bit (metadata; durable at once).
+    executable: bool,
     /// Whether an `overwrite` truncated the file since its last sync, so a
     /// crash may lose bytes that were durable.
     truncated: bool,
@@ -135,6 +162,8 @@ struct State {
     dirs: BTreeMap<PathBuf, Dir>,
     inodes: BTreeMap<u64, Inode>,
     next_inode: u64,
+    /// Whether files carry an executable bit ([`Fs::has_executable_bit`]).
+    executable_bit: bool,
 }
 
 /// A hook run at a syscall boundary, given the number the next syscall will
@@ -167,6 +196,11 @@ fn key(path: &Path) -> io::Result<PathBuf> {
     let mut key = PathBuf::new();
     for part in path.components() {
         match part {
+            // A NUL is refused, as real filesystems refuse it; it also keeps
+            // the raw-name keys (see [`raw_key`]) out of reach (CR-12).
+            Component::Normal(name) if name.as_encoded_bytes().contains(&0) => {
+                return Err(error(ErrorKind::InvalidInput, "a name holds a NUL", path));
+            }
             Component::Normal(name) => key.push(name),
             Component::CurDir => {}
             Component::ParentDir if key.pop() => {}
@@ -213,6 +247,9 @@ impl State {
         match self.dir(&parent, path)?.entries.get(&name) {
             Some(Entry::File(inode)) => Ok(*inode),
             Some(Entry::Dir) => Err(error(ErrorKind::IsADirectory, "is a directory", path)),
+            Some(Entry::Symlink | Entry::Other) => {
+                Err(error(ErrorKind::InvalidInput, "not a regular file", path))
+            }
             None => Err(error(ErrorKind::NotFound, "no such file", path)),
         }
     }
@@ -240,9 +277,112 @@ impl SimFs {
                 dirs,
                 inodes: BTreeMap::new(),
                 next_inode: 0,
+                executable_bit: true,
             }),
             hook: RefCell::new(None),
         }
+    }
+
+    /// Whether files carry an executable bit; `true` unless set otherwise,
+    /// the same on every host.
+    pub fn set_has_executable_bit(&self, has: bool) {
+        self.state.borrow_mut().executable_bit = has;
+    }
+
+    /// Sets a file's executable bit. Not a syscall.
+    pub fn set_executable(&self, path: &Path, executable: bool) -> io::Result<()> {
+        let mut st = self.state.borrow_mut();
+        let id = st.file(path)?;
+        st.inode(id).executable = executable;
+        Ok(())
+    }
+
+    /// Adds a durable entry `entry` named `name` in `dir`.
+    fn make(&self, dir: &Path, name: String, entry: Entry) -> io::Result<()> {
+        let full = key(dir)?;
+        let mut st = self.state.borrow_mut();
+        let dir_state = st.dir_mut(&full, dir)?;
+        if dir_state.entries.contains_key(&name) {
+            return Err(error(ErrorKind::AlreadyExists, "already exists", dir));
+        }
+        dir_state.entries.insert(name.clone(), entry);
+        dir_state.durable.insert(name, entry);
+        Ok(())
+    }
+
+    /// Creates a symbolic link at `path`. Not a syscall.
+    pub fn make_symlink(&self, path: &Path) -> io::Result<()> {
+        let (parent, name) = split(path)?;
+        self.make(&parent, name, Entry::Symlink)
+    }
+
+    /// Creates a special entry (FIFO, socket, device) at `path`. Not a syscall.
+    pub fn make_other(&self, path: &Path) -> io::Result<()> {
+        let (parent, name) = split(path)?;
+        self.make(&parent, name, Entry::Other)
+    }
+
+    /// Creates a file in `dir` whose name has no UTF-8 form, holding
+    /// `content`. Not a syscall.
+    pub fn make_raw(&self, dir: &Path, raw: RawName, content: &[u8]) -> io::Result<()> {
+        // Only a name that really has no UTF-8 form is raw (CR-12).
+        let has_utf8_form = match &raw {
+            RawName::Bytes(bytes) => std::str::from_utf8(bytes).is_ok(),
+            RawName::Wide(units) => char::decode_utf16(units.iter().copied()).all(|c| c.is_ok()),
+        };
+        if has_utf8_form {
+            return Err(error(
+                ErrorKind::InvalidInput,
+                "the raw name has a UTF-8 form",
+                dir,
+            ));
+        }
+        let key_name = raw_key(&raw);
+        let id = {
+            let mut st = self.state.borrow_mut();
+            let id = st.next_inode;
+            st.next_inode += 1;
+            st.inodes.insert(
+                id,
+                Inode {
+                    current: content.to_vec(),
+                    durable: content.to_vec(),
+                    ..Inode::default()
+                },
+            );
+            id
+        };
+        self.make(dir, key_name.clone(), Entry::File(id))?;
+        let full = key(dir)?;
+        self.state
+            .borrow_mut()
+            .dir_mut(&full, dir)?
+            .raw
+            .insert(key_name, raw);
+        Ok(())
+    }
+
+    /// Creates an empty directory in `dir` whose name has no UTF-8 form. Not
+    /// a syscall. Like every raw name, no `Path` reaches inside it.
+    pub fn make_raw_dir(&self, dir: &Path, raw: RawName) -> io::Result<()> {
+        let has_utf8_form = match &raw {
+            RawName::Bytes(bytes) => std::str::from_utf8(bytes).is_ok(),
+            RawName::Wide(units) => char::decode_utf16(units.iter().copied()).all(|c| c.is_ok()),
+        };
+        if has_utf8_form {
+            return Err(error(
+                ErrorKind::InvalidInput,
+                "the raw name has a UTF-8 form",
+                dir,
+            ));
+        }
+        let key_name = raw_key(&raw);
+        self.make(dir, key_name.clone(), Entry::Dir)?;
+        let full = key(dir)?;
+        let mut st = self.state.borrow_mut();
+        st.dirs.insert(full.join(&key_name), Dir::default());
+        st.dir_mut(&full, dir)?.raw.insert(key_name, raw);
+        Ok(())
     }
 
     /// Crash at syscall `at` (counting from 1), or never.
@@ -289,23 +429,44 @@ impl SimFs {
     }
 
     /// Everything visible now, keyed by `/`-separated path (the root
-    /// excluded).
+    /// excluded). A raw name appears by its display form.
     pub fn snapshot(&self) -> BTreeMap<String, Node> {
         let st = self.state.borrow();
         let mut out = BTreeMap::new();
         let mut stack = vec![PathBuf::new()];
         while let Some(dir) = stack.pop() {
-            for (name, entry) in &st.dirs[&dir].entries {
+            let dir_state = &st.dirs[&dir];
+            for (name, entry) in &dir_state.entries {
                 let path = dir.join(name);
-                match entry {
+                // Every name by its display form, so a raw name and a UTF-8
+                // name spelled like its escape stay apart.
+                let display = match dir_state.raw.get(name) {
+                    Some(raw) => Name::Raw(raw.clone()).display(),
+                    None => Name::Utf8(name.clone()).display(),
+                };
+                // Joined as text: a display form may hold a `\`, which a
+                // Windows `Path` would split on.
+                let shown_path = match shown(&dir) {
+                    parent if parent.is_empty() => display,
+                    parent => format!("{parent}/{display}"),
+                };
+                let node = match entry {
                     Entry::Dir => {
-                        out.insert(shown(&path), Node::Dir);
                         stack.push(path);
+                        Node::Dir
                     }
                     Entry::File(inode) => {
-                        out.insert(shown(&path), Node::File(st.inodes[inode].current.clone()));
+                        let inode = &st.inodes[inode];
+                        if inode.executable {
+                            Node::Executable(inode.current.clone())
+                        } else {
+                            Node::File(inode.current.clone())
+                        }
                     }
-                }
+                    Entry::Symlink => Node::Symlink,
+                    Entry::Other => Node::Other,
+                };
+                out.insert(shown_path, node);
             }
         }
         out
@@ -349,16 +510,25 @@ impl SimFs {
                                     current: content.clone(),
                                     durable: content,
                                     truncated: false,
+                                    executable: st.inodes[id].executable,
                                 },
                             );
                         }
                     }
+                    Entry::Symlink | Entry::Other => {}
                 }
             }
+            let raw = st.dirs[&path]
+                .raw
+                .iter()
+                .filter(|(key, _)| entries.contains_key(*key))
+                .map(|(key, raw)| (key.clone(), raw.clone()))
+                .collect();
             dirs.insert(
                 path,
                 Dir {
                     entries: entries.clone(),
+                    raw,
                     durable: entries,
                     pending: Vec::new(),
                 },
@@ -376,6 +546,7 @@ impl SimFs {
                 dirs,
                 inodes,
                 next_inode: st.next_inode,
+                executable_bit: st.executable_bit,
             }),
             hook: RefCell::new(None),
         }
@@ -537,7 +708,7 @@ impl Fs for SimFs {
         let dir = st.dir_mut(&from_parent, from)?;
         let entry = match dir.entries.get(&from_name) {
             Some(Entry::File(id)) => Entry::File(*id),
-            Some(Entry::Dir) => {
+            Some(Entry::Dir | Entry::Symlink | Entry::Other) => {
                 return Err(error(
                     ErrorKind::Unsupported,
                     "the simulator renames files only",
@@ -598,5 +769,42 @@ impl Fs for SimFs {
         dir.entries.remove(&name);
         dir.pending.push(DirOp::Remove { name, entry });
         Ok(())
+    }
+
+    fn scan(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        self.syscall("scan", path)?;
+        let full = key(path)?;
+        let st = self.state.borrow();
+        let Some(dir) = st.dirs.get(&full) else {
+            return match st.file(path) {
+                Ok(_) => Err(error(ErrorKind::NotADirectory, "not a directory", path)),
+                Err(error) => Err(error),
+            };
+        };
+        let executable_bit = st.executable_bit;
+        let mut entries: Vec<DirEntry> = dir
+            .entries
+            .iter()
+            .map(|(name, entry)| DirEntry {
+                name: match dir.raw.get(name) {
+                    Some(raw) => Name::Raw(raw.clone()),
+                    None => Name::Utf8(name.clone()),
+                },
+                kind: match entry {
+                    Entry::File(id) => Kind::File {
+                        executable: executable_bit && st.inodes[id].executable,
+                    },
+                    Entry::Dir => Kind::Dir,
+                    Entry::Symlink => Kind::Symlink,
+                    Entry::Other => Kind::Other,
+                },
+            })
+            .collect();
+        entries.sort_by_cached_key(|entry| entry.name.display());
+        Ok(entries)
+    }
+
+    fn has_executable_bit(&self) -> bool {
+        self.state.borrow().executable_bit
     }
 }

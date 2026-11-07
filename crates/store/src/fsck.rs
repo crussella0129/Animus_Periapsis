@@ -5,7 +5,7 @@ use std::fmt;
 use std::io;
 use std::path::Path;
 
-use codec::{Operation, decode_envelope, object_id};
+use codec::{ObjectKind, Operation, decode_envelope, object_id, typed_references};
 use hash::HashRef;
 use sim::Fs;
 
@@ -25,8 +25,10 @@ pub enum ProblemKind {
     Undecodable(String),
     /// A valid op names a parent op that is missing or invalid.
     MissingParent(HashRef),
-    /// A valid op names an object that is missing or invalid.
-    MissingObject(HashRef),
+    /// A valid op names a view, or an object reachable from a valid op names
+    /// an object, that is missing, invalid, or not of the kind it must be (a
+    /// view, a changeset or a blob; code review CR-11).
+    MissingReference(HashRef),
     /// The store's directory holds something other than `objects/` and
     /// `ops/`, such as a pointer file.
     Unexpected,
@@ -52,8 +54,8 @@ impl fmt::Display for Problem {
             ProblemKind::MissingParent(id) => {
                 write!(f, "{path}: parent op {} is missing", file_name(id))
             }
-            ProblemKind::MissingObject(id) => {
-                write!(f, "{path}: object {} is missing", file_name(id))
+            ProblemKind::MissingReference(id) => {
+                write!(f, "{path}: referenced object {} is missing", file_name(id))
             }
             ProblemKind::Unexpected => write!(f, "{path}: not part of a store"),
         }
@@ -65,8 +67,9 @@ impl fmt::Display for Problem {
 pub struct Report {
     /// Corruption, in path order. Empty means the store is healthy.
     pub problems: Vec<Problem>,
-    /// Temporary files a crash left behind. They are not corruption: the
-    /// store never reads them.
+    /// What a crash may leave behind that is not corruption: temporary files,
+    /// which the store never reads, and objects that no op reaches whose own
+    /// references are missing (an interrupted write; INT-0007 Consequences).
     pub leftovers: Vec<String>,
 }
 
@@ -101,12 +104,23 @@ pub(crate) fn check(fs: &impl Fs, root: &Path) -> io::Result<Report> {
         }
     }
 
-    let mut objects = BTreeSet::new();
+    // Each valid object: its file name, its kind and the ids it names.
+    #[allow(clippy::type_complexity)]
+    let mut objects: BTreeMap<HashRef, (String, ObjectKind, Vec<(HashRef, ObjectKind)>)> =
+        BTreeMap::new();
     for name in object_names {
+        let mut decoded = None;
         if let Some(id) = file(fs, root, OBJECTS, &name, &mut report, |bytes| {
-            decode_envelope(bytes).map(drop).map_err(|e| e.to_string())
+            let kind = decode_envelope(bytes).map_err(|e| e.to_string())?.kind;
+            if kind == ObjectKind::Operation {
+                return Err("an operation is not an object".to_owned());
+            }
+            let refs = typed_references(bytes).map_err(|e| e.to_string())?;
+            decoded = Some((kind, refs));
+            Ok(())
         }) {
-            objects.insert(id);
+            let (kind, refs) = decoded.expect("a valid object decoded");
+            objects.insert(id, (name, kind, refs));
         }
     }
 
@@ -123,6 +137,8 @@ pub(crate) fn check(fs: &impl Fs, root: &Path) -> io::Result<Report> {
     }
 
     let valid_ops: BTreeSet<&HashRef> = ops.keys().map(|(id, _)| id).collect();
+    let mut reachable = BTreeSet::new();
+    let mut stack = Vec::new();
     for ((_, name), op) in &ops {
         let path = format!("{OPS}/{name}");
         for parent in &op.parents {
@@ -133,16 +149,46 @@ pub(crate) fn check(fs: &impl Fs, root: &Path) -> io::Result<Report> {
                 });
             }
         }
-        for object in &op.objects {
-            if !objects.contains(object) {
+        match objects.get(&op.view) {
+            Some((_, ObjectKind::View, _)) => stack.push(op.view),
+            _ => report.problems.push(Problem {
+                path,
+                kind: ProblemKind::MissingReference(op.view),
+            }),
+        }
+    }
+    // Every object reachable from a valid op must have its references.
+    while let Some(id) = stack.pop() {
+        if !reachable.insert(id) {
+            continue;
+        }
+        let (name, _, refs) = &objects[&id];
+        for (reference, kind) in refs {
+            if objects
+                .get(reference)
+                .is_some_and(|(_, found, _)| found == kind)
+            {
+                stack.push(*reference);
+            } else {
                 report.problems.push(Problem {
-                    path: path.clone(),
-                    kind: ProblemKind::MissingObject(*object),
+                    path: format!("{OBJECTS}/{name}"),
+                    kind: ProblemKind::MissingReference(*reference),
                 });
             }
         }
     }
+    // An object no op reaches, with a reference missing, is a leftover.
+    for (id, (name, _, refs)) in &objects {
+        let broken = |(r, kind): &(HashRef, ObjectKind)| {
+            !objects.get(r).is_some_and(|(_, found, _)| found == kind)
+        };
+        if !reachable.contains(id) && refs.iter().any(broken) {
+            report.leftovers.push(format!("{OBJECTS}/{name}"));
+        }
+    }
     report.problems.sort();
+    report.problems.dedup();
+    report.leftovers.sort();
     Ok(report)
 }
 

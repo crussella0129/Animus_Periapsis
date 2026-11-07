@@ -45,10 +45,39 @@ const DISALLOWED: [&str; 2] = ["std::collections::HashMap", "std::collections::H
 const TEST_ONLY_FEATURE: (&str, &str) = ("store", "variants");
 /// The crates whose filesystem I/O must go through `sim::Fs` (INT-0005), by
 /// directory under `crates/`.
-const FS_BOUNDARY_CRATES: [&str; 3] = ["sim", "store", "praps"];
+const FS_BOUNDARY_CRATES: [&str; 4] = ["sim", "store", "praps", "workspace"];
 /// The one source file in those crates that may touch the real filesystem,
 /// relative to the `sim` crate.
 const FS_REAL_HALF: (&str, &str) = ("sim", "src/real.rs");
+/// The crate that supplies operating-system randomness, and the one member
+/// that may depend on it: only `sim`'s real half draws from the operating
+/// system, so every simulated run stays a function of its seed (INT-0005
+/// AC-1).
+const OS_RANDOM: (&str, &str) = ("getrandom", "sim");
+/// Its functions, which every boundary crate's Clippy config must disallow
+/// (only `crates/sim/src/real.rs` may switch the lint off).
+const OS_RANDOM_METHODS: [&str; 4] = [
+    "getrandom::fill",
+    "getrandom::fill_uninit",
+    "getrandom::u32",
+    "getrandom::u64",
+];
+/// The `ignore` crate's types and functions that read the real filesystem,
+/// which a boundary crate depending on it must disallow: it may only feed
+/// `GitignoreBuilder::add_line` with lines read through `sim::Fs`.
+const IGNORE_CRATE: &str = "ignore";
+const IGNORE_TYPES: [&str; 3] = [
+    "ignore::Walk",
+    "ignore::WalkBuilder",
+    "ignore::WalkParallel",
+];
+const IGNORE_METHODS: [&str; 5] = [
+    "ignore::gitignore::GitignoreBuilder::add",
+    "ignore::gitignore::GitignoreBuilder::build_global",
+    "ignore::gitignore::Gitignore::new",
+    "ignore::gitignore::Gitignore::global",
+    "ignore::gitignore::gitconfig_excludes_path",
+];
 /// `std::fs` types a boundary crate's Clippy config must disallow.
 const FS_TYPES: [&str; 3] = [
     "std::fs::File",
@@ -298,6 +327,10 @@ fn deps(root: &Path, members: &[PathBuf]) -> Vec<String> {
     // The workspace dependency keys that name the store, by key or by
     // `package`.
     let mut store_keys = BTreeSet::from([store.to_owned()]);
+    // Likewise the keys that name `getrandom`, so an alias such as
+    // `osrand = { package = "getrandom" }` is caught (code review CR-07).
+    let (random, random_owner) = OS_RANDOM;
+    let mut random_keys = BTreeSet::from([random.to_owned()]);
     let mut problems = match parse(root, &root.join("Cargo.toml")) {
         Ok(workspace) => {
             let mut problems = Vec::new();
@@ -306,6 +339,9 @@ fn deps(root: &Path, members: &[PathBuf]) -> Vec<String> {
             {
                 for (key, entry) in entries.iter() {
                     let package = lookup(entry, &["package"]).and_then(Item::as_str);
+                    if key == random || package == Some(random) {
+                        random_keys.insert(key.to_owned());
+                    }
                     if key == store || package == Some(store) {
                         store_keys.insert(key.to_owned());
                         if strings(entry, &["features"]).contains(&feature) {
@@ -331,6 +367,14 @@ fn deps(root: &Path, members: &[PathBuf]) -> Vec<String> {
                     ));
                 }
                 let dev = table.ends_with("dev-dependencies") || table.ends_with("dev_dependencies");
+                let random_dependency = random_keys.contains(name)
+                    || lookup(entry, &["package"]).and_then(Item::as_str) == Some(random);
+                if random_dependency && package != Some(random_owner) {
+                    problems.push(format!(
+                        "{dir} depends on `{random}` (as `{name}`) in [{table}]; only \
+                         `{random_owner}` may (INT-0005 AC-1)"
+                    ));
+                }
                 if store_keys.contains(name) && !dev && strings(entry, &["features"]).contains(&feature) {
                     problems.push(format!(
                         "{dir} enables `{feature}` of `{store}` in [{table}]; only [dev-dependencies] may"
@@ -505,6 +549,12 @@ fn fs_boundary(root: &Path, members: &[PathBuf]) -> Vec<String> {
             &["lints"],
             &format!("{crate_dir}/Cargo.toml"),
         ));
+        let uses_ignore = dependency_tables(&manifest).iter().any(|(_, entries)| {
+            entries.iter().any(|(name, entry)| {
+                name == IGNORE_CRATE
+                    || lookup(entry, &["package"]).and_then(Item::as_str) == Some(IGNORE_CRATE)
+            })
+        });
         let config_path = dir.join("clippy.toml");
         let config_name = relative(root, &config_path);
         if !config_path.is_file() {
@@ -512,10 +562,22 @@ fn fs_boundary(root: &Path, members: &[PathBuf]) -> Vec<String> {
         } else {
             match parse(root, &config_path) {
                 Ok(config) => {
+                    let ignore_bans: [(&str, &[&str]); 2] = if uses_ignore {
+                        [
+                            ("disallowed-types", &IGNORE_TYPES[..]),
+                            ("disallowed-methods", &IGNORE_METHODS[..]),
+                        ]
+                    } else {
+                        [("disallowed-types", &[]), ("disallowed-methods", &[])]
+                    };
                     for (key, banned) in [
                         ("disallowed-types", &FS_TYPES[..]),
                         ("disallowed-methods", &FS_METHODS[..]),
-                    ] {
+                        ("disallowed-methods", &OS_RANDOM_METHODS[..]),
+                    ]
+                    .into_iter()
+                    .chain(ignore_bans)
+                    {
                         let listed = disallowed(&config, key);
                         for path in banned.iter().filter(|path| !listed.contains(path)) {
                             problems
@@ -1710,6 +1772,7 @@ mod tests {
             .collect();
         let methods: Vec<String> = super::FS_METHODS
             .iter()
+            .chain(super::OS_RANDOM_METHODS.iter())
             .filter(|path| **path != without)
             .map(|path| format!("  \"{path}\",\n"))
             .collect();
@@ -1740,7 +1803,12 @@ mod tests {
         fs::remove_file(fixture.0.join("crates/store/clippy.toml")).unwrap();
         fixture.fails_only("fs-boundary", "crates/store/clippy.toml is missing");
 
-        for missing in ["std::fs::File", "std::fs::read", "std::path::Path::exists"] {
+        for missing in [
+            "std::fs::File",
+            "std::fs::read",
+            "std::path::Path::exists",
+            "getrandom::u64",
+        ] {
             let fixture = with_store(&format!("boundary-without-{}", missing.replace(':', "")));
             fixture.write("crates/store/clippy.toml", &boundary_config(missing));
             fixture.fails_exactly(&["fs-boundary"], &["crates/store/clippy.toml", missing]);
@@ -1901,6 +1969,104 @@ mod tests {
             "#![allow(clippy::disallowed_methods)]\n",
         );
         fixture.fails_only("fs-boundary", "crates/sim/src/simfs.rs");
+    }
+
+    /// A boundary crate that depends on `ignore` must ban the `ignore`
+    /// crate's filesystem readers; one that does not need not (Sprint 2
+    /// T-005).
+    #[test]
+    fn policy_requires_the_ignore_bans() {
+        let with = |name: &str, config: &str| {
+            let fixture = Fixture::new(name);
+            fixture.write(
+                "crates/workspace/Cargo.toml",
+                &member("workspace", "ignore.workspace = true"),
+            );
+            fixture.write("crates/workspace/src/lib.rs", "#![forbid(unsafe_code)]\n");
+            fixture.write("crates/workspace/clippy.toml", config);
+            fixture
+        };
+        let complete = {
+            let mut config = boundary_config("");
+            for (key, banned) in [
+                ("disallowed-types = [\n", &super::IGNORE_TYPES[..]),
+                ("disallowed-methods = [\n", &super::IGNORE_METHODS[..]),
+            ] {
+                let lines: String = banned
+                    .iter()
+                    .map(|path| format!("  \"{path}\",\n"))
+                    .collect();
+                config = replace(&config, key, &format!("{key}{lines}"));
+            }
+            config
+        };
+        with("ignore-ok", &complete).passes();
+        for missing in [
+            "ignore::WalkBuilder",
+            "ignore::gitignore::GitignoreBuilder::add",
+        ] {
+            let config = complete.replace(&format!("  \"{missing}\",\n"), "");
+            with(&format!("ignore-without-{}", missing.len()), &config)
+                .fails_exactly(&["fs-boundary"], &["crates/workspace/clippy.toml", missing]);
+        }
+        // Without the dependency the bans are not required.
+        let fixture = Fixture::new("ignore-unused");
+        fixture.write("crates/workspace/Cargo.toml", &member("workspace", ""));
+        fixture.write("crates/workspace/src/lib.rs", "#![forbid(unsafe_code)]\n");
+        fixture.write("crates/workspace/clippy.toml", &boundary_config(""));
+        fixture.passes();
+    }
+
+    /// Only `sim` may depend on `getrandom`, under any key and in any
+    /// dependency table (Sprint 2 T-004). The Clippy bans are checked by
+    /// `policy_enforces_the_fs_boundary`.
+    #[test]
+    fn policy_confines_getrandom_to_sim() {
+        let with = |name: &str, member_name: &str, dependency: &str| {
+            // The rule reads the member tables; the workspace table is left
+            // alone so that only `deps` can fail.
+            let fixture = Fixture::new(name);
+            let dir = format!("crates/{member_name}");
+            fixture.write(
+                &format!("{dir}/Cargo.toml"),
+                &member(member_name, dependency),
+            );
+            fixture.write(&format!("{dir}/src/lib.rs"), "#![forbid(unsafe_code)]\n");
+            fixture.write(&format!("{dir}/clippy.toml"), &boundary_config(""));
+            fixture
+        };
+        with("random-sim", "sim", "getrandom.workspace = true").passes();
+        // An alias in the workspace table, used under its own key.
+        let fixture = with("random-alias", "store", "osrand.workspace = true");
+        fixture.write(
+            "Cargo.toml",
+            &replace(
+                WORKSPACE,
+                "hash = { path = \"crates/hash\" }\n",
+                "hash = { path = \"crates/hash\" }\nosrand = { version = \"0.4.3\", package = \"getrandom\" }\n",
+            ),
+        );
+        let failures = fixture.failures();
+        let deps = failures.iter().find(|(rule, _)| *rule == "deps");
+        assert!(
+            deps.is_some_and(|(_, problems)| problems
+                .iter()
+                .any(|p| p.contains("only `sim` may") && p.contains("osrand"))),
+            "{failures:?}"
+        );
+        for (i, (member_name, dependency)) in [
+            ("store", "getrandom.workspace = true"),
+            (
+                "praps",
+                "rand = { workspace = true, package = \"getrandom\" }",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            with(&format!("random-{i}"), member_name, dependency)
+                .fails_exactly(&["deps"], &["only `sim` may", member_name]);
+        }
     }
 
     #[test]

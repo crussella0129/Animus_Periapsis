@@ -8,11 +8,13 @@
 //! real filesystem may keep, so a whole run is reproducible from the seed.
 
 mod fs;
+mod name;
 mod real;
 mod rng;
 mod simfs;
 
 pub use fs::{Crash, Fs, is_crash};
-pub use real::RealFs;
+pub use name::{DirEntry, Kind, Name, RawName};
+pub use real::{RealFs, os_seed};
 pub use rng::Rng;
 pub use simfs::{Hook, Mode, Node, SimFs};

@@ -1,0 +1,139 @@
+# Ignore-rule corpus for crates/workspace/tests/ignore.rs (INT-0014 AC-2).
+# Generated with git version 2.56.0.windows.3, core.ignorecase=false, by
+# `git check-ignore --no-index` (column git) and `git status --porcelain
+# --ignored --untracked-files=all` after committing the tracked files
+# (column snapshot: tracked before, or untracked and not ignored).
+# Format: `case NAME`, `gitignore PATH` then its lines up to `end`
+# (a carriage return written as the two characters \r), `tracked PATH`,
+# `path PATH git=ignored|kept snapshot=tracked|untracked`.
+case anchored
+gitignore .gitignore
+/top.txt
+end
+path top.txt git=ignored snapshot=untracked
+path sub/top.txt git=kept snapshot=tracked
+case star
+gitignore .gitignore
+*.log
+end
+path a.log git=ignored snapshot=untracked
+path dir/b.log git=ignored snapshot=untracked
+path c.txt git=kept snapshot=tracked
+case double-star
+gitignore .gitignore
+**/cache
+doc/**/*.tmp
+end
+path cache/x git=ignored snapshot=untracked
+path a/cache/y git=ignored snapshot=untracked
+path doc/a/b/z.tmp git=ignored snapshot=untracked
+path doc/z.tmp git=ignored snapshot=untracked
+path other/z.tmp git=kept snapshot=tracked
+case negation
+gitignore .gitignore
+*.txt
+!keep.txt
+end
+path a.txt git=ignored snapshot=untracked
+path keep.txt git=kept snapshot=tracked
+path sub/keep.txt git=kept snapshot=tracked
+case dir-only
+gitignore .gitignore
+out/
+end
+path out/x git=ignored snapshot=untracked
+path sub/out git=kept snapshot=tracked
+case nested-override
+gitignore .gitignore
+*.md
+end
+gitignore docs/.gitignore
+!README.md
+end
+path a.md git=ignored snapshot=untracked
+path docs/README.md git=kept snapshot=tracked
+path docs/other.md git=ignored snapshot=untracked
+case nested-anchored
+gitignore src/.gitignore
+/gen
+end
+path src/gen git=ignored snapshot=untracked
+path src/sub/gen git=kept snapshot=tracked
+path gen git=kept snapshot=tracked
+case reinclude-under-excluded
+gitignore .gitignore
+build/
+!build/keep
+end
+path build/keep git=ignored snapshot=untracked
+path build/x git=ignored snapshot=untracked
+case tracked-under-ignored
+gitignore .gitignore
+gen/
+end
+tracked gen/old
+path gen/old git=ignored snapshot=tracked
+path gen/new git=ignored snapshot=untracked
+case tracked-then-ignored
+gitignore .gitignore
+*.txt
+end
+tracked log.txt
+path log.txt git=ignored snapshot=tracked
+path fresh.txt git=ignored snapshot=untracked
+case middle-slash
+gitignore .gitignore
+a/b
+end
+path a/b git=ignored snapshot=untracked
+path x/a/b git=kept snapshot=tracked
+case case-sensitive
+gitignore .gitignore
+*.LOG
+Build/
+end
+path a.log git=kept snapshot=tracked
+path b.LOG git=ignored snapshot=untracked
+path build/x git=kept snapshot=tracked
+path Build/y git=ignored snapshot=untracked
+case comment-and-escape
+gitignore .gitignore
+# a comment
+\#hash
+end
+path #hash git=ignored snapshot=untracked
+path # a comment git=kept snapshot=tracked
+case class
+gitignore .gitignore
+[ab].c
+end
+path a.c git=ignored snapshot=untracked
+path b.c git=ignored snapshot=untracked
+path c.c git=kept snapshot=tracked
+case crlf
+gitignore .gitignore
+*.tmp\r
+keep\r
+end
+path x.tmp git=ignored snapshot=untracked
+path keep git=ignored snapshot=untracked
+path other git=kept snapshot=tracked
+case bom
+gitignore .gitignore
+﻿*.log
+end
+path a.log git=ignored snapshot=untracked
+path b.txt git=kept snapshot=tracked
+case trailing-space
+gitignore .gitignore
+trail   
+end
+path trail git=ignored snapshot=untracked
+path trailing git=kept snapshot=tracked
+case whitelist-dir
+gitignore .gitignore
+logs/*
+!logs/keep/
+end
+path logs/x git=ignored snapshot=untracked
+path logs/keep/y git=kept snapshot=tracked

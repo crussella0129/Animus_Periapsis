@@ -10,7 +10,8 @@ tables below and that every golden file matches its worked example, and
 **Status:** draft. Sprint 0 specifies the primitives, `hashref`, the envelope
 header and the blob body. Those encodings freeze when the owner signs off this
 document (INT-0006 AC-6). Sprint 1 specifies the `operation` body as
-*provisional*: it is excluded from that sign-off and may still change (see
+*provisional*, and Sprint 2 the `changeset` and `view` bodies and the `path`
+type: they are excluded from that sign-off and may still change (see
 [Change control](#change-control)). Object kinds marked *reserved* have no
 body format yet. Format v1 as a whole freezes at the Phase 1 exit gate, once every kind and
 the storage representation are specified. See [Change control](#change-control).
@@ -38,6 +39,7 @@ the storage representation are specified. See [Change control](#change-control).
 | `map<K, V>` | `uvarint` count ‖ (`K` ‖ `V`)… | Keys strictly increasing in canonical order. |
 | `pair<A, B>` | `A` ‖ `B` | — |
 | `hashref` | algorithm id ‖ digest | See [Hash algorithms](#hash-algorithms). |
+| `path` | `string` | *Provisional.* A repository path: see [Repository paths](#repository-paths). |
 
 Examples: `0` → `00`; `127` → `7f`; `128` → `80 01`; `300` → `ac 02`;
 2⁶⁴ − 1 → `ff ff ff ff ff ff ff ff ff 01`; the string `"é"` → `02 c3 a9`.
@@ -54,6 +56,16 @@ Sets and maps are ordered by their elements' or keys' canonical order:
 - `option<T>`: absent before present, then by `T`.
 - `seq<T>`: lexicographic by elements.
 - `pair<A, B>`: by `A`, then by `B`.
+
+### Repository paths
+
+A `path` names a file relative to the top of the working copy, in one form on
+every system ([INT-0004](../intents/INT-0004-windows-and-linux.md) AC-2):
+UTF-8 components separated by `/`. It has at least one component; no
+component is empty, `.` or `..`; and it holds no NUL (`00`) and no `\`. So
+`/a`, `a/`, `a//b`, `a/./b` and `a/..` are all rejected. No Unicode
+normalisation or case folding is applied. Paths order as strings, by their
+UTF-8 bytes.
 
 ## Hash algorithms
 
@@ -89,9 +101,9 @@ A format version other than `01` is rejected.
 | id | kind | status |
 |---|---|---|
 | `0x01` | `blob` | defined |
-| `0x02` | `changeset` | reserved |
+| `0x02` | `changeset` | defined |
 | `0x03` | `operation` | defined |
-| `0x04` | `view` | reserved |
+| `0x04` | `view` | defined |
 | `0x05` | `event` | reserved |
 
 Id `0x00` is invalid and `0x06`–`0xff` are unassigned; decoders reject them as
@@ -104,15 +116,45 @@ until their bodies are specified here.
   body is
 
   ```text
-  parents: set<hashref> ‖ objects: set<hashref>
+  parents: set<hashref> ‖ view: hashref
   ```
 
   `parents` are the ids of the operations this one follows; a root operation
-  has none. `objects` are the ids of the objects this operation makes
-  reachable; they stand in for the view hash until the `view` kind is
-  specified ([INT-0006](../intents/INT-0006-format-v1.md)). Both are sets, so
-  their elements are strictly increasing in `hashref` order and duplicates are
-  rejected. An operation's id is its envelope's id, like any object's.
+  has none. They are a set, so their elements are strictly increasing in
+  `hashref` order and duplicates are rejected. `view` is the id of the `view`
+  object the operation leaves; everything the operation makes reachable is
+  reached through it. Sprint 2 replaced Sprint 1's provisional
+  `objects: set<hashref>` with `view`
+  ([INT-0006](../intents/INT-0006-format-v1.md)). An operation's id is its
+  envelope's id, like any object's.
+- **changeset** — *provisional*: one version of a change. The body is
+
+  ```text
+  parents: seq<hashref> ‖ change_id: 16 raw bytes ‖ changes: map<path, entry> ‖ description: bytes
+  entry = 00                               (delete)
+        | 01 ‖ blob: hashref ‖ mode: byte  (put)
+  mode  = 00 regular | 01 executable       (02, symlink, is reserved)
+  ```
+
+  `parents` are the changesets this one follows, in order; a root has none.
+  `change_id` is the change's 128-bit ID, the same across every rewrite of the
+  change ([INT-0011](../intents/INT-0011-change-identity-and-rewriting.md)),
+  written as 16 bytes with no length prefix. `changes` maps each path that
+  differs from the first parent's tree (the empty tree for a root) to a
+  `put`, which gives the path's blob and mode, or a `delete`. A put does not
+  say whether the path was added or modified. An entry tag other than `00`
+  or `01`, a mode other than `00` or `01`, and the reserved mode `02` are each
+  rejected with their own error. `description` is the change's description,
+  as bytes.
+- **view** — *provisional*: the repository state an operation leaves. The
+  body is
+
+  ```text
+  heads: set<hashref> ‖ workspaces: map<string, hashref>
+  ```
+
+  `heads` are the visible changesets no other visible changeset follows.
+  `workspaces` maps each workspace's name to its working-copy changeset.
 
 ### Object identity
 
@@ -153,8 +195,12 @@ table, so the encoder is tested against the spec rather than against itself.
 | `map-nested` | `map<string, map<uvarint, option<bytes>>>` "intent" → (1 → absent, 2 → 78) | `01 06 69 6e 74 65 6e 74 02 01 00 02 01 01 78` |
 | `pair` | `pair<string, bool>` ("key", true) | `03 6b 65 79 01` |
 | `blob-envelope` | blob envelope of "Periapsis" and a newline | `01 01 50 65 72 69 61 70 73 69 73 0a` |
-| `operation-root` | operation envelope: no parents; objects {BLAKE3 of empty input} | `01 03 00 01 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262` |
-| `operation-merge` | operation envelope: parents {BLAKE3 of empty input, SHA-256 of "abc"}; objects {SHA-256 of "abc", SHA-256 of empty input} | `01 03 02 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262 02 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad 02 02 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad 02 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `path-nested` | `path` "src/π/main.rs" | `0e 73 72 63 2f cf 80 2f 6d 61 69 6e 2e 72 73` |
+| `changeset-root` | changeset envelope: no parents; change ID 00 01 … 0f; no changes; empty description | `01 02 00 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 00 00` |
+| `changeset-edit` | changeset envelope: parents [BLAKE3 of empty input]; change ID ff × 16; "README.md" → put(SHA-256 of "abc", regular), "bin/run" → put(BLAKE3 of empty input, executable), "src/old.rs" → delete; description "fix" | `01 02 01 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262 ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff 03 09 52 45 41 44 4d 45 2e 6d 64 01 02 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad 00 07 62 69 6e 2f 72 75 6e 01 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262 01 0a 73 72 63 2f 6f 6c 64 2e 72 73 00 03 66 69 78` |
+| `view` | view envelope: heads {BLAKE3 of empty input}; workspaces "default" → BLAKE3 of empty input | `01 04 01 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262 01 07 64 65 66 61 75 6c 74 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262` |
+| `operation-root` | operation envelope: no parents; view BLAKE3 of empty input | `01 03 00 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262` |
+| `operation-merge` | operation envelope: parents {BLAKE3 of empty input, SHA-256 of "abc"}; view SHA-256 of empty input | `01 03 02 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262 02 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad 02 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
 
 ## Signatures (reserved)
 
@@ -200,6 +246,7 @@ reserved for Ed25519.
   freezing until the Phase 1 exit gate. Until then its body, worked examples,
   golden files and encoder may change together in one commit, and stores
   written with it are development stores. Before it freezes it must carry the
-  fields INT-0006 names for it. `operation` is provisional.
+  fields INT-0006 names for it. `operation`, `changeset`, `view` and `path` are
+  provisional.
 - Golden files are marked `binary` in `.gitattributes`, so every platform
   checks out the same bytes.

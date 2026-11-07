@@ -6,6 +6,8 @@ use std::io;
 use std::path::Path;
 use std::rc::Rc;
 
+use crate::name::DirEntry;
+
 /// The filesystem operations storage code may use. Each method is one
 /// syscall-sized step: [`crate::SimFs`] counts one syscall per call and can
 /// crash at any of them. Durability is explicit: written data is durable only
@@ -34,6 +36,14 @@ pub trait Fs {
     fn list(&self, path: &Path) -> io::Result<Vec<String>>;
     /// Removes a file.
     fn remove_file(&self, path: &Path) -> io::Result<()>;
+    /// A directory's entries with their kinds, sorted by their names'
+    /// display forms ([`crate::Name::display`]). Symbolic links are not
+    /// followed, and a name with no UTF-8 form is returned as
+    /// [`crate::Name::Raw`], never lossily.
+    fn scan(&self, path: &Path) -> io::Result<Vec<DirEntry>>;
+    /// Whether files on this filesystem carry an owner-execute bit. Not a
+    /// syscall.
+    fn has_executable_bit(&self) -> bool;
 }
 
 impl<T: Fs + ?Sized> Fs for &T {
@@ -66,6 +76,12 @@ impl<T: Fs + ?Sized> Fs for &T {
     }
     fn remove_file(&self, path: &Path) -> io::Result<()> {
         (**self).remove_file(path)
+    }
+    fn scan(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        (**self).scan(path)
+    }
+    fn has_executable_bit(&self) -> bool {
+        (**self).has_executable_bit()
     }
 }
 
@@ -101,6 +117,12 @@ impl<T: Fs + ?Sized> Fs for Rc<T> {
     }
     fn remove_file(&self, path: &Path) -> io::Result<()> {
         (**self).remove_file(path)
+    }
+    fn scan(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        (**self).scan(path)
+    }
+    fn has_executable_bit(&self) -> bool {
+        (**self).has_executable_bit()
     }
 }
 

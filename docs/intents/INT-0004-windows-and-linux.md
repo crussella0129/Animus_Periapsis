@@ -3,11 +3,11 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0004
 - **State:** active
-- **Work evidence:** [T-005 build plan](../sprints/s0/sprint-plans/build-plan.md#t-005-golden-corpus-and-spec-consistency), [T-007 build plan](../sprints/s0/sprint-plans/build-plan.md#t-007-canonical-suite-runner-and-ci-workflow), [Sprint 1 T-002 build plan](../sprints/s1/sprint-plans/build-plan.md#t-002-filesystem-and-randomness-traits-in-the-sim-crate), [Sprint 1 T-007 build plan](../sprints/s1/sprint-plans/build-plan.md#t-007-windows-durability-strategy-and-real-filesystem-evidence), [T-010 backlog](../work/tasks.md)
-- **Completion evidence:** [T-005 completion](../work/completed-tasks.md#t-005-sprint-0), [T-007 completion](../work/completed-tasks.md#t-007-sprint-0), [Sprint 1 T-002 completion](../work/completed-tasks.md#t-002-sprint-1), [Sprint 1 T-007 completion](../work/completed-tasks.md#t-007-sprint-1)
-- **Code evidence:** [.gitattributes](../../.gitattributes), [golden rule](../../crates/xtask/src/attributes.rs), [CI workflow](../../.github/workflows/ci.yml)
-- **Test evidence:** [Sprint 0 test report](../sprints/s0/sprint-tests/test-report.md), [Sprint 1 test report](../sprints/s1/sprint-tests/test-report.md)
-- **Documentation evidence:** [Storage durability](../spec/storage-durability.md)
+- **Work evidence:** [T-005 build plan](../sprints/s0/sprint-plans/build-plan.md#t-005-golden-corpus-and-spec-consistency), [T-007 build plan](../sprints/s0/sprint-plans/build-plan.md#t-007-canonical-suite-runner-and-ci-workflow), [Sprint 1 T-002 build plan](../sprints/s1/sprint-plans/build-plan.md#t-002-filesystem-and-randomness-traits-in-the-sim-crate), [Sprint 1 T-007 build plan](../sprints/s1/sprint-plans/build-plan.md#t-007-windows-durability-strategy-and-real-filesystem-evidence), [T-010 backlog](../work/tasks.md), [Sprint 2 T-002 build plan](../sprints/s2/sprint-plans/build-plan.md#t-002-specify-and-implement-the-provisional-changeset-and-view-kinds-and-repository-paths), [Sprint 2 T-004 build plan](../sprints/s2/sprint-plans/build-plan.md#t-004-a-scan-syscall-an-executable-bit-capability-and-operating-system-randomness-in-sim), [Sprint 2 T-005 build plan](../sprints/s2/sprint-plans/build-plan.md#t-005-the-workspace-crate-init-snapshot-new-and-status), [Sprint 2 T-001 build plan](../sprints/s2/sprint-plans/build-plan.md#t-001-record-sprint-1s-github-actions-runs-and-owner-sign-offs), [T-013 backlog](../work/tasks.md)
+- **Completion evidence:** [T-005 completion](../work/completed-tasks.md#t-005-sprint-0), [T-007 completion](../work/completed-tasks.md#t-007-sprint-0), [Sprint 1 T-002 completion](../work/completed-tasks.md#t-002-sprint-1), [Sprint 1 T-007 completion](../work/completed-tasks.md#t-007-sprint-1), [Sprint 2 T-004 completion](../work/completed-tasks.md#t-004-sprint-2), [Sprint 2 T-005 completion](../work/completed-tasks.md#t-005-sprint-2)
+- **Code evidence:** [.gitattributes](../../.gitattributes), [golden rule](../../crates/xtask/src/attributes.rs), [CI workflow](../../.github/workflows/ci.yml), [real.rs](../../crates/sim/src/real.rs), [name.rs](../../crates/sim/src/name.rs)
+- **Test evidence:** [Sprint 0 test report](../sprints/s0/sprint-tests/test-report.md), [Sprint 1 test report](../sprints/s1/sprint-tests/test-report.md), [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md)
+- **Documentation evidence:** [Storage durability](../spec/storage-durability.md), [The working copy](../spec/working-copy.md)
 
 ## Intent
 Periapsis produces the same object hashes, the same op log and the same
@@ -67,8 +67,16 @@ watchers.
 - Nighthawk runs need Tailscale SSH to authenticate (its policy asks for a
   browser check), so E2E evidence there depends on the owner approving access.
 
+- On Windows, every real-filesystem path is passed verbatim (`\\?\`): Win32
+  normalisation otherwise strips a trailing `.` or space from a name and turns
+  `CON` or `aux.txt` into a device, so a file whose NTFS name is `foo.` would be
+  read as `foo` and its content silently replaced (Sprint 2 code review CR-02).
+  Paths stay relative or absolute at the `Fs` boundary; `RealFs` converts them,
+  taking `..` lexically.
+
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; research gap II §7 plus the owner's test-machine inventory).
 - 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-005, T-007: golden bytes and the canonical runner on Windows and WSL, including a fresh Windows clone with `core.autocrlf=true`).
 - 2026-10-31: `planned` → `active` (Sprint 0 build, T-005 starts: golden bytes kept binary on every platform).
 - 2026-11-01: revised while `active`, on owner direction: Periapsis must work with any toolchain, and some write file names that have no UTF-8 form. The Intent and the new AC-7 say such a name is reported by an escaped form and left alone, never tracked under another name, overwritten or deleted; stored paths stay UTF-8.
+- 2026-11-07: revised while `active` (Sprint 2 Loop): Consequences record that `RealFs` passes verbatim paths on Windows (code review CR-02). AC-2 and AC-7 are met by the Sprint 2 test report for snapshotting; AC-3, AC-4 (writing a working copy), AC-5 (sign-off) and AC-6 (Nighthawk) remain, so the chapter stays `active`.

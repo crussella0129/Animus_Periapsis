@@ -4,8 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 
 use codec::{
-    Bytes, Decode, DecodeError, Decoder, Encode, Encoder, ObjectKind, Operation, RESERVED_KINDS,
-    blob, decode_envelope, encode_object, from_slice, object_id, to_vec,
+    Bytes, Changeset, Decode, DecodeError, Decoder, Encode, Encoder, Entry, Mode, ObjectKind,
+    Operation, RESERVED_KINDS, RepoPath, View, blob, decode_envelope, encode_object, from_slice,
+    object_id, to_vec,
 };
 use hash::{HashAlg, HashRef};
 use proptest::prelude::*;
@@ -51,13 +52,56 @@ fn any_bytes() -> impl Strategy<Value = Bytes> {
     prop::collection::vec(any::<u8>(), 0..400).prop_map(Bytes)
 }
 
-/// Up to three parents and three objects, over both hash algorithms.
+/// Up to three parents and a view, over both hash algorithms.
 fn any_operation() -> impl Strategy<Value = Operation> {
+    (prop::collection::btree_set(any_hash(), 0..4), any_hash())
+        .prop_map(|(parents, view)| Operation { parents, view })
+}
+
+/// A repository path of one to three components; no component is `.` or
+/// `..`, and some are not ASCII.
+fn any_path() -> impl Strategy<Value = RepoPath> {
+    prop::collection::vec("[a-zA-Z0-9_π-]{1,4}(\\.[a-z]{1,2})?", 1..4)
+        .prop_map(|components| RepoPath::new(components.join("/")).unwrap())
+}
+
+fn any_entry() -> impl Strategy<Value = Entry> {
+    prop_oneof![
+        Just(Entry::Delete),
+        (any_hash(), any::<bool>()).prop_map(|(blob, executable)| Entry::Put {
+            blob,
+            mode: if executable {
+                Mode::Executable
+            } else {
+                Mode::Regular
+            },
+        }),
+    ]
+}
+
+/// Up to three parents (order kept, repeats allowed by the seq) and five
+/// changed paths.
+fn any_changeset() -> impl Strategy<Value = Changeset> {
+    (
+        prop::collection::vec(any_hash(), 0..4),
+        any::<[u8; 16]>(),
+        prop::collection::btree_map(any_path(), any_entry(), 0..6),
+        prop::collection::vec(any::<u8>(), 0..40),
+    )
+        .prop_map(|(parents, change_id, changes, description)| Changeset {
+            parents,
+            change_id,
+            changes,
+            description,
+        })
+}
+
+fn any_view() -> impl Strategy<Value = View> {
     (
         prop::collection::btree_set(any_hash(), 0..4),
-        prop::collection::btree_set(any_hash(), 0..4),
+        prop::collection::btree_map(".{0,8}", any_hash(), 0..4),
     )
-        .prop_map(|(parents, objects)| Operation { parents, objects })
+        .prop_map(|(heads, workspaces)| View { heads, workspaces })
 }
 
 fn any_nested() -> impl Strategy<Value = Nested> {
@@ -150,6 +194,9 @@ canonical_properties! {
         (".{0,8}", prop::option::of(any_u64()));
     round_trip_nested, mutants_nested: Nested = any_nested();
     operation_round_trips, accepted_operation_bytes_reencode: Operation = any_operation();
+    changeset_round_trips, accepted_changeset_bytes_reencode: Changeset = any_changeset();
+    view_round_trips, accepted_view_bytes_reencode: View = any_view();
+    repo_path_round_trips, accepted_repo_path_bytes_reencode: RepoPath = any_path();
 }
 
 proptest! {
@@ -205,6 +252,19 @@ proptest! {
         // As a bare body and inside an operation envelope.
         let _ = from_slice::<Operation>(&bytes);
         let _ = Operation::from_envelope(&[&[0x01, 0x03][..], &bytes].concat());
+    }
+
+    #[test]
+    fn changeset_decoding_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..=256)) {
+        let _ = from_slice::<Changeset>(&bytes);
+        let _ = Changeset::from_envelope(&[&[0x01, 0x02][..], &bytes].concat());
+        let _ = from_slice::<RepoPath>(&bytes);
+    }
+
+    #[test]
+    fn view_decoding_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..=256)) {
+        let _ = from_slice::<View>(&bytes);
+        let _ = View::from_envelope(&[&[0x01, 0x04][..], &bytes].concat());
     }
 }
 
@@ -536,8 +596,10 @@ fn trailing_bytes_rejected() {
 fn expected_header(version: u8, kind: u8) -> (&'static str, Result<ObjectKind, DecodeError>) {
     match (version, kind) {
         (0x01, 0x01) => ("defined", Ok(ObjectKind::Blob)),
+        (0x01, 0x02) => ("defined", Ok(ObjectKind::Changeset)),
         (0x01, 0x03) => ("defined", Ok(ObjectKind::Operation)),
-        (0x01, 0x02 | 0x04 | 0x05) => ("reserved", Err(DecodeError::ReservedObjectKind { kind })),
+        (0x01, 0x04) => ("defined", Ok(ObjectKind::View)),
+        (0x01, 0x05) => ("reserved", Err(DecodeError::ReservedObjectKind { kind })),
         // 0x00 is invalid and 0x06 to 0xff are unassigned.
         (0x01, _) => ("unknown", Err(DecodeError::UnknownObjectKind { kind })),
         _ => (
@@ -575,8 +637,8 @@ fn envelope_rejects_unknown_version_and_kind() {
     assert_eq!(
         classes,
         BTreeMap::from([
-            ("defined", 2),
-            ("reserved", 3),
+            ("defined", 4),
+            ("reserved", 1),
             ("unknown", 251),
             ("unsupported", 255 * 256),
         ])
@@ -608,8 +670,8 @@ fn envelope_rejects_unknown_version_and_kind() {
     let message = |envelope: &[u8]| decode_envelope(envelope).unwrap_err().to_string();
     assert_eq!(message(&[0x02, 0x01]), "unsupported format version 2");
     assert_eq!(
-        message(&[0x01, 0x04]),
-        "object kind 0x04 is reserved and not yet specified"
+        message(&[0x01, 0x05]),
+        "object kind 0x05 is reserved and not yet specified"
     );
     assert_eq!(message(&[0x01, 0x06]), "unknown object kind 0x06");
 }
@@ -648,11 +710,16 @@ fn kind_registry_is_complete() {
         .into_iter()
         .map(|kind| (kind.id(), kind.name()))
         .collect();
-    assert_eq!(defined, [(0x01, "blob"), (0x03, "operation")]);
     assert_eq!(
-        RESERVED_KINDS,
-        [(0x02, "changeset"), (0x04, "view"), (0x05, "event")]
+        defined,
+        [
+            (0x01, "blob"),
+            (0x02, "changeset"),
+            (0x03, "operation"),
+            (0x04, "view")
+        ]
     );
+    assert_eq!(RESERVED_KINDS, [(0x05, "event")]);
     for (kind, _) in RESERVED_KINDS {
         assert_eq!(
             ObjectKind::from_id(kind),
@@ -692,25 +759,22 @@ fn operation_rejects_unsorted_parents() {
 }
 
 #[test]
-fn operation_rejects_duplicate_objects() {
-    let (low, _) = ordered_pair();
+fn operation_needs_a_view() {
+    // Sprint 2: the body ends with the view's hashref, so a body holding only
+    // the parent set fails where the view should start.
     let mut enc = Encoder::new();
     enc.uvarint(0);
-    enc.uvarint(2);
-    enc.hash_ref(&low);
-    enc.hash_ref(&low);
-    let body = enc.finish();
-    assert_eq!(
-        from_slice::<Operation>(&body),
-        Err(DecodeError::UnsortedOrDuplicateKey { at: 35 })
-    );
+    assert!(matches!(
+        from_slice::<Operation>(&enc.finish()),
+        Err(DecodeError::Hash { at: 1, .. })
+    ));
 }
 
 #[test]
 fn operation_rejects_trailing_bytes() {
     let op = Operation {
         parents: BTreeSet::new(),
-        objects: BTreeSet::from([hash_of(HashAlg::Blake3, b"")]),
+        view: hash_of(HashAlg::Blake3, b""),
     };
     let mut body = to_vec(&op);
     let len = body.len();
@@ -739,13 +803,13 @@ fn operation_kind_is_defined() {
     assert_eq!(ObjectKind::Operation.name(), "operation");
     let op = Operation {
         parents: BTreeSet::from([hash_of(HashAlg::Blake3, b"p")]),
-        objects: BTreeSet::from([hash_of(HashAlg::Sha256, b"o")]),
+        view: hash_of(HashAlg::Sha256, b"o"),
     };
     let envelope = op.to_envelope();
     assert_eq!(&envelope[..2], &[0x01, 0x03]);
-    assert_eq!(Operation::from_envelope(&envelope), Ok(op));
+    assert_eq!(Operation::from_envelope(&envelope), Ok(op.clone()));
     // A blob envelope is not an operation, even when its body would decode.
-    let body = to_vec(&Operation::default());
+    let body = to_vec(&op);
     assert_eq!(
         Operation::from_envelope(&blob(&body)),
         Err(DecodeError::UnexpectedObjectKind {
@@ -757,30 +821,24 @@ fn operation_kind_is_defined() {
 
 #[test]
 fn other_kinds_stay_reserved() {
-    for kind in [0x02, 0x04, 0x05] {
+    // Sprint 2 defines 0x02 and 0x04; only 0x05 is still reserved.
+    assert_eq!(
+        ObjectKind::from_id(0x05),
+        Err(DecodeError::ReservedObjectKind { kind: 0x05 })
+    );
+    assert_eq!(
+        Operation::from_envelope(&[0x01, 0x05]),
+        Err(DecodeError::ReservedObjectKind { kind: 0x05 })
+    );
+    for found in [0x02, 0x04] {
         assert_eq!(
-            ObjectKind::from_id(kind),
-            Err(DecodeError::ReservedObjectKind { kind })
-        );
-        assert_eq!(
-            Operation::from_envelope(&[0x01, kind]),
-            Err(DecodeError::ReservedObjectKind { kind })
+            Operation::from_envelope(&[0x01, found]),
+            Err(DecodeError::UnexpectedObjectKind {
+                expected: 0x03,
+                found
+            })
         );
     }
-}
-
-#[test]
-fn operation_rejects_unsorted_objects() {
-    let (low, high) = ordered_pair();
-    let mut enc = Encoder::new();
-    enc.uvarint(0);
-    enc.uvarint(2);
-    enc.hash_ref(&high);
-    enc.hash_ref(&low);
-    assert_eq!(
-        from_slice::<Operation>(&enc.finish()),
-        Err(DecodeError::UnsortedOrDuplicateKey { at: 35 })
-    );
 }
 
 #[test]

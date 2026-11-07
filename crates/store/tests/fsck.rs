@@ -5,7 +5,7 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use codec::{Operation, blob};
+use codec::{Changeset, Entry, Mode as FileMode, Operation, RepoPath, View, blob};
 use common::matrix::{ROOT, run_matrix};
 use hash::{HashAlg, HashRef};
 use sim::{Fs, Mode, SimFs};
@@ -19,6 +19,29 @@ struct Built {
     ops: Vec<HashRef>,
 }
 
+/// A root changeset putting each blob at `f0`, `f1`, ….
+fn holder(blobs: &[HashRef]) -> Vec<u8> {
+    Changeset {
+        parents: Vec::new(),
+        change_id: [0; 16],
+        changes: blobs
+            .iter()
+            .enumerate()
+            .map(|(i, blob)| {
+                (
+                    RepoPath::new(format!("f{i}")).unwrap(),
+                    Entry::Put {
+                        blob: *blob,
+                        mode: FileMode::Regular,
+                    },
+                )
+            })
+            .collect(),
+        description: Vec::new(),
+    }
+    .to_envelope()
+}
+
 fn build() -> Built {
     let mut store = Store::init(
         SimFs::new(0, Mode::Strict),
@@ -29,13 +52,24 @@ fn build() -> Built {
     .unwrap();
     let a = store.put_object(&blob(b"abc")).unwrap();
     let b = store.put_object(&blob(b"second object")).unwrap();
-    let op = |parents: &[HashRef], objects: &[HashRef]| Operation {
-        parents: parents.iter().copied().collect(),
-        objects: objects.iter().copied().collect(),
+    // Each op's view names one changeset holding the objects.
+    let mut commit = |parents: &[HashRef], objects: &[HashRef]| {
+        let changeset = store.put_object(&holder(objects)).unwrap();
+        let view = View {
+            heads: [changeset].into(),
+            workspaces: Default::default(),
+        };
+        let view = store.put_object(&view.to_envelope()).unwrap();
+        store
+            .commit_op(&Operation {
+                parents: parents.iter().copied().collect(),
+                view,
+            })
+            .unwrap()
     };
-    let root = store.commit_op(&op(&[], &[a])).unwrap();
-    let child = store.commit_op(&op(&[root], &[b])).unwrap();
-    let merge = store.commit_op(&op(&[root, child], &[a, b])).unwrap();
+    let root = commit(&[], &[a]);
+    let child = commit(&[root], &[b]);
+    let merge = commit(&[root, child], &[a, b]);
     assert!(store.fsck().unwrap().is_clean());
     Built {
         store,
@@ -125,7 +159,8 @@ fn fsck_detects_every_bit_flip() {
 
 #[test]
 fn fsck_detects_missing_references() {
-    // A missing object: the ops naming it report it.
+    // A missing object: the changesets naming it, one per op that reaches
+    // it, report it.
     let built = build();
     built
         .store
@@ -142,8 +177,8 @@ fn fsck_detects_missing_references() {
         .collect();
     assert_eq!(
         kinds,
-        vec![ProblemKind::MissingObject(built.objects[1]); 2],
-        "the child and the merge name it"
+        vec![ProblemKind::MissingReference(built.objects[1]); 2],
+        "the child's and the merge's changesets name it"
     );
 
     // A missing parent op.

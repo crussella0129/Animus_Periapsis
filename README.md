@@ -18,10 +18,21 @@ sprint's research, plans and test evidence are under
 
 ## Status
 
-Phase 1 storage has started. The format-v1 foundation is specified in
-[`docs/spec/format-v1.md`](docs/spec/format-v1.md). A crash-tested object
-store and op log exist, with one command so far: `praps fsck [DIR]` checks a
-store's files and references.
+Phase 1 is under way. The format is specified in
+[`docs/spec/format-v1.md`](docs/spec/format-v1.md), the crash-tested store in
+[`docs/spec/storage-durability.md`](docs/spec/storage-durability.md), and the
+working copy in [`docs/spec/working-copy.md`](docs/spec/working-copy.md).
+Periapsis can record a working copy:
+
+| Command | What it does |
+|---|---|
+| `praps init [DIR]` | Makes `DIR` (default: `.`) a repository, or says it already is one |
+| `praps status [DIR]` | Snapshots the working copy, following `.gitignore` rules, and lists what changed against its parent (`A`, `M`, `D`), plus entries it cannot track |
+| `praps new [DIR]` | Snapshots, then starts a new working-copy change on top of the current one |
+| `praps fsck [DIR]` | Checks the store of a repository, or a bare store: checksums and references |
+
+Writing to the working copy (checkout, undo), merging concurrent operations
+and several workspaces come later.
 
 | Crate | What it does |
 |---|---|
@@ -29,7 +40,8 @@ store's files and references.
 | `codec` | Canonical binary encoding and object envelopes |
 | `sim` | Filesystem and randomness, real and deterministically simulated with crashes |
 | `store` | The crash-safe object store and op log, with `fsck` |
-| `praps` | The Periapsis command (`praps fsck`) |
+| `workspace` | The working copy: init, snapshot (with `.gitignore` rules), new and status |
+| `praps` | The Periapsis command (`praps init`, `new`, `status`, `fsck`) |
 | `book` | Checks the Book's typed acceptance criteria |
 | `xtask` | Project tooling behind `cargo ci` and `cargo policy` |
 

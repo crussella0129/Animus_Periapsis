@@ -2,12 +2,12 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0014
-- **State:** proposed
-- **Work evidence:** none
-- **Completion evidence:** none
-- **Code evidence:** none
-- **Test evidence:** none
-- **Documentation evidence:** none
+- **State:** active
+- **Work evidence:** [Sprint 2 T-005 build plan](../sprints/s2/sprint-plans/build-plan.md#t-005-the-workspace-crate-init-snapshot-new-and-status), [Sprint 2 T-006 build plan](../sprints/s2/sprint-plans/build-plan.md#t-006-praps-init-praps-new-and-praps-status), [Sprint 2 T-007 build plan](../sprints/s2/sprint-plans/build-plan.md#t-007-snapshot-crash-scenario-and-edit-corpora), [Sprint 2 T-008 build plan](../sprints/s2/sprint-plans/build-plan.md#t-008-working-copy-spec-readme-credits-and-backlog)
+- **Completion evidence:** [Sprint 2 T-005 completion](../work/completed-tasks.md#t-005-sprint-2), [Sprint 2 T-006 completion](../work/completed-tasks.md#t-006-sprint-2), [Sprint 2 T-007 completion](../work/completed-tasks.md#t-007-sprint-2), [Sprint 2 T-008 completion](../work/completed-tasks.md#t-008-sprint-2)
+- **Code evidence:** [crates/workspace](../../crates/workspace/src/lib.rs), [praps](../../crates/praps/src/main.rs)
+- **Test evidence:** [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md)
+- **Documentation evidence:** [The working copy](../spec/working-copy.md)
 
 ## Intent
 The working copy is itself a change. At the start of every command Periapsis
@@ -57,7 +57,48 @@ git worktrees.
   the stat cache (see AC-5).
 - Case-fold and path-hazard rules (INT-0004) apply whenever a workspace is
   materialised.
+- Ignore rules come from the `.gitignore` files inside the working copy, with
+  Git's pattern semantics: each file applies to its own directory and below,
+  the deepest file with a match decides, and nothing under an ignored
+  directory can be re-included. Matching is case-sensitive on every system.
+  `.praps/` and `.git/` at the root are always ignored. Git's global excludes
+  file and `.git/info/exclude` are not read, so a snapshot does not depend on
+  the machine it runs on. A tracked file that becomes ignored, or lies under a
+  directory that becomes ignored, stays tracked until it is deleted, as in
+  Git.
+- A symbolic link, a special file, or a name with no UTF-8 form
+  ([INT-0004](INT-0004-windows-and-linux.md) AC-7) is reported by every
+  snapshot and otherwise left alone, until symlinks are specified.
+- Windows has no executable bit, so a snapshot taken there keeps the mode the
+  working-copy change, or else its parent, last recorded for a tracked file,
+  and records a new file as regular.
+- Every command that opens the working copy snapshots it first. `fsck`
+  checks the store read-only and `init` on an existing repository writes
+  nothing, so neither snapshots; an edit made before them is captured by the
+  next command that does. AC-1's "second command" means the next command
+  that opens the working copy.
+- `new` starts a fresh working-copy change, with a newly minted change ID,
+  on top of the current one; it writes no working-copy file. Its rewriting
+  semantics belong to [INT-0011](INT-0011-change-identity-and-rewriting.md).
+- Until the stat cache exists (AC-5), every command reads and hashes every
+  tracked file, and the store re-reads each blob a changed changeset names to
+  check it. A file edited during a scan is captured as it was before or after
+  the edit, either of which is a correct snapshot; the mtime-granularity race
+  arrives with the cache and must be handled there.
+- Until [INT-0010](INT-0010-lock-free-concurrency.md)'s canonical merge exists,
+  a command that finds several op heads stops and names them instead of
+  guessing which to build on.
+
+- A first snapshot must stay linear in the working copy: Sprint 2's code
+  review found a quadratic step and a whole-copy content buffer (CR-04). Until
+  the stat cache, content is kept only for blobs the store does not have yet.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §4 Phase 1 and R5 §C.1).
 - 2026-11-01: revised while `proposed`, on owner direction: the working copy must hold conflicts in any content. The Intent says snapshots keep each file's bytes exactly unless a normalisation rule is opted in, only a line layer writes and reads conflict markers, and any other conflicted file is written as one of its sides and resolved by choosing a side or changing its bytes; AC-6 checks this.
+- 2026-11-07: revised while `proposed` (Sprint 2 Plan): Consequences record the ignore-rule sources, that symlinks, special files and names with no UTF-8 form are reported and left alone, the Windows executable-bit rule, and the several-heads stop until INT-0010.
+- 2026-11-07: `proposed` → `planned` (Sprint 2 build plan T-005 to T-008: init, snapshot and status, the CLI, the crash and edit corpora; AC-1 and AC-2. AC-3 to AC-6 come in later sprints).
+- 2026-11-07: revised while `planned` (Sprint 2 plan critique, round 1): Consequences state the ignore matcher composition and case sensitivity, that tracked files under ignored directories stay tracked, that the Windows mode comes from the working-copy change or else its parent, that `new` starts a change without writing files, and the scanning costs and racy edits deferred to the stat cache.
+- 2026-11-07: revised while `planned` (Sprint 2 plan critique, round 2): Consequences say which commands snapshot, and that `fsck` and a repeated `init` do not.
+- 2026-11-07: `planned` → `active` (Sprint 2 build, T-005 starts: the `workspace` crate).
+- 2026-11-07: revised while `active` (Sprint 2 Loop): Consequences record the linear-scan requirement (CR-04). AC-1 and AC-2 are met by the Sprint 2 test report; AC-3 to AC-6 remain, so the chapter stays `active`.

@@ -45,6 +45,7 @@
     - [INT-0028 Entropy layer](intents/INT-0028-entropy-layer.md)
 - [Format v1 specification](spec/format-v1.md)
 - [Storage durability](spec/storage-durability.md)
+- [The working copy](spec/working-copy.md)
 - [Tasks](work/tasks.md)
 - [Completed tasks](work/completed-tasks.md)
 - [Sprint 0](sprints/s0/sprint-meta.md)
@@ -52,3 +53,4 @@
   - [Master Report v6 (research artifact)](sprints/s0/sprint-research/master-report-v6.md)
   - [Biblio report (research artifact)](sprints/s0/sprint-research/biblio-report.md)
 - [Sprint 1](sprints/s1/sprint-meta.md)
+- [Sprint 2](sprints/s2/sprint-meta.md)

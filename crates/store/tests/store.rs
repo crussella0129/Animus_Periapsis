@@ -2,10 +2,10 @@
 //! and the Consequences on names and re-syncing).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::ErrorKind;
+use std::io::{self, ErrorKind};
 use std::path::Path;
 
-use codec::{Operation, blob, object_id};
+use codec::{Changeset, Entry, Mode as FileMode, Operation, RepoPath, View, blob, object_id};
 use hash::{HashAlg, HashRef};
 use sim::{Fs, Mode, Node, Rng, SimFs};
 use store::names::{file_name, parse_name};
@@ -23,11 +23,59 @@ fn fresh() -> Store<SimFs> {
     .unwrap()
 }
 
-fn op(parents: &[&HashRef], objects: &[&HashRef]) -> Operation {
+/// A root changeset putting each of `blobs` at `f0`, `f1`, ….
+fn holder(blobs: &[&HashRef]) -> Vec<u8> {
+    Changeset {
+        parents: Vec::new(),
+        change_id: [0; 16],
+        changes: blobs
+            .iter()
+            .enumerate()
+            .map(|(i, blob)| {
+                (
+                    RepoPath::new(format!("f{i}")).unwrap(),
+                    Entry::Put {
+                        blob: **blob,
+                        mode: FileMode::Regular,
+                    },
+                )
+            })
+            .collect(),
+        description: Vec::new(),
+    }
+    .to_envelope()
+}
+
+/// A view whose heads are `changesets`.
+fn view(changesets: &[&HashRef]) -> Vec<u8> {
+    View {
+        heads: changesets.iter().map(|id| *(*id)).collect(),
+        workspaces: BTreeMap::new(),
+    }
+    .to_envelope()
+}
+
+/// Puts a changeset holding `blobs` and a view of it; returns the view.
+fn state<F: Fs>(store: &mut Store<F>, blobs: &[&HashRef]) -> io::Result<HashRef> {
+    let changeset = store.put_object(&holder(blobs))?;
+    store.put_object(&view(&[&changeset]))
+}
+
+fn op(parents: &[&HashRef], view: HashRef) -> Operation {
     Operation {
         parents: parents.iter().map(|id| *(*id)).collect(),
-        objects: objects.iter().map(|id| *(*id)).collect(),
+        view,
     }
+}
+
+/// Puts a state holding `blobs`, then commits an op naming its view.
+fn commit<F: Fs>(
+    store: &mut Store<F>,
+    parents: &[&HashRef],
+    blobs: &[&HashRef],
+) -> io::Result<HashRef> {
+    let view = state(store, blobs)?;
+    store.commit_op(&op(parents, view))
 }
 
 /// The syscalls one store call made.
@@ -116,7 +164,7 @@ fn open_syncs_the_layout() {
         }
         let mut store = Store::open(&fs, Path::new(ROOT), HashAlg::DEFAULT, 0).unwrap();
         let o = store.put_object(&blob(b"o")).unwrap();
-        let acked = store.commit_op(&op(&[], &[&o])).unwrap();
+        let acked = commit(&mut store, &[], &[&o]).unwrap();
         let recovered = fs.recover();
         let store = Store::open(&recovered, Path::new(ROOT), HashAlg::DEFAULT, 0).unwrap();
         assert!(store.ops().unwrap().contains_key(&acked), "seed {seed}");
@@ -213,17 +261,33 @@ fn present_files_are_synced_again() {
             "sync_dir repo/objects".to_owned(),
         ]
     );
-    // commit_op syncs what it depends on before writing the op.
-    let root = store.commit_op(&op(&[], &[&id])).unwrap();
-    let (_, trace) = calls(&mut store, |s| s.commit_op(&op(&[&root], &[&id])).unwrap());
+}
+
+/// `commit_op` syncs its view with `objects/`, and each parent op with
+/// `ops/`, before writing the op (INT-0007 Consequences; Sprint 2 T-003).
+#[test]
+fn commit_resyncs_view_and_parents() {
+    let mut store = fresh();
+    let id = store.put_object(&blob(b"o")).unwrap();
+    let root = commit(&mut store, &[], &[&id]).unwrap();
+    let v = store.put_object(&view(&[&id, &root])).unwrap_err();
+    assert_eq!(
+        v.kind(),
+        ErrorKind::NotFound,
+        "a view naming an op is refused"
+    );
+    let v = state(&mut store, &[&id]).unwrap();
+    let (_, trace) = calls(&mut store, |s| s.commit_op(&op(&[&root], v)).unwrap());
     let position = |line: &str| trace.iter().position(|l| l == line).unwrap();
+    let view_name = format!("repo/objects/{}", file_name(&v));
     let op_name = format!("repo/ops/{}", file_name(&root));
-    assert!(position(&format!("sync_file {name}")) < position("sync_dir repo/objects"));
+    assert!(position(&format!("sync_file {view_name}")) < position("sync_dir repo/objects"));
     assert!(position(&format!("sync_file {op_name}")) < position("sync_dir repo/ops"));
     let create = trace
         .iter()
         .position(|l| l.starts_with("create_new"))
         .unwrap();
+    assert!(position("sync_dir repo/objects") < create, "{trace:?}");
     assert!(position("sync_dir repo/ops") < create, "{trace:?}");
 }
 
@@ -233,7 +297,7 @@ fn present_files_are_synced_again() {
 fn inspect_and_fsck_only_read() {
     let mut store = fresh();
     let o = store.put_object(&blob(b"o")).unwrap();
-    store.commit_op(&op(&[], &[&o])).unwrap();
+    commit(&mut store, &[], &[&o]).unwrap();
     let fs = store.fs();
     let before = fs.trace().len();
     let inspected = Store::inspect(fs, Path::new(ROOT), HashAlg::DEFAULT).unwrap();
@@ -315,8 +379,9 @@ fn commit_with_missing_parent_writes_nothing() {
     let mut store = fresh();
     let object = store.put_object(&blob(b"o")).unwrap();
     let ghost = HashAlg::DEFAULT.hash(b"no such op");
+    let v = state(&mut store, &[&object]).unwrap();
     let before = store.fs().snapshot();
-    let (result, trace) = calls(&mut store, |s| s.commit_op(&op(&[&ghost], &[&object])));
+    let (result, trace) = calls(&mut store, |s| s.commit_op(&op(&[&ghost], v)));
     let error = result.unwrap_err();
     assert_eq!(error.kind(), ErrorKind::NotFound);
     assert!(error.to_string().contains("parent op"), "{error}");
@@ -325,12 +390,75 @@ fn commit_with_missing_parent_writes_nothing() {
 }
 
 #[test]
-fn commit_with_missing_object_writes_nothing() {
+fn commit_with_missing_view_writes_nothing() {
     let mut store = fresh();
-    let ghost = HashAlg::DEFAULT.hash(b"no such object");
+    let ghost = HashAlg::DEFAULT.hash(b"no such view");
     let before = store.fs().snapshot();
-    let (result, trace) = calls(&mut store, |s| s.commit_op(&op(&[], &[&ghost])));
-    assert!(result.unwrap_err().to_string().contains("object"));
+    let (result, trace) = calls(&mut store, |s| s.commit_op(&op(&[], ghost)));
+    let error = result.unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::NotFound);
+    assert!(error.to_string().contains("view"), "{error}");
+    assert!(writes(&trace).is_empty(), "{trace:?}");
+    assert_eq!(store.fs().snapshot(), before);
+}
+
+/// A view file that does not hash to its name, and an object that is not a
+/// view, are both refused as the op's view.
+#[test]
+fn commit_with_damaged_view_writes_nothing() {
+    let mut store = fresh();
+    let o = store.put_object(&blob(b"o")).unwrap();
+    let v = state(&mut store, &[&o]).unwrap();
+    let path = Path::new("repo/objects").join(file_name(&v));
+    let mut bytes = store.fs().read(&path).unwrap();
+    *bytes.last_mut().unwrap() ^= 0x01;
+    store.fs().overwrite(&path, &bytes).unwrap();
+    for named in [v, o] {
+        let before = store.fs().snapshot();
+        let (result, trace) = calls(&mut store, |s| s.commit_op(&op(&[], named)));
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::NotFound);
+        assert!(writes(&trace).is_empty(), "{trace:?}");
+        assert_eq!(store.fs().snapshot(), before);
+    }
+}
+
+#[test]
+fn put_with_missing_reference_writes_nothing() {
+    let mut store = fresh();
+    let ghost = HashAlg::DEFAULT.hash(b"no such blob");
+    let changeset = Changeset {
+        parents: vec![ghost],
+        change_id: [0; 16],
+        changes: BTreeMap::new(),
+        description: Vec::new(),
+    };
+    for envelope in [view(&[&ghost]), changeset.to_envelope()] {
+        let before = store.fs().snapshot();
+        let (result, trace) = calls(&mut store, |s| s.put_object(&envelope));
+        let error = result.unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::NotFound);
+        assert!(error.to_string().contains(&file_name(&ghost)), "{error}");
+        assert!(writes(&trace).is_empty(), "{trace:?}");
+        assert_eq!(store.fs().snapshot(), before);
+    }
+    // An operation is never put as an object.
+    let o = store.put_object(&blob(b"o")).unwrap();
+    let as_object = op(&[], o).to_envelope();
+    assert_eq!(
+        store.put_object(&as_object).unwrap_err().kind(),
+        ErrorKind::InvalidInput
+    );
+}
+
+#[test]
+fn put_with_damaged_reference_writes_nothing() {
+    let mut store = fresh();
+    let o = store.put_object(&blob(b"o")).unwrap();
+    let path = Path::new("repo/objects").join(file_name(&o));
+    store.fs().overwrite(&path, b"\x01\x01p").unwrap();
+    let before = store.fs().snapshot();
+    let (result, trace) = calls(&mut store, |s| s.put_object(&holder(&[&o])));
+    assert_eq!(result.unwrap_err().kind(), ErrorKind::NotFound);
     assert!(writes(&trace).is_empty(), "{trace:?}");
     assert_eq!(store.fs().snapshot(), before);
 }
@@ -340,10 +468,10 @@ fn heads_of_a_chain() {
     let mut store = fresh();
     assert_eq!(store.heads().unwrap(), BTreeSet::new());
     let o = store.put_object(&blob(b"o")).unwrap();
-    let mut last = store.commit_op(&op(&[], &[&o])).unwrap();
+    let mut last = commit(&mut store, &[], &[&o]).unwrap();
     for _ in 0..4 {
         assert_eq!(store.heads().unwrap(), BTreeSet::from([last]));
-        last = store.commit_op(&op(&[&last], &[&o])).unwrap();
+        last = commit(&mut store, &[&last], &[&o]).unwrap();
     }
     assert_eq!(store.heads().unwrap(), BTreeSet::from([last]));
     assert_eq!(store.ops().unwrap().len(), 5);
@@ -356,11 +484,11 @@ fn heads_of_a_fork_and_merge() {
         store.put_object(&blob(b"a")).unwrap(),
         store.put_object(&blob(b"b")).unwrap(),
     );
-    let root = store.commit_op(&op(&[], &[])).unwrap();
-    let left = store.commit_op(&op(&[&root], &[&a])).unwrap();
-    let right = store.commit_op(&op(&[&root], &[&b])).unwrap();
+    let root = commit(&mut store, &[], &[]).unwrap();
+    let left = commit(&mut store, &[&root], &[&a]).unwrap();
+    let right = commit(&mut store, &[&root], &[&b]).unwrap();
     assert_eq!(store.heads().unwrap(), BTreeSet::from([left, right]));
-    let merge = store.commit_op(&op(&[&left, &right], &[&a, &b])).unwrap();
+    let merge = commit(&mut store, &[&left, &right], &[&a, &b]).unwrap();
     assert_eq!(store.heads().unwrap(), BTreeSet::from([merge]));
 }
 
@@ -368,8 +496,8 @@ fn heads_of_a_fork_and_merge() {
 fn store_creates_no_other_files() {
     let mut store = fresh();
     let o = store.put_object(&blob(b"o")).unwrap();
-    let root = store.commit_op(&op(&[], &[&o])).unwrap();
-    store.commit_op(&op(&[&root], &[&o])).unwrap();
+    let root = commit(&mut store, &[], &[&o]).unwrap();
+    commit(&mut store, &[&root], &[&o]).unwrap();
     store.put_object(&blob(b"o")).unwrap();
     for path in store.fs().snapshot().keys() {
         let ok = path == ROOT
@@ -386,14 +514,15 @@ fn fsck_reports_each_fault_kind() {
     let mut store = fresh();
     let kept = store.put_object(&blob(b"kept")).unwrap();
     let lost = store.put_object(&blob(b"lost")).unwrap();
-    let root = store.commit_op(&op(&[], &[&kept])).unwrap();
-    let child = store.commit_op(&op(&[&root], &[&lost])).unwrap();
+    let root = commit(&mut store, &[], &[&kept]).unwrap();
+    let child = commit(&mut store, &[&root], &[&lost]).unwrap();
     assert!(store.fsck().unwrap().is_clean());
 
     let fs = store.fs();
-    // Missing object, and through it a missing reference.
+    // A missing object, which the child's view names.
     fs.remove_file(&Path::new("repo/objects").join(file_name(&lost)))
         .unwrap();
+    let child_holder = object_id(HashAlg::DEFAULT, &holder(&[&lost]));
     // Flip a bit in the root op: it no longer hashes to its name, so the
     // child's parent is missing too.
     let root_path = Path::new("repo/ops").join(file_name(&root));
@@ -434,17 +563,71 @@ fn fsck_reports_each_fault_kind() {
         .filter(|p| p.path == child_path)
         .map(|p| &p.kind)
         .collect();
+    assert_eq!(child_problems, [&ProblemKind::MissingParent(root)]);
     assert_eq!(
-        child_problems,
-        [
-            &ProblemKind::MissingParent(root),
-            &ProblemKind::MissingObject(lost)
-        ]
+        found.get(&format!("objects/{}", file_name(&child_holder))),
+        Some(&ProblemKind::MissingReference(lost))
     );
     assert!(report.leftovers.is_empty());
     for problem in &report.problems {
         assert!(!problem.to_string().is_empty());
     }
+}
+
+/// A reference of the wrong kind is refused like a missing one: a view's
+/// head must be a changeset, a changeset's put a blob (code review CR-11).
+#[test]
+fn references_of_the_wrong_kind_are_refused() {
+    let mut store = fresh();
+    let b = store.put_object(&blob(b"b")).unwrap();
+    let h = store.put_object(&holder(&[&b])).unwrap();
+    for wrong in [view(&[&b]), holder(&[&h])] {
+        assert_eq!(
+            store.put_object(&wrong).unwrap_err().kind(),
+            ErrorKind::NotFound
+        );
+    }
+    // Written around the store, fsck reports it once an op reaches it.
+    let bad = view(&[&b]);
+    let bad_id = object_id(HashAlg::DEFAULT, &bad);
+    let path = Path::new("repo/objects").join(file_name(&bad_id));
+    store.fs().create_new(&path).unwrap();
+    store.fs().write(&path, &bad).unwrap();
+    let op_bytes = op(&[], bad_id).to_envelope();
+    let op_path = Path::new("repo/ops").join(file_name(&object_id(HashAlg::DEFAULT, &op_bytes)));
+    store.fs().create_new(&op_path).unwrap();
+    store.fs().write(&op_path, &op_bytes).unwrap();
+    let report = store.fsck().unwrap();
+    assert_eq!(report.problems.len(), 1, "{:?}", report.problems);
+    assert_eq!(report.problems[0].kind, ProblemKind::MissingReference(b));
+}
+
+/// An object no op reaches whose reference is missing is a leftover of an
+/// interrupted write, not corruption; once an op reaches it, it is a missing
+/// reference (INT-0007 Consequences; Sprint 2 T-003).
+#[test]
+fn fsck_lists_unreachable_objects_as_leftovers() {
+    let mut store = fresh();
+    let lost = store.put_object(&blob(b"lost")).unwrap();
+    let h = store.put_object(&holder(&[&lost])).unwrap();
+    let v = store.put_object(&view(&[&h])).unwrap();
+    store
+        .fs()
+        .remove_file(&Path::new("repo/objects").join(file_name(&lost)))
+        .unwrap();
+    let report = store.fsck().unwrap();
+    assert!(report.is_clean(), "{:?}", report.problems);
+    assert_eq!(report.leftovers, [format!("objects/{}", file_name(&h))]);
+    // The view, and through it the changeset, now named by an op written
+    // around the store.
+    let op_bytes = op(&[], v).to_envelope();
+    let op_path = Path::new("repo/ops").join(file_name(&object_id(HashAlg::DEFAULT, &op_bytes)));
+    store.fs().create_new(&op_path).unwrap();
+    store.fs().write(&op_path, &op_bytes).unwrap();
+    let report = store.fsck().unwrap();
+    assert!(report.leftovers.is_empty(), "{:?}", report.leftovers);
+    assert_eq!(report.problems.len(), 1);
+    assert_eq!(report.problems[0].kind, ProblemKind::MissingReference(lost));
 }
 
 #[test]

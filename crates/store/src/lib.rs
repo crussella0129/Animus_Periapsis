@@ -23,7 +23,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 
-use codec::{Operation, decode_envelope, from_slice, object_id, to_vec};
+use codec::{
+    ObjectKind, Operation, decode_envelope, from_slice, object_id, to_vec, typed_references,
+};
 use hash::{HashAlg, HashRef};
 use sim::{Fs, Rng};
 
@@ -99,6 +101,14 @@ impl<F: Fs> Store<F> {
     #[cfg(not(feature = "variants"))]
     fn writes_in_place(&self) -> bool {
         false
+    }
+    #[cfg(feature = "variants")]
+    fn resyncs_references(&self) -> bool {
+        self.variant != Variant::UnsyncedReferences
+    }
+    #[cfg(not(feature = "variants"))]
+    fn resyncs_references(&self) -> bool {
+        true
     }
     #[cfg(feature = "variants")]
     fn syncs_at_init(&self) -> bool {
@@ -227,10 +237,32 @@ impl<F: Fs> Store<F> {
         }
     }
 
-    /// Stores an object envelope and returns its id once it is durable.
+    /// Stores an object envelope and returns its id once it is durable. The
+    /// object must decode as its kind, and every object it names must already
+    /// be present (hashing to its id); otherwise nothing is written. Those
+    /// references are not synced again: they live in `objects/` too, a writer
+    /// syncs a file's data before renaming it, and no op can name this object
+    /// before this call returns (INT-0007 Consequences).
     pub fn put_object(&mut self, envelope: &[u8]) -> io::Result<HashRef> {
-        decode_envelope(envelope)
-            .map_err(|error| io::Error::new(ErrorKind::InvalidInput, error))?;
+        let invalid = |error| io::Error::new(ErrorKind::InvalidInput, error);
+        if decode_envelope(envelope).map_err(invalid)?.kind == ObjectKind::Operation {
+            return Err(io::Error::new(
+                ErrorKind::InvalidInput,
+                "an operation is committed with commit_op, not put as an object",
+            ));
+        }
+        for (reference, kind) in typed_references(envelope).map_err(invalid)? {
+            if !self.valid_object(&reference, kind)? {
+                return Err(io::Error::new(
+                    ErrorKind::NotFound,
+                    format!(
+                        "object {} is not in the store as a {}",
+                        file_name(&reference),
+                        kind.name()
+                    ),
+                ));
+            }
+        }
         let id = object_id(self.alg, envelope);
         let dir = self.objects.clone();
         self.write_file(&dir, &file_name(&id), envelope)?;
@@ -243,11 +275,11 @@ impl<F: Fs> Store<F> {
     }
 
     /// Appends an operation to the op log and returns its id once it is
-    /// durable: the acknowledgement. Every parent op and object it names must
-    /// already be present (hashing to its id); otherwise nothing is written.
-    /// Those files are synced again, with their directories, before the op is
-    /// written, since another writer may have renamed one without syncing
-    /// yet (INT-0007 Consequences).
+    /// durable: the acknowledgement. Every parent op it names and its view
+    /// must already be present (hashing to their ids, the view decoding as a
+    /// view); otherwise nothing is written. Those files are synced again, with
+    /// their directories, before the op is written, since another writer may
+    /// have renamed one without syncing yet (INT-0007 Consequences).
     pub fn commit_op(&mut self, op: &Operation) -> io::Result<HashRef> {
         for parent in &op.parents {
             if !self.valid_op(parent)? {
@@ -257,27 +289,23 @@ impl<F: Fs> Store<F> {
                 ));
             }
         }
-        for object in &op.objects {
-            if !self.valid_object(object)? {
-                return Err(io::Error::new(
-                    ErrorKind::NotFound,
-                    format!("object {} is not in the store", file_name(object)),
-                ));
-            }
+        if !self.valid_view(&op.view)? {
+            return Err(io::Error::new(
+                ErrorKind::NotFound,
+                format!("view {} is not in the store", file_name(&op.view)),
+            ));
         }
-        if self.syncs_object_data() {
-            for object in &op.objects {
-                self.fs.sync_file(&self.objects.join(file_name(object)))?;
+        if self.resyncs_references() {
+            if self.syncs_object_data() {
+                self.fs.sync_file(&self.objects.join(file_name(&op.view)))?;
             }
-        }
-        if !op.objects.is_empty() {
             self.fs.sync_dir(&self.objects)?;
-        }
-        for parent in &op.parents {
-            self.fs.sync_file(&self.ops.join(file_name(parent)))?;
-        }
-        if !op.parents.is_empty() {
-            self.fs.sync_dir(&self.ops)?;
+            for parent in &op.parents {
+                self.fs.sync_file(&self.ops.join(file_name(parent)))?;
+            }
+            if !op.parents.is_empty() {
+                self.fs.sync_dir(&self.ops)?;
+            }
         }
         let envelope = op.to_envelope();
         let id = object_id(self.alg, &envelope);
@@ -296,9 +324,22 @@ impl<F: Fs> Store<F> {
     }
 
     /// Whether the object file for `id` exists and hashes to `id`.
-    fn valid_object(&self, id: &HashRef) -> io::Result<bool> {
+    fn valid_object(&self, id: &HashRef, kind: ObjectKind) -> io::Result<bool> {
         match self.fs.read(&self.objects.join(file_name(id))) {
-            Ok(bytes) => Ok(object_id(id.alg(), &bytes) == *id),
+            Ok(bytes) => Ok(object_id(id.alg(), &bytes) == *id
+                && decode_envelope(&bytes).is_ok_and(|envelope| envelope.kind == kind)),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Whether the object file for `id` exists, hashes to `id` and decodes
+    /// as a view.
+    fn valid_view(&self, id: &HashRef) -> io::Result<bool> {
+        match self.fs.read(&self.objects.join(file_name(id))) {
+            Ok(bytes) => Ok(
+                object_id(id.alg(), &bytes) == *id && codec::View::from_envelope(&bytes).is_ok()
+            ),
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
             Err(error) => Err(error),
         }
