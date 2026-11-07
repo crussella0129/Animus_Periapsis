@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-003 (sprint 3) [intent: INT-0005, INT-0004]: remove_dir, set_executable and name_rules in sim — touches: crates/sim/, crates/store/tests/common/matrix.rs, crates/workspace/tests/
 - [ ] T-004 (sprint 3) [intent: INT-0009, INT-0004, INT-0014]: Specify writing the working copy, undo, restore and log — touches: docs/spec/working-copy.md, docs/intents/
 - [ ] T-005 (sprint 3) [intent: INT-0004]: The hazard check — touches: crates/workspace/
 - [ ] T-006 (sprint 3) [intent: INT-0009, INT-0014, INT-0007]: Materialise, the working-copy record and resume — touches: crates/workspace/, crates/praps/src/main.rs, crates/xtask/src/policy.rs

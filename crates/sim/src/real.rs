@@ -8,7 +8,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 
-use crate::fs::Fs;
+use crate::fs::{Fs, NameRules};
 use crate::name::{DirEntry, Kind, Name, RawName};
 
 /// [`Fs`] on the real filesystem, through `std::fs`.
@@ -214,6 +214,48 @@ impl Fs for RealFs {
 
     fn has_executable_bit(&self) -> bool {
         cfg!(unix)
+    }
+
+    fn remove_dir(&self, path: &Path) -> io::Result<()> {
+        fs::remove_dir(native(path)?)
+    }
+
+    fn set_executable(&self, path: &Path, executable: bool) -> io::Result<()> {
+        let path = native(path)?;
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("not a regular file: {}", path.display()),
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = metadata.permissions().mode();
+            // As Git does: execute wherever read is allowed, or nowhere.
+            let mode = if executable {
+                mode | ((mode & 0o444) >> 2)
+            } else {
+                mode & !0o111
+            };
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = executable;
+            Ok(())
+        }
+    }
+
+    /// From the platform: Windows' rules and case-insensitive names there,
+    /// neither elsewhere. A case-sensitive NTFS directory, or a
+    /// case-insensitive mount on Linux, is not detected (backlog T-015).
+    fn name_rules(&self) -> NameRules {
+        NameRules {
+            case_insensitive: cfg!(windows),
+            windows_names: cfg!(windows),
+        }
     }
 }
 

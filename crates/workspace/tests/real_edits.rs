@@ -71,6 +71,15 @@ impl Fs for Under {
     fn has_executable_bit(&self) -> bool {
         RealFs.has_executable_bit()
     }
+    fn remove_dir(&self, path: &Path) -> std::io::Result<()> {
+        RealFs.remove_dir(&self.0.join(path))
+    }
+    fn set_executable(&self, path: &Path, executable: bool) -> std::io::Result<()> {
+        RealFs.set_executable(&self.0.join(path), executable)
+    }
+    fn name_rules(&self) -> sim::NameRules {
+        RealFs.name_rules()
+    }
 }
 
 #[cfg(unix)]

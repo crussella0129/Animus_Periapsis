@@ -32,8 +32,9 @@ fn edit_corpus_loses_nothing() {
             put(&*fs, "a", b"#!");
             put(&*fs, "d2/z", b"#!");
             put(&*fs, "c.txt", b"plain");
-            fs.set_executable(&Path::new(ROOT).join("a"), true).unwrap();
-            fs.set_executable(&Path::new(ROOT).join("d2/z"), true)
+            fs.make_executable(&Path::new(ROOT).join("a"), true)
+                .unwrap();
+            fs.make_executable(&Path::new(ROOT).join("d2/z"), true)
                 .unwrap();
             ws.snapshot().unwrap();
             let expected = model.snapshot(&*fs, &BTreeSet::new());
@@ -47,7 +48,7 @@ fn edit_corpus_loses_nothing() {
             seed,
             STEPS,
             &|fs: &Rc<SimFs>, name, executable| {
-                fs.set_executable(&Path::new(ROOT).join(name), executable)
+                fs.make_executable(&Path::new(ROOT).join(name), executable)
                     .unwrap();
             },
         );

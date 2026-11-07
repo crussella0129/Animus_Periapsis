@@ -44,6 +44,27 @@ pub trait Fs {
     /// Whether files on this filesystem carry an owner-execute bit. Not a
     /// syscall.
     fn has_executable_bit(&self) -> bool;
+    /// Removes an empty directory.
+    fn remove_dir(&self, path: &Path) -> io::Result<()>;
+    /// Sets or clears a file's executable bit. Where files have no such bit
+    /// ([`Fs::has_executable_bit`] is `false`) it succeeds and changes
+    /// nothing, once the file is found. Like data, the change is durable only
+    /// after [`Fs::sync_file`].
+    fn set_executable(&self, path: &Path, executable: bool) -> io::Result<()>;
+    /// Which names this filesystem cannot hold apart or hold at all
+    /// (INT-0004). Not a syscall.
+    fn name_rules(&self) -> NameRules;
+}
+
+/// The naming rules of a filesystem, which decide what a write must refuse
+/// (INT-0004 AC-3, AC-4).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct NameRules {
+    /// Names that differ only in case name the same entry.
+    pub case_insensitive: bool,
+    /// Windows' naming rules apply: reserved device names, the characters
+    /// `<>:"|?*` and 0-31, and no trailing `.` or space.
+    pub windows_names: bool,
 }
 
 impl<T: Fs + ?Sized> Fs for &T {
@@ -82,6 +103,15 @@ impl<T: Fs + ?Sized> Fs for &T {
     }
     fn has_executable_bit(&self) -> bool {
         (**self).has_executable_bit()
+    }
+    fn remove_dir(&self, path: &Path) -> io::Result<()> {
+        (**self).remove_dir(path)
+    }
+    fn set_executable(&self, path: &Path, executable: bool) -> io::Result<()> {
+        (**self).set_executable(path, executable)
+    }
+    fn name_rules(&self) -> NameRules {
+        (**self).name_rules()
     }
 }
 
@@ -123,6 +153,15 @@ impl<T: Fs + ?Sized> Fs for Rc<T> {
     }
     fn has_executable_bit(&self) -> bool {
         (**self).has_executable_bit()
+    }
+    fn remove_dir(&self, path: &Path) -> io::Result<()> {
+        (**self).remove_dir(path)
+    }
+    fn set_executable(&self, path: &Path, executable: bool) -> io::Result<()> {
+        (**self).set_executable(path, executable)
+    }
+    fn name_rules(&self) -> NameRules {
+        (**self).name_rules()
     }
 }
 

@@ -26,7 +26,7 @@ fn scan_lists_kinds_sorted() {
         assert_eq!(fs.has_executable_bit(), has_bit);
         fs.create_dir(Path::new("d")).unwrap();
         fs.create_new(Path::new("d/run")).unwrap();
-        fs.set_executable(Path::new("d/run"), true).unwrap();
+        fs.make_executable(Path::new("d/run"), true).unwrap();
         fs.create_new(Path::new("d/plain")).unwrap();
         fs.create_dir(Path::new("d/dir")).unwrap();
         fs.make_symlink(Path::new("d/link")).unwrap();
