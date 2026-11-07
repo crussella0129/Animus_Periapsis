@@ -45,7 +45,7 @@ const DISALLOWED: [&str; 2] = ["std::collections::HashMap", "std::collections::H
 const TEST_ONLY_FEATURE: (&str, &str) = ("store", "variants");
 /// The crates whose filesystem I/O must go through `sim::Fs` (INT-0005), by
 /// directory under `crates/`.
-const FS_BOUNDARY_CRATES: [&str; 3] = ["sim", "store", "praps"];
+const FS_BOUNDARY_CRATES: [&str; 4] = ["sim", "store", "praps", "workspace"];
 /// The one source file in those crates that may touch the real filesystem,
 /// relative to the `sim` crate.
 const FS_REAL_HALF: (&str, &str) = ("sim", "src/real.rs");
@@ -57,6 +57,22 @@ const OS_RANDOM: (&str, &str) = ("getrandom", "sim");
 /// Its functions, which every boundary crate's Clippy config must disallow
 /// (only `crates/sim/src/real.rs` may switch the lint off).
 const OS_RANDOM_METHODS: [&str; 3] = ["getrandom::fill", "getrandom::u32", "getrandom::u64"];
+/// The `ignore` crate's types and functions that read the real filesystem,
+/// which a boundary crate depending on it must disallow: it may only feed
+/// `GitignoreBuilder::add_line` with lines read through `sim::Fs`.
+const IGNORE_CRATE: &str = "ignore";
+const IGNORE_TYPES: [&str; 3] = [
+    "ignore::Walk",
+    "ignore::WalkBuilder",
+    "ignore::WalkParallel",
+];
+const IGNORE_METHODS: [&str; 5] = [
+    "ignore::gitignore::GitignoreBuilder::add",
+    "ignore::gitignore::GitignoreBuilder::build_global",
+    "ignore::gitignore::Gitignore::new",
+    "ignore::gitignore::Gitignore::global",
+    "ignore::gitignore::gitconfig_excludes_path",
+];
 /// `std::fs` types a boundary crate's Clippy config must disallow.
 const FS_TYPES: [&str; 3] = [
     "std::fs::File",
@@ -522,6 +538,12 @@ fn fs_boundary(root: &Path, members: &[PathBuf]) -> Vec<String> {
             &["lints"],
             &format!("{crate_dir}/Cargo.toml"),
         ));
+        let uses_ignore = dependency_tables(&manifest).iter().any(|(_, entries)| {
+            entries.iter().any(|(name, entry)| {
+                name == IGNORE_CRATE
+                    || lookup(entry, &["package"]).and_then(Item::as_str) == Some(IGNORE_CRATE)
+            })
+        });
         let config_path = dir.join("clippy.toml");
         let config_name = relative(root, &config_path);
         if !config_path.is_file() {
@@ -529,11 +551,22 @@ fn fs_boundary(root: &Path, members: &[PathBuf]) -> Vec<String> {
         } else {
             match parse(root, &config_path) {
                 Ok(config) => {
+                    let ignore_bans: [(&str, &[&str]); 2] = if uses_ignore {
+                        [
+                            ("disallowed-types", &IGNORE_TYPES[..]),
+                            ("disallowed-methods", &IGNORE_METHODS[..]),
+                        ]
+                    } else {
+                        [("disallowed-types", &[]), ("disallowed-methods", &[])]
+                    };
                     for (key, banned) in [
                         ("disallowed-types", &FS_TYPES[..]),
                         ("disallowed-methods", &FS_METHODS[..]),
                         ("disallowed-methods", &OS_RANDOM_METHODS[..]),
-                    ] {
+                    ]
+                    .into_iter()
+                    .chain(ignore_bans)
+                    {
                         let listed = disallowed(&config, key);
                         for path in banned.iter().filter(|path| !listed.contains(path)) {
                             problems
@@ -1925,6 +1958,52 @@ mod tests {
             "#![allow(clippy::disallowed_methods)]\n",
         );
         fixture.fails_only("fs-boundary", "crates/sim/src/simfs.rs");
+    }
+
+    /// A boundary crate that depends on `ignore` must ban the `ignore`
+    /// crate's filesystem readers; one that does not need not (Sprint 2
+    /// T-005).
+    #[test]
+    fn policy_requires_the_ignore_bans() {
+        let with = |name: &str, config: &str| {
+            let fixture = Fixture::new(name);
+            fixture.write(
+                "crates/workspace/Cargo.toml",
+                &member("workspace", "ignore.workspace = true"),
+            );
+            fixture.write("crates/workspace/src/lib.rs", "#![forbid(unsafe_code)]\n");
+            fixture.write("crates/workspace/clippy.toml", config);
+            fixture
+        };
+        let complete = {
+            let mut config = boundary_config("");
+            for (key, banned) in [
+                ("disallowed-types = [\n", &super::IGNORE_TYPES[..]),
+                ("disallowed-methods = [\n", &super::IGNORE_METHODS[..]),
+            ] {
+                let lines: String = banned
+                    .iter()
+                    .map(|path| format!("  \"{path}\",\n"))
+                    .collect();
+                config = replace(&config, key, &format!("{key}{lines}"));
+            }
+            config
+        };
+        with("ignore-ok", &complete).passes();
+        for missing in [
+            "ignore::WalkBuilder",
+            "ignore::gitignore::GitignoreBuilder::add",
+        ] {
+            let config = complete.replace(&format!("  \"{missing}\",\n"), "");
+            with(&format!("ignore-without-{}", missing.len()), &config)
+                .fails_exactly(&["fs-boundary"], &["crates/workspace/clippy.toml", missing]);
+        }
+        // Without the dependency the bans are not required.
+        let fixture = Fixture::new("ignore-unused");
+        fixture.write("crates/workspace/Cargo.toml", &member("workspace", ""));
+        fixture.write("crates/workspace/src/lib.rs", "#![forbid(unsafe_code)]\n");
+        fixture.write("crates/workspace/clippy.toml", &boundary_config(""));
+        fixture.passes();
     }
 
     /// Only `sim` may depend on `getrandom`, under any key and in any

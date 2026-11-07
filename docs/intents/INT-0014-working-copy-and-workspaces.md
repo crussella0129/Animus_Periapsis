@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0014
-- **State:** planned
+- **State:** active
 - **Work evidence:** [Sprint 2 T-005 build plan](../sprints/s2/sprint-plans/build-plan.md#t-005-the-workspace-crate-init-snapshot-new-and-status), [Sprint 2 T-006 build plan](../sprints/s2/sprint-plans/build-plan.md#t-006-praps-init-praps-new-and-praps-status), [Sprint 2 T-007 build plan](../sprints/s2/sprint-plans/build-plan.md#t-007-snapshot-crash-scenario-and-edit-corpora), [Sprint 2 T-008 build plan](../sprints/s2/sprint-plans/build-plan.md#t-008-working-copy-spec-readme-credits-and-backlog)
 - **Completion evidence:** none
 - **Code evidence:** none
@@ -96,3 +96,4 @@ git worktrees.
 - 2026-11-07: `proposed` → `planned` (Sprint 2 build plan T-005 to T-008: init, snapshot and status, the CLI, the crash and edit corpora; AC-1 and AC-2. AC-3 to AC-6 come in later sprints).
 - 2026-11-07: revised while `planned` (Sprint 2 plan critique, round 1): Consequences state the ignore matcher composition and case sensitivity, that tracked files under ignored directories stay tracked, that the Windows mode comes from the working-copy change or else its parent, that `new` starts a change without writing files, and the scanning costs and racy edits deferred to the stat cache.
 - 2026-11-07: revised while `planned` (Sprint 2 plan critique, round 2): Consequences say which commands snapshot, and that `fsck` and a repeated `init` do not.
+- 2026-11-07: `planned` → `active` (Sprint 2 build, T-005 starts: the `workspace` crate).

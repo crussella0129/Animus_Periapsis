@@ -1,0 +1,23 @@
+[package]
+name = "workspace"
+description = "The working copy of a Periapsis repository: init, snapshot, new and status"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+codec.workspace = true
+hash.workspace = true
+ignore.workspace = true
+sim.workspace = true
+store.workspace = true
+
+[dev-dependencies]
+# The store's test-only variants, for the crash matrix's negative control.
+store = { workspace = true, features = ["variants"] }
+
+[lints]
+workspace = true

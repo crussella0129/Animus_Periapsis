@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-005 (sprint 2) [intent: INT-0014, INT-0004, INT-0013]: The workspace crate: init, snapshot, new and status — touches: crates/workspace/, crates/xtask/src/policy.rs, Cargo.toml, Cargo.lock
 - [ ] T-006 (sprint 2) [intent: INT-0014]: praps init, praps new and praps status — touches: crates/praps/, Cargo.lock
 - [ ] T-007 (sprint 2) [intent: INT-0005, INT-0014, INT-0007]: Snapshot crash scenario and edit corpora — touches: crates/workspace/
 - [ ] T-008 (sprint 2) [intent: INT-0014, INT-0003, INT-0006]: Working-copy spec, README, credits and backlog — touches: docs/spec/working-copy.md, docs/SUMMARY.md, README.md, docs/prior-art.md, docs/work/tasks.md

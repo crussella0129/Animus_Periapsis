@@ -70,6 +70,7 @@ starts with `C allowed:` and gives the reason.
 | `toml_edit` | 0.25.17 | MIT OR Apache-2.0 | `xtask` | no | `default-features = false, features = ["parse"]`: the parser only |
 | `allocation-counter` | 0.8.1 | MIT OR Apache-2.0 | tests only (`codec`) | no | as published; it installs a counting global allocator, so only `crates/codec/tests/alloc.rs` uses it |
 | `getrandom` | 0.4.3 | MIT OR Apache-2.0 | `sim` (real half only: `sim::os_seed`, which seeds change IDs outside simulation) | no (on Windows it calls `ProcessPrng` through a raw-dylib import, on Linux `getrandom(2)` through `libc`; no build script compiles C) | `default-features = false`; confined to `crates/sim/src/real.rs` by `sim/clippy.toml` and the `deps` rule |
+| `ignore` | 0.4.34 | Unlicense OR MIT | `workspace` (only `gitignore::GitignoreBuilder::add_line` and `Gitignore::matched`, fed lines read through `sim::Fs`) | no (none of it or its dependencies, `globset`, `regex-automata`, `aho-corasick`, `bstr`, `memchr`, `walkdir`, `same-file`, `crossbeam-deque`, `winapi-util`, `log`, has a build script that compiles C) | `default-features = false` (`simd-accel` off); its filesystem readers are banned in `crates/workspace/clippy.toml` (`cargo policy`, rule `fs-boundary`) |
 
 ## Test data
 

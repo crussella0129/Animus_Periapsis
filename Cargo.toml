@@ -21,11 +21,13 @@ pulldown-cmark = { version = "0.13.6", default-features = false }
 toml_edit = { version = "0.25.17", default-features = false, features = ["parse"] }
 allocation-counter = "0.8.1"
 getrandom = { version = "0.4.3", default-features = false }
+ignore = { version = "0.4.34", default-features = false }
 hash = { path = "crates/hash" }
 book = { path = "crates/book" }
 codec = { path = "crates/codec" }
 sim = { path = "crates/sim" }
 store = { path = "crates/store" }
+workspace = { path = "crates/workspace" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
