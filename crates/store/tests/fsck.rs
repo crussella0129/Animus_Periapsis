@@ -195,8 +195,8 @@ fn fsck_is_clean_on_matrix_stores() {
     run_matrix(
         Variant::Correct,
         |scenario, mode, seed, crash_at, _, recovered| {
-            // A store whose init was not acknowledged may not exist; every one
-            // that opens must check clean.
+            // A store whose init was not acknowledged may not exist (this is the
+            // state the crash left); every one that opens must check clean.
             if let Ok(store) = Store::open(recovered, Path::new(ROOT), HashAlg::DEFAULT, 0) {
                 opened += 1;
                 let report = store.fsck().unwrap();

@@ -16,8 +16,9 @@
 //!   name or leaves it). A directory whose own entry is lost takes everything
 //!   below it.
 //! - [`Mode::Lenient`] adds what common journaling filesystems do: a file's
-//!   `sync_file` also makes its own entry durable, and `create_dir` is durable
-//!   at once. [`Mode::Strict`] assumes only what POSIX promises.
+//!   `sync_file` also makes its own entry durable, together with every entry
+//!   change of its directory made before it (the journal commits in order),
+//!   and `create_dir` is durable at once. [`Mode::Strict`] assumes only what POSIX promises.
 //!
 //! A run with crash point *k* lets syscalls 1 to *k* − 1 take effect; syscall
 //! *k* takes no effect and fails, as does every later one. [`SimFs::recover`]
@@ -62,8 +63,10 @@ enum DirOp {
         name: String,
         entry: Entry,
     },
+    /// Removes `name` if it still names `entry`.
     Remove {
         name: String,
+        entry: Entry,
     },
     Rename {
         from: String,
@@ -78,20 +81,25 @@ impl DirOp {
             DirOp::Insert { name, entry } => {
                 entries.insert(name.clone(), *entry);
             }
-            DirOp::Remove { name } => {
-                entries.remove(name);
+            DirOp::Remove { name, entry } => {
+                if entries.get(name) == Some(entry) {
+                    entries.remove(name);
+                }
             }
             DirOp::Rename { from, to, entry } => {
-                entries.remove(from);
+                if entries.get(from) == Some(entry) {
+                    entries.remove(from);
+                }
                 entries.insert(to.clone(), *entry);
             }
         }
     }
 
-    fn targets(&self, target: &str) -> bool {
+    /// Whether this op put `inode` under the name `target`.
+    fn targets(&self, target: &str, inode: Entry) -> bool {
         match self {
-            DirOp::Insert { name, .. } => name == target,
-            DirOp::Rename { to, .. } => to == target,
+            DirOp::Insert { name, entry } => name == target && *entry == inode,
+            DirOp::Rename { to, entry, .. } => to == target && *entry == inode,
             DirOp::Remove { .. } => false,
         }
     }
@@ -153,17 +161,19 @@ fn shown(path: &Path) -> String {
     parts.join("/")
 }
 
-/// The path as the simulator keys it: normal components only.
+/// The path as the simulator keys it: normal components only, with `.`
+/// dropped and `..` taken lexically (it may not climb above the root).
 fn key(path: &Path) -> io::Result<PathBuf> {
     let mut key = PathBuf::new();
     for part in path.components() {
         match part {
             Component::Normal(name) => key.push(name),
             Component::CurDir => {}
+            Component::ParentDir if key.pop() => {}
             _ => {
                 return Err(error(
                     ErrorKind::InvalidInput,
-                    "the simulator takes relative paths without `..`",
+                    "the simulator takes relative paths that stay under its root",
                     path,
                 ));
             }
@@ -485,29 +495,16 @@ impl Fs for SimFs {
         inode.durable = inode.current.clone();
         inode.truncated = false;
         if st.mode == Mode::Lenient {
-            // Promote the ops that put this file under its name, following
-            // renames back to the create, so no earlier name of it is left
-            // pending to reappear.
+            // A journaling filesystem commits a directory's entry changes in
+            // order: making this file's entry durable commits every pending
+            // change of the directory up to the one that gave it this name.
             let dir = st.dir_mut(&parent, path)?;
-            let mut names = vec![name];
-            let mut promote = vec![false; dir.pending.len()];
-            for (i, op) in dir.pending.iter().enumerate().rev() {
-                if names.iter().any(|name| op.targets(name)) {
-                    promote[i] = true;
-                    if let DirOp::Rename { from, .. } = op {
-                        names.push(from.clone());
-                    }
-                }
-            }
-            let mut kept = Vec::new();
-            for (op, promoted) in dir.pending.drain(..).zip(promote) {
-                if promoted {
+            let inode = Entry::File(id);
+            if let Some(last) = dir.pending.iter().rposition(|op| op.targets(&name, inode)) {
+                for op in dir.pending.drain(..=last) {
                     op.apply(&mut dir.durable);
-                } else {
-                    kept.push(op);
                 }
             }
-            dir.pending = kept;
         }
         Ok(())
     }
@@ -583,10 +580,10 @@ impl Fs for SimFs {
         self.syscall("remove_file", path)?;
         let (parent, name) = split(path)?;
         let mut st = self.state.borrow_mut();
-        st.file(path)?;
+        let entry = Entry::File(st.file(path)?);
         let dir = st.dir_mut(&parent, path)?;
         dir.entries.remove(&name);
-        dir.pending.push(DirOp::Remove { name });
+        dir.pending.push(DirOp::Remove { name, entry });
         Ok(())
     }
 }

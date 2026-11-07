@@ -84,14 +84,10 @@ impl Fs for RealFs {
     fn list(&self, path: &Path) -> io::Result<Vec<String>> {
         let mut names = Vec::new();
         for entry in fs::read_dir(path)? {
-            let name = entry?.file_name();
-            let name = name.into_string().map_err(|name| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("non-UTF-8 name {name:?} in {}", path.display()),
-                )
-            })?;
-            names.push(name);
+            // A name with no UTF-8 form is listed lossily, so callers see
+            // it (and `fsck` reports it as a bad name) instead of failing
+            // the whole listing.
+            names.push(entry?.file_name().to_string_lossy().into_owned());
         }
         names.sort();
         Ok(names)

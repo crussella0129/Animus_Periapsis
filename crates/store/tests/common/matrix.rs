@@ -33,12 +33,13 @@ pub enum Scenario {
     Chain,
     /// `init`, a root op, two children, and a merge of both.
     ForkMerge,
-    /// `init`, writer A commits a root op naming object Y, then puts object
-    /// X and commits a child op naming it. Writer B runs at a seed-chosen
-    /// syscall inside A's put of X: it puts X too, writing nothing else to
-    /// `objects/`, and commits its own op naming X and Y. When B runs after A
-    /// renamed X but before A synced `objects/`, only B's re-sync of the
-    /// present X makes B's acknowledged op safe (INT-0007 Consequences).
+    /// `init`, then writer A commits a root op naming object Y, puts object X
+    /// and commits a child op naming it. Writer B, opened before A puts X,
+    /// runs at a seed-chosen syscall inside A's put of X and commits its own
+    /// op naming X and Y without putting X itself. When B runs after A renamed
+    /// X but before A synced `objects/`, only `commit_op`'s re-sync of the
+    /// objects it names makes B's acknowledged op safe (INT-0007
+    /// Consequences).
     TwoWriters,
 }
 
@@ -59,6 +60,8 @@ pub struct Log {
     pub attempted: Vec<HashRef>,
     /// Every op whose commit returned, in order.
     pub acked: Vec<HashRef>,
+    /// Every object whose `put_object` returned.
+    pub objects_acked: Vec<HashRef>,
     /// The intended single-writer chain, for the prefix check.
     pub chain: Vec<HashRef>,
 }
@@ -71,7 +74,7 @@ pub struct Violations {
     pub layout: u64,
     /// A present op names a parent op or an object that is not present.
     pub closure: u64,
-    /// An acknowledged op is not present.
+    /// An acknowledged op or object is not present.
     pub durability: u64,
     /// A present op was never attempted, or the heads the store reports differ
     /// from the heads of the present ops.
@@ -124,6 +127,12 @@ fn op(parents: &[HashRef], objects: &[HashRef]) -> Operation {
     }
 }
 
+fn put(store: &mut Store<Rc<SimFs>>, envelope: &[u8], log: &RefCell<Log>) -> io::Result<HashRef> {
+    let id = store.put_object(envelope)?;
+    log.borrow_mut().objects_acked.push(id);
+    Ok(id)
+}
+
 fn commit(store: &mut Store<Rc<SimFs>>, op: &Operation, log: &RefCell<Log>) -> io::Result<()> {
     let id = id_of(op);
     log.borrow_mut().attempted.push(id);
@@ -156,14 +165,14 @@ fn run(
             }
             log.borrow_mut().chain = ops.iter().map(|(_, op)| id_of(op)).collect();
             for (i, next) in ops {
-                a.put_object(&blob(format!("object {i}").as_bytes()))?;
+                put(&mut a, &blob(format!("object {i}").as_bytes()), log)?;
                 commit(&mut a, &next, log)?;
             }
             Ok(())
         }
         Scenario::ForkMerge => {
-            let x = a.put_object(&blob(b"left"))?;
-            let y = a.put_object(&blob(b"right"))?;
+            let x = put(&mut a, &blob(b"left"), log)?;
+            let y = put(&mut a, &blob(b"right"), log)?;
             let base = op(&[], &[]);
             commit(&mut a, &base, log)?;
             let left = op(&[id_of(&base)], &[x]);
@@ -173,35 +182,34 @@ fn run(
             commit(&mut a, &op(&[id_of(&left), id_of(&right)], &[x, y]), log)
         }
         Scenario::TwoWriters => {
-            let y = a.put_object(&blob(b"Y"))?;
+            let y = put(&mut a, &blob(b"Y"), log)?;
             let base = op(&[], &[y]);
             commit(&mut a, &base, log)?;
+            // B opens now: `open` syncs the layout, which inside A's put of
+            // X would also make X's name durable and hide the race.
+            let mut b = Store::open_variant(
+                Rc::clone(fs),
+                Path::new(ROOT),
+                ALG,
+                seed.wrapping_add(1_000),
+                variant,
+            )?;
             // A's put of X takes six syscalls (read, create_new, write,
             // sync_file, rename, sync_dir) and its commit begins with two
             // reads; B runs before one of those eight, chosen by the seed.
             let trigger = fs.syscalls() + 1 + Rng::new(seed ^ 0x5eed).below(8);
-            let (hook_fs, hook_log) = (Rc::clone(fs), Rc::clone(log));
+            let hook_log = Rc::clone(log);
+            let x_id = object_id(ALG, &blob(b"X"));
             let mut fired = false;
             fs.set_hook(Some(Box::new(move |next| {
                 if fired || next != trigger {
                     return;
                 }
                 fired = true;
-                let _ = (|| -> io::Result<()> {
-                    let mut b = Store::open_variant(
-                        Rc::clone(&hook_fs),
-                        Path::new(ROOT),
-                        ALG,
-                        seed.wrapping_add(1_000),
-                        variant,
-                    )?;
-                    let x = b.put_object(&blob(b"X"))?;
-                    let y = object_id(ALG, &blob(b"Y"));
-                    commit(&mut b, &op(&[], &[x, y]), &hook_log)
-                })();
+                let _ = commit(&mut b, &op(&[], &[x_id, y]), &hook_log);
             })));
             let result = (|| -> io::Result<()> {
-                let x = a.put_object(&blob(b"X"))?;
+                let x = put(&mut a, &blob(b"X"), log)?;
                 commit(&mut a, &op(&[id_of(&base)], &[x]), log)
             })();
             fs.set_hook(None);
@@ -232,9 +240,12 @@ pub fn run_cell(
     let log = Rc::new(RefCell::new(Log::default()));
     let _ = run(&fs, scenario, variant, seed, &log);
     let trace = fs.trace().join("\n");
+    // Recovery is a function of the crashed state and the seed, so the
+    // checks (whose final `init` writes) get their own copy and the state
+    // returned, hashed and handed on is the one the crash left.
     let recovered = fs.recover();
     let log = log.borrow().clone();
-    let violations = check(&recovered, &log, scenario, variant, seed);
+    let violations = check(&fs.recover(), &log, scenario, variant, seed);
     let outcome = Outcome {
         violations,
         state: digest(&recovered),
@@ -304,8 +315,13 @@ fn check(
         v.closure += op.parents.iter().filter(|p| !ops.contains_key(p)).count() as u64;
         v.closure += op.objects.iter().filter(|o| !objects.contains(o)).count() as u64;
     }
-    // Durability.
+    // Durability, of acknowledged ops and of acknowledged objects.
     v.durability += log.acked.iter().filter(|id| !ops.contains_key(id)).count() as u64;
+    v.durability += log
+        .objects_acked
+        .iter()
+        .filter(|id| !objects.contains(id))
+        .count() as u64;
     // Heads: only attempted ops, and the heads the store reports.
     let attempted: BTreeSet<&HashRef> = log.attempted.iter().collect();
     v.heads += ops.keys().filter(|id| !attempted.contains(id)).count() as u64;

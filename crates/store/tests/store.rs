@@ -69,7 +69,7 @@ fn init_creates_and_syncs_layout() {
         "sync_dir repo/objects",
         "sync_dir repo/ops",
         "sync_dir repo",
-        "sync_dir ",
+        "sync_dir repo/..",
     ] {
         assert!(trace.iter().any(|l| l == line), "{line:?} not in {trace:?}");
     }
@@ -103,6 +103,24 @@ fn init_is_idempotent() {
     fs.create_dir(Path::new("repo/objects")).unwrap();
     Store::init(&fs, Path::new(ROOT), HashAlg::DEFAULT, 0).unwrap();
     assert_eq!(fs.snapshot().get("repo/ops"), Some(&Node::Dir));
+}
+
+/// A layout a died process left unsynced is made durable by `open`, so ops
+/// acknowledged after it cannot vanish with it (code review, Sprint 1).
+#[test]
+fn open_syncs_the_layout() {
+    for seed in 0..50 {
+        let fs = SimFs::new(seed, Mode::Strict);
+        for dir in [ROOT, "repo/objects", "repo/ops"] {
+            fs.create_dir(Path::new(dir)).unwrap();
+        }
+        let mut store = Store::open(&fs, Path::new(ROOT), HashAlg::DEFAULT, 0).unwrap();
+        let o = store.put_object(&blob(b"o")).unwrap();
+        let acked = store.commit_op(&op(&[], &[&o])).unwrap();
+        let recovered = fs.recover();
+        let store = Store::open(&recovered, Path::new(ROOT), HashAlg::DEFAULT, 0).unwrap();
+        assert!(store.ops().unwrap().contains_key(&acked), "seed {seed}");
+    }
 }
 
 #[test]

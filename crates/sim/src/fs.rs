@@ -29,7 +29,8 @@ pub trait Fs {
     fn sync_dir(&self, path: &Path) -> io::Result<()>;
     /// Reads a whole file.
     fn read(&self, path: &Path) -> io::Result<Vec<u8>>;
-    /// The names in a directory, sorted by their bytes.
+    /// The names in a directory, sorted by their bytes. A name with no
+    /// UTF-8 form is given lossily (with U+FFFD), so it names no file.
     fn list(&self, path: &Path) -> io::Result<Vec<String>>;
     /// Removes a file.
     fn remove_file(&self, path: &Path) -> io::Result<()>;

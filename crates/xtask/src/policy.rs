@@ -46,8 +46,9 @@ const TEST_ONLY_FEATURE: (&str, &str) = ("store", "variants");
 /// The crates whose filesystem I/O must go through `sim::Fs` (INT-0005), by
 /// directory under `crates/`.
 const FS_BOUNDARY_CRATES: [&str; 3] = ["sim", "store", "praps"];
-/// The one source file in those crates that may touch the real filesystem.
-const FS_REAL_HALF: &str = "crates/sim/src/real.rs";
+/// The one source file in those crates that may touch the real filesystem,
+/// relative to the `sim` crate.
+const FS_REAL_HALF: (&str, &str) = ("sim", "src/real.rs");
 /// `std::fs` types a boundary crate's Clippy config must disallow.
 const FS_TYPES: [&str; 3] = [
     "std::fs::File",
@@ -89,13 +90,26 @@ const FS_METHODS: [&str; 28] = [
 /// Lint names whose `allow`, `expect` or `cfg_attr` would switch the
 /// boundary off: the two lints, their former names, and the groups that hold
 /// them.
-const FS_OPT_OUTS: [&str; 6] = [
+const FS_OPT_OUTS: [&str; 7] = [
     "clippy::disallowed_methods",
     "clippy::disallowed_types",
     "clippy::disallowed_method",
     "clippy::disallowed_type",
     "clippy::style",
     "clippy::all",
+    "warnings",
+];
+/// The same lints as Cargo `[lints]` keys: setting any of them in a
+/// `[workspace.lints]` or `[lints]` table could switch the boundary off for a
+/// whole crate.
+const FS_LINT_KEYS: [(&str, &str); 7] = [
+    ("clippy", "disallowed_methods"),
+    ("clippy", "disallowed_types"),
+    ("clippy", "disallowed_method"),
+    ("clippy", "disallowed_type"),
+    ("clippy", "style"),
+    ("clippy", "all"),
+    ("rust", "warnings"),
 ];
 /// The configs Clippy looks for in each directory, the first one winning.
 const CLIPPY_CONFIGS: [&str; 2] = [".clippy.toml", "clippy.toml"];
@@ -280,21 +294,35 @@ fn publish(root: &Path, members: &[PathBuf]) -> Vec<String> {
 /// feature (the crash matrix's broken negative controls) is enabled only by
 /// `[dev-dependencies]`, so no production build can select a broken store.
 fn deps(root: &Path, members: &[PathBuf]) -> Vec<String> {
+    let (store, feature) = TEST_ONLY_FEATURE;
+    // The workspace dependency keys that name the store, by key or by
+    // `package`.
+    let mut store_keys = BTreeSet::from([store.to_owned()]);
     let mut problems = match parse(root, &root.join("Cargo.toml")) {
-        Ok(workspace) => lookup(workspace.as_item(), &["workspace", "dependencies", "store"])
-            .filter(|entry| strings(entry, &["features"]).contains(&TEST_ONLY_FEATURE.1))
-            .map(|_| {
-                format!(
-                    "[workspace.dependencies] enables `{}` of `{}` for every member",
-                    TEST_ONLY_FEATURE.1, TEST_ONLY_FEATURE.0
-                )
-            })
-            .into_iter()
-            .collect(),
+        Ok(workspace) => {
+            let mut problems = Vec::new();
+            if let Some(entries) = lookup(workspace.as_item(), &["workspace", "dependencies"])
+                .and_then(Item::as_table_like)
+            {
+                for (key, entry) in entries.iter() {
+                    let package = lookup(entry, &["package"]).and_then(Item::as_str);
+                    if key == store || package == Some(store) {
+                        store_keys.insert(key.to_owned());
+                        if strings(entry, &["features"]).contains(&feature) {
+                            problems.push(format!(
+                                "[workspace.dependencies] `{key}` enables `{feature}` of `{store}` for every member"
+                            ));
+                        }
+                    }
+                }
+            }
+            problems
+        }
         Err(problem) => vec![problem],
     };
     problems.extend(each_manifest(root, members, |dir, manifest| {
         let mut problems = Vec::new();
+        let package = lookup(manifest.as_item(), &["package", "name"]).and_then(Item::as_str);
         for (table, entries) in dependency_tables(manifest) {
             for (name, entry) in entries.iter() {
                 if !is_true(entry, &["workspace"]) {
@@ -303,14 +331,27 @@ fn deps(root: &Path, members: &[PathBuf]) -> Vec<String> {
                     ));
                 }
                 let dev = table.ends_with("dev-dependencies") || table.ends_with("dev_dependencies");
-                if name == TEST_ONLY_FEATURE.0
-                    && !dev
-                    && strings(entry, &["features"]).contains(&TEST_ONLY_FEATURE.1)
-                {
+                if store_keys.contains(name) && !dev && strings(entry, &["features"]).contains(&feature) {
                     problems.push(format!(
-                        "{dir} enables `{}` of `{name}` in [{table}]; only [dev-dependencies] may",
-                        TEST_ONLY_FEATURE.1
+                        "{dir} enables `{feature}` of `{store}` in [{table}]; only [dev-dependencies] may"
                     ));
+                }
+            }
+        }
+        // A feature of any member that turns the store's variants on, or,
+        // in the store itself, any feature but `variants` that includes it.
+        if let Some(features) = lookup(manifest.as_item(), &["features"]).and_then(Item::as_table_like) {
+            for (name, _) in features.iter() {
+                for enabled in strings(manifest.as_item(), &["features", name]) {
+                    let through_dependency = store_keys.iter().any(|key| {
+                        enabled == format!("{key}/{feature}") || enabled == format!("{key}?/{feature}")
+                    });
+                    let own = package == Some(store) && name != feature && enabled == feature;
+                    if through_dependency || own {
+                        problems.push(format!(
+                            "{dir} feature `{name}` enables `{feature}` of `{store}`; only [dev-dependencies] may"
+                        ));
+                    }
                 }
             }
         }
@@ -443,15 +484,27 @@ fn hash_bans(root: &Path, path: &Path) -> Vec<String> {
 /// the crates' `tests/` files. Clippy resolves paths, so a brace import or a
 /// `Path::exists` is caught where a text search would miss it.
 fn fs_boundary(root: &Path, members: &[PathBuf]) -> Vec<String> {
-    let mut problems = Vec::new();
+    let mut problems = match parse(root, &root.join("Cargo.toml")) {
+        Ok(workspace) => lint_switches(workspace.as_item(), &["workspace", "lints"], "Cargo.toml"),
+        Err(problem) => vec![problem],
+    };
     for dir in members {
         let crate_dir = relative(root, dir);
-        if !FS_BOUNDARY_CRATES
-            .iter()
-            .any(|name| crate_dir == format!("crates/{name}"))
-        {
+        let Ok(manifest) = parse(root, &dir.join("Cargo.toml")) else {
+            continue;
+        };
+        let package = lookup(manifest.as_item(), &["package", "name"])
+            .and_then(Item::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        if !FS_BOUNDARY_CRATES.contains(&package.as_str()) {
             continue;
         }
+        problems.extend(lint_switches(
+            manifest.as_item(),
+            &["lints"],
+            &format!("{crate_dir}/Cargo.toml"),
+        ));
         let config_path = dir.join("clippy.toml");
         let config_name = relative(root, &config_path);
         if !config_path.is_file() {
@@ -474,9 +527,11 @@ fn fs_boundary(root: &Path, members: &[PathBuf]) -> Vec<String> {
             }
         }
         let tests = format!("{crate_dir}/tests/");
+        let real_half =
+            (package == FS_REAL_HALF.0).then(|| format!("{crate_dir}/{}", FS_REAL_HALF.1));
         for file in rust_files(dir) {
             let name = relative(root, &file);
-            if name == FS_REAL_HALF || name.starts_with(&tests) {
+            if real_half.as_deref() == Some(name.as_str()) || name.starts_with(&tests) {
                 continue;
             }
             for attribute in opt_outs(&read(&file)) {
@@ -489,8 +544,26 @@ fn fs_boundary(root: &Path, members: &[PathBuf]) -> Vec<String> {
     problems
 }
 
-/// Every `.rs` file under `dir`, except build output, in path order.
+/// Lint settings under `path` (a `[lints]` or `[workspace.lints]` table)
+/// that name a boundary lint: each one is a problem, whatever its level,
+/// since only the default keeps the boundary on.
+fn lint_switches(manifest: &Item, path: &[&str], shown: &str) -> Vec<String> {
+    let table = path.join(".");
+    FS_LINT_KEYS
+        .iter()
+        .filter(|(tool, lint)| {
+            let mut key = path.to_vec();
+            key.extend([*tool, *lint]);
+            lookup(manifest, &key).is_some()
+        })
+        .map(|(tool, lint)| format!("{shown} sets `{lint}` in [{table}.{tool}], which could switch off the filesystem boundary"))
+        .collect()
+}
+
+/// Every `.rs` file under `dir`, except the crate's own build output
+/// (`dir/target`), in path order.
 fn rust_files(dir: &Path) -> Vec<PathBuf> {
+    let build_output = dir.join("target");
     let mut files = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -500,7 +573,7 @@ fn rust_files(dir: &Path) -> Vec<PathBuf> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                if path.file_name().is_some_and(|name| name != "target") {
+                if path != build_output {
                     stack.push(path);
                 }
             } else if path.extension().is_some_and(|ext| ext == "rs") {
@@ -1633,6 +1706,7 @@ mod tests {
             "#[cfg_attr(test, allow(clippy::disallowed_methods))]",
             "#[allow(\n    unused,\n    clippy :: disallowed_methods,\n)]",
             "# ! [ allow ( clippy::style ) ]",
+            "#![allow(warnings)]",
         ]
         .into_iter()
         .enumerate()
@@ -1647,6 +1721,72 @@ mod tests {
                 &["crates/store/src/io.rs", "switches off"],
             );
         }
+
+        // Cargo-level lint settings could switch the lints off for a whole
+        // crate: in the workspace's [workspace.lints] or a crate's [lints].
+        for (i, (path, from, to)) in [
+            (
+                "Cargo.toml",
+                "[workspace.lints.rust]\n",
+                "[workspace.lints.clippy]\ndisallowed_methods = \"allow\"\n\n[workspace.lints.rust]\n",
+            ),
+            (
+                "Cargo.toml",
+                "[workspace.lints.rust]\n",
+                "[workspace.lints.clippy]\nstyle = { level = \"allow\", priority = 1 }\n\n[workspace.lints.rust]\n",
+            ),
+            (
+                "Cargo.toml",
+                "unsafe_code = \"forbid\"\n",
+                "unsafe_code = \"forbid\"\nwarnings = \"allow\"\n",
+            ),
+            (
+                "crates/store/Cargo.toml",
+                "[lints]\nworkspace = true\n",
+                "[lints.clippy]\nall = \"allow\"\n",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = with_store(&format!("boundary-lints-{i}"));
+            fixture.write(path, &replace(&fixture.read(path), from, to));
+            let failures = fixture.failures();
+            let boundary = failures
+                .iter()
+                .find(|(rule, _)| *rule == "fs-boundary")
+                .unwrap_or_else(|| panic!("{path}: {failures:?}"));
+            assert!(
+                boundary.1.iter().any(|problem| problem.contains("could switch off")),
+                "{boundary:?}"
+            );
+        }
+
+        // A boundary crate is found by its package name, wherever it lives.
+        let fixture = Fixture::new("boundary-moved");
+        fixture.write("crates/core/store/Cargo.toml", &member("store", ""));
+        fixture.write("crates/core/store/src/lib.rs", "#![forbid(unsafe_code)]\n");
+        fixture.write(
+            "Cargo.toml",
+            &replace(
+                &fixture.read("Cargo.toml"),
+                "members = [\"crates/*\"]",
+                "members = [\"crates/*\", \"crates/core/*\"]",
+            ),
+        );
+        fixture.fails_exactly(
+            &["fs-boundary"],
+            &["crates/core/store/clippy.toml is missing"],
+        );
+
+        // Only the crate's own target/ is skipped, not a source module of
+        // that name.
+        let fixture = with_store("boundary-target-module");
+        fixture.write(
+            "crates/store/src/target/mod.rs",
+            "#![allow(clippy::disallowed_methods)]\n",
+        );
+        fixture.fails_only("fs-boundary", "crates/store/src/target/mod.rs");
 
         // Unrelated attributes pass.
         let fixture = with_store("boundary-unrelated");
@@ -1735,6 +1875,47 @@ mod tests {
             );
         }
 
+        // Through a feature: of another member, or of the store itself.
+        for (i, (path, features)) in [
+            (
+                "crates/hash/Cargo.toml",
+                "[features]\ndefault = [\"store/variants\"]\n",
+            ),
+            (
+                "crates/hash/Cargo.toml",
+                "[features]\nextra = [\"store?/variants\"]\n",
+            ),
+            (
+                "crates/store/Cargo.toml",
+                "[features]\nvariants = []\ndefault = [\"variants\"]\n",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let fixture = with_store(&format!("variants-feature-{i}"), &manifest(""));
+            let text = fixture.read(path);
+            let text = if path.ends_with("store/Cargo.toml") {
+                replace(&text, "[features]\nvariants = []\n", features)
+            } else {
+                replace(&text, "[lints]", &format!("{features}\n[lints]"))
+            };
+            fixture.write(path, &text);
+            fixture.fails_only("deps", "enables `variants` of `store`");
+        }
+
+        // Under another key that names the same package.
+        let fixture = with_store("variants-renamed", &manifest(""));
+        fixture.write(
+            "Cargo.toml",
+            &replace(
+                &fixture.read("Cargo.toml"),
+                "store = { path = \"crates/store\" }\n",
+                "store = { path = \"crates/store\" }\nstore_v = { path = \"crates/store\", package = \"store\", features = [\"variants\"] }\n",
+            ),
+        );
+        fixture.fails_only("deps", "`store_v` enables `variants`");
+
         // Enabled in the workspace table, it would reach every member.
         let fixture = with_store("variants-workspace", &manifest(""));
         fixture.write(
@@ -1745,7 +1926,10 @@ mod tests {
                 "store = { path = \"crates/store\", features = [\"variants\"] }",
             ),
         );
-        fixture.fails_only("deps", "[workspace.dependencies] enables `variants`");
+        fixture.fails_only(
+            "deps",
+            "[workspace.dependencies] `store` enables `variants`",
+        );
     }
 
     #[test]
@@ -2371,9 +2555,10 @@ mod tests {
             "Cargo.toml",
             &format!("{WORKSPACE}unsafe_code = \"forbid\"\n"),
         );
-        // `deps` reads the root too, for the workspace's `store` entry.
+        // `deps` reads the root too, for the workspace's `store` entries,
+        // and `fs-boundary` for its lint settings.
         fixture.fails_exactly(
-            &["lints", "publish", "deps", "credits"],
+            &["lints", "publish", "deps", "credits", "fs-boundary"],
             &["Cargo.toml", "not valid TOML"],
         );
 

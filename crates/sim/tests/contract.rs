@@ -406,3 +406,38 @@ fn unsynced_overwrite_recovers_old_empty_or_torn() {
     });
     assert_eq!(seen, BTreeSet::from(["old", "new", "empty", "torn"]));
 }
+
+#[test]
+fn parent_components_are_lexical() {
+    let fs = SimFs::new(0, Mode::Strict);
+    fs.create_dir(Path::new("d")).unwrap();
+    fs.create_new(Path::new("d/../f")).unwrap();
+    assert_eq!(fs.list(Path::new("d/..")).unwrap(), ["d", "f"]);
+    fs.sync_dir(Path::new("d/..")).unwrap();
+    assert_eq!(
+        fs.create_new(Path::new("../x")).unwrap_err().kind(),
+        ErrorKind::InvalidInput
+    );
+}
+
+/// A pending removal acts only on the file it removed: after the name is
+/// reused for a new file and that file is synced in lenient mode, no crash
+/// loses it (code review, Sprint 1).
+#[test]
+fn stale_removals_spare_a_reused_name() {
+    for seed in 0..SEEDS {
+        let fs = SimFs::new(seed, Mode::Lenient);
+        let x = Path::new("x");
+        fs.create_new(x).unwrap();
+        fs.write(x, b"old").unwrap();
+        fs.remove_file(x).unwrap();
+        fs.create_new(x).unwrap();
+        fs.write(x, b"new").unwrap();
+        fs.sync_file(x).unwrap();
+        assert_eq!(
+            fs.recover().snapshot().get("x"),
+            Some(&Node::File(b"new".to_vec())),
+            "seed {seed}"
+        );
+    }
+}

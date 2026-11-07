@@ -42,8 +42,12 @@ damaged), it is replaced through steps 1 to 5.
 is present and hashes to its id, syncs those files and their directories, and
 only then writes the op. It returns after step 5 of the op file; that return
 is the acknowledgement. `init` creates whichever of the root, `objects/` and
-`ops/` is missing and then syncs `objects/`, `ops/`, the root and the root's
-parent, so an interrupted `init` is completed by running it again.
+`ops/` is missing and then syncs `objects/`, `ops/`, the root and the
+directory holding the root's entry (its parent, or `root/..` for a bare
+relative name), so an interrupted `init` is completed by running it again.
+`open` makes the same syncs: a process that died inside `init` can leave a
+layout that exists but whose entries were never synced, and ops acknowledged
+into it would otherwise be lost with it.
 
 ## What the simulator models
 
@@ -55,10 +59,12 @@ Not Created Equal" (OSDI 2014):
   across a rename: neither `rename` nor `sync_dir` makes data durable.
 - A new name, a rename or a removal is pending until `sync_dir` of its
   directory; after a crash each pending change is applied or not, each
-  atomically. A directory whose own entry is lost takes everything under it.
+  atomically, and each acts only on the file it was made for. A directory
+  whose own entry is lost takes everything under it.
 - **Strict mode** assumes only that. **Lenient mode** adds what common
   journaling filesystems do: a file's `sync_file` also makes its own name
-  durable, and `create_dir` is durable at once.
+  durable, together with every earlier entry change in its directory (the
+  journal commits in order), and `create_dir` is durable at once.
 
 The crash matrix (`crates/store/tests/crash.rs`) runs four scenarios — `init`
 alone, a chain of five ops, a fork and merge, and two writers interleaved at
@@ -119,6 +125,11 @@ Evidence:
   macOS are not.
 - Concurrent writers in separate processes (INT-0007 AC-5) are not yet
   tested; two writers in one process are, interleaved at every syscall.
+- The simulator models a whole-system crash, in which everything not yet
+  durable is resolved at once. A process that dies while the system keeps
+  running leaves its unsynced changes visible to the next process; the store
+  answers that case by design (`open` syncs the layout, and every write
+  re-syncs what it depends on) rather than by a simulated run.
 
 A reviewer accepting INT-0004 AC-5 accepts these assumptions with the
 evidence above.

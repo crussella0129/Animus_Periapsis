@@ -155,14 +155,21 @@ impl<F: Fs> Store<F> {
             }
         }
         if self.syncs_at_init() {
-            self.fs.sync_dir(&self.objects)?;
-            self.fs.sync_dir(&self.ops)?;
-            self.fs.sync_dir(&self.root)?;
-            if let Some(parent) = self.root.parent() {
-                self.fs.sync_dir(parent)?;
-            }
+            self.sync_layout()?;
         }
         Ok(self)
+    }
+
+    /// Syncs `objects/`, `ops/`, the root and the root's parent, so the
+    /// layout's own entries are durable. `init` ends with it, and `open`
+    /// runs it too: a process that died inside `init` may have left a layout
+    /// that exists but whose entries were never synced, and acknowledged ops
+    /// written into it would be lost with it.
+    fn sync_layout(&self) -> io::Result<()> {
+        self.fs.sync_dir(&self.objects)?;
+        self.fs.sync_dir(&self.ops)?;
+        self.fs.sync_dir(&self.root)?;
+        self.fs.sync_dir(&parent_dir(&self.root))
     }
 
     /// Opens an existing store; a directory without `objects/` and `ops/` is
@@ -170,6 +177,9 @@ impl<F: Fs> Store<F> {
     pub fn open(fs: F, root: &Path, alg: HashAlg, seed: u64) -> io::Result<Self> {
         let store = Store::new(fs, root, alg, seed);
         if store.dir_exists(&store.objects)? && store.dir_exists(&store.ops)? {
+            if store.syncs_at_init() {
+                store.sync_layout()?;
+            }
             Ok(store)
         } else {
             Err(not_a_store(root))
@@ -348,6 +358,15 @@ impl<F: Fs> Store<F> {
     /// Checks every file in the store; see [`Report`].
     pub fn fsck(&self) -> io::Result<Report> {
         fsck::check(&self.fs, &self.root)
+    }
+}
+
+/// The directory holding `root`'s entry: its parent, or `root/..` when the
+/// path has none to give (a bare relative name such as `repo`, or `.`).
+fn parent_dir(root: &Path) -> PathBuf {
+    match root.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => root.join(".."),
     }
 }
 
