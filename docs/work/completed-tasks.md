@@ -230,4 +230,4 @@
 - **Completed:** 2026-11-07T22:00:35Z
 - **Files modified:** docs/spec/working-copy.md, docs/intents/INT-0009-reversible-by-default.md
 - **Evidence:** working-copy.md gains Writing the working copy: the history commands (log order, undo with H taken before the snapshot, restore by id or unique prefix), the record (format, atomic write before the op, Corrupt on a bad record), path classification (to remove, to write, done, kept), F-owned and blocking entries, deterministic temporary names and their collisions, the hazard rules per component with their scope and the full reserved list, the seven-step materialise order with the executable bit set before the rename, and resume in all three cases with notes on stderr and init never resuming. The INT-0009, INT-0014 and INT-0004 Consequences required by the EARS were written during the plan critiques and stand. INT-0009 moves planned to active. Book check 0 violations; policy passes.
-- **Commit:** PENDING
+- **Commit:** `a661a1b505d08db9ae2daa6025f5a3b9403b2da2`
