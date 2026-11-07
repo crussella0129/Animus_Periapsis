@@ -93,8 +93,8 @@ git worktrees.
   review found a quadratic step and a whole-copy content buffer (CR-04). Until
   the stat cache, content is kept only for blobs the store does not have yet.
 
-- Commands that write the working copy resume an interrupted write before
-  anything else, through the record in `.praps/`; `init` never resumes, so a
+- Every command that opens the working copy resumes an interrupted write
+  before anything else, through the record in `.praps/`; `init` never resumes, so a
   repeated `init` still writes nothing. A write uses deterministic temporary
   names, `.praps-tmp-<n>`, which exist only while the record names them. No
   name is silently ignored: a user's file with that prefix is tracked like any
@@ -110,3 +110,4 @@ git worktrees.
 - 2026-11-07: `planned` → `active` (Sprint 2 build, T-005 starts: the `workspace` crate).
 - 2026-11-07: revised while `active` (Sprint 2 Loop): Consequences record the linear-scan requirement (CR-04). AC-1 and AC-2 are met by the Sprint 2 test report; AC-3 to AC-6 remain, so the chapter stays `active`.
 - 2026-11-07: revised while `active` (Sprint 3 plan critique, round 1): Consequences record that every command except `init` resumes an interrupted write, and that temporary names are deterministic and never ignored.
+- 2026-11-07: revised while `active` (Sprint 3 plan critique, round 2): every command that opens the working copy resumes, not only those that write it.
