@@ -464,6 +464,9 @@ fn every_kind(fs: &SimFs) -> std::io::Result<()> {
 
 const EVERY_KIND_SYSCALLS: u64 = 10;
 
+/// What a snapshot holds: every visible path and its node.
+type Snapshot = BTreeMap<String, Node>;
+
 /// A crash at syscall k leaves exactly the state from just before syscall k
 /// (captured by the hook at that boundary), visible and durable alike, and k
 /// itself returns the crash error (test critique round 1, C-002).
@@ -477,8 +480,7 @@ fn every_syscall_has_no_effect_at_its_crash_point() {
             for seed in 0..20 {
                 let fs = Rc::new(SimFs::new(seed, mode));
                 fs.set_crash_at(Some(k));
-                let before: Rc<RefCell<Option<(BTreeMap<String, Node>, BTreeMap<String, Node>)>>> =
-                    Rc::default();
+                let before: Rc<RefCell<Option<(Snapshot, Snapshot)>>> = Rc::default();
                 let (hook_fs, hook_before) = (Rc::clone(&fs), Rc::clone(&before));
                 fs.set_hook(Some(Box::new(move |next| {
                     if next == k {
