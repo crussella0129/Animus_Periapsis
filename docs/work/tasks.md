@@ -1,2 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
+- [ ] T-010 (backlog) [intent: INT-0001, INT-0002, INT-0003, INT-0004, INT-0006]: Record the Sprint 1 checkpoint's GitHub Actions run (head SHA, both matrix legs with the crash matrix's counts and `cargo ci` results, the `deny` job, runner OS and `rustc`) and the owner's sign-offs: INT-0001 AC-1, INT-0002 AC-1, INT-0003 AC-5, INT-0006 AC-6 (Sprint 0's frozen sections), INT-0004 AC-5 (the Windows durability strategy) — touches: docs/sprints/s2/, docs/intents/
+- [ ] T-011 (backlog) [intent: INT-0007, INT-0005]: Writers in separate processes (INT-0007 AC-5, at least four, under crash injection), together with a simulated process crash in which a later process sees the crashed one's unsynced state before the system crash resolves it — touches: crates/sim/, crates/store/
+- [ ] T-012 (backlog) [intent: INT-0006]: Give the provisional `operation` body the fields INT-0006 names for it (view hash, actor, advisory wall clock, signature) once `view` (INT-0014) and signing (INT-0016) are specified, before the Phase 1 exit gate freezes format v1 — touches: docs/spec/format-v1.md, crates/codec/
