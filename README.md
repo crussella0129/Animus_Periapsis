@@ -22,17 +22,24 @@ Phase 1 is under way. The format is specified in
 [`docs/spec/format-v1.md`](docs/spec/format-v1.md), the crash-tested store in
 [`docs/spec/storage-durability.md`](docs/spec/storage-durability.md), and the
 working copy in [`docs/spec/working-copy.md`](docs/spec/working-copy.md).
-Periapsis can record a working copy:
+Periapsis can record a working copy and return it to any earlier state:
 
 | Command | What it does |
 |---|---|
 | `praps init [DIR]` | Makes `DIR` (default: `.`) a repository, or says it already is one |
 | `praps status [DIR]` | Snapshots the working copy, following `.gitignore` rules, and lists what changed against its parent (`A`, `M`, `D`), plus entries it cannot track |
 | `praps new [DIR]` | Snapshots, then starts a new working-copy change on top of the current one |
+| `praps log [DIR]` | Snapshots, then lists every operation, newest first |
+| `praps undo [DIR]` | Snapshots, then undoes the last operation, writing the files back; a second `undo` undoes the first |
+| `praps restore OP [DIR]` | Snapshots, then returns the working copy to the state operation `OP` (an id or unique prefix) left |
 | `praps fsck [DIR]` | Checks the store of a repository, or a bare store: checksums and references |
 
-Writing to the working copy (checkout, undo), merging concurrent operations
-and several workspaces come later.
+Nothing is lost: `undo` and `restore` are operations themselves, and the
+edits they replace stay reachable. A write that a crash interrupts is
+finished by the next command, and names the filesystem cannot hold (case
+collisions, Windows device names) are refused before anything is written.
+Checking out another change, merging concurrent operations and several
+workspaces come later.
 
 | Crate | What it does |
 |---|---|
@@ -40,8 +47,8 @@ and several workspaces come later.
 | `codec` | Canonical binary encoding and object envelopes |
 | `sim` | Filesystem and randomness, real and deterministically simulated with crashes |
 | `store` | The crash-safe object store and op log, with `fsck` |
-| `workspace` | The working copy: init, snapshot (with `.gitignore` rules), new and status |
-| `praps` | The Periapsis command (`praps init`, `new`, `status`, `fsck`) |
+| `workspace` | The working copy: init, snapshot (with `.gitignore` rules), new, status, log, undo and restore |
+| `praps` | The Periapsis command (`praps init`, `new`, `status`, `log`, `undo`, `restore`, `fsck`) |
 | `book` | Checks the Book's typed acceptance criteria |
 | `xtask` | Project tooling behind `cargo ci` and `cargo policy` |
 
