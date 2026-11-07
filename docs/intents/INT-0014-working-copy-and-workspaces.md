@@ -4,10 +4,10 @@
 - **Intent ID:** INT-0014
 - **State:** active
 - **Work evidence:** [Sprint 2 T-005 build plan](../sprints/s2/sprint-plans/build-plan.md#t-005-the-workspace-crate-init-snapshot-new-and-status), [Sprint 2 T-006 build plan](../sprints/s2/sprint-plans/build-plan.md#t-006-praps-init-praps-new-and-praps-status), [Sprint 2 T-007 build plan](../sprints/s2/sprint-plans/build-plan.md#t-007-snapshot-crash-scenario-and-edit-corpora), [Sprint 2 T-008 build plan](../sprints/s2/sprint-plans/build-plan.md#t-008-working-copy-spec-readme-credits-and-backlog)
-- **Completion evidence:** none
-- **Code evidence:** none
+- **Completion evidence:** [Sprint 2 T-005 completion](../work/completed-tasks.md#t-005-sprint-2), [Sprint 2 T-006 completion](../work/completed-tasks.md#t-006-sprint-2), [Sprint 2 T-007 completion](../work/completed-tasks.md#t-007-sprint-2), [Sprint 2 T-008 completion](../work/completed-tasks.md#t-008-sprint-2)
+- **Code evidence:** [crates/workspace](../../crates/workspace/src/lib.rs), [praps](../../crates/praps/src/main.rs)
 - **Test evidence:** [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md)
-- **Documentation evidence:** none
+- **Documentation evidence:** [The working copy](../spec/working-copy.md)
 
 ## Intent
 The working copy is itself a change. At the start of every command Periapsis
@@ -89,6 +89,10 @@ git worktrees.
   a command that finds several op heads stops and names them instead of
   guessing which to build on.
 
+- A first snapshot must stay linear in the working copy: Sprint 2's code
+  review found a quadratic step and a whole-copy content buffer (CR-04). Until
+  the stat cache, content is kept only for blobs the store does not have yet.
+
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §4 Phase 1 and R5 §C.1).
 - 2026-11-01: revised while `proposed`, on owner direction: the working copy must hold conflicts in any content. The Intent says snapshots keep each file's bytes exactly unless a normalisation rule is opted in, only a line layer writes and reads conflict markers, and any other conflicted file is written as one of its sides and resolved by choosing a side or changing its bytes; AC-6 checks this.
@@ -97,3 +101,4 @@ git worktrees.
 - 2026-11-07: revised while `planned` (Sprint 2 plan critique, round 1): Consequences state the ignore matcher composition and case sensitivity, that tracked files under ignored directories stay tracked, that the Windows mode comes from the working-copy change or else its parent, that `new` starts a change without writing files, and the scanning costs and racy edits deferred to the stat cache.
 - 2026-11-07: revised while `planned` (Sprint 2 plan critique, round 2): Consequences say which commands snapshot, and that `fsck` and a repeated `init` do not.
 - 2026-11-07: `planned` → `active` (Sprint 2 build, T-005 starts: the `workspace` crate).
+- 2026-11-07: revised while `active` (Sprint 2 Loop): Consequences record the linear-scan requirement (CR-04). AC-1 and AC-2 are met by the Sprint 2 test report; AC-3 to AC-6 remain, so the chapter stays `active`.

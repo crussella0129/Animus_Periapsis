@@ -3,9 +3,9 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0005
 - **State:** active
-- **Work evidence:** [T-001 build plan](../sprints/s0/sprint-plans/build-plan.md#t-001-workspace-guardrails-policy-checker-and-credits), [Sprint 1 T-002 build plan](../sprints/s1/sprint-plans/build-plan.md#t-002-filesystem-and-randomness-traits-in-the-sim-crate), [Sprint 1 T-003 build plan](../sprints/s1/sprint-plans/build-plan.md#t-003-filesystem-boundary-only-sims-real-half-touches-the-real-filesystem), [Sprint 1 T-005 build plan](../sprints/s1/sprint-plans/build-plan.md#t-005-crash-matrix-with-negative-controls), [T-011 backlog](../work/tasks.md), [Sprint 2 T-003 build plan](../sprints/s2/sprint-plans/build-plan.md#t-003-the-operation-names-its-view-closure-through-references-inside-objects), [Sprint 2 T-004 build plan](../sprints/s2/sprint-plans/build-plan.md#t-004-a-scan-syscall-an-executable-bit-capability-and-operating-system-randomness-in-sim), [Sprint 2 T-007 build plan](../sprints/s2/sprint-plans/build-plan.md#t-007-snapshot-crash-scenario-and-edit-corpora)
-- **Completion evidence:** [T-001 completion](../work/completed-tasks.md#t-001-sprint-0), [Sprint 1 T-002 completion](../work/completed-tasks.md#t-002-sprint-1), [Sprint 1 T-003 completion](../work/completed-tasks.md#t-003-sprint-1), [Sprint 1 T-005 completion](../work/completed-tasks.md#t-005-sprint-1)
-- **Code evidence:** [clippy.toml](../../clippy.toml), [crates/sim](../../crates/sim/src/lib.rs), [crash matrix](../../crates/store/tests/common/matrix.rs)
+- **Work evidence:** [T-001 build plan](../sprints/s0/sprint-plans/build-plan.md#t-001-workspace-guardrails-policy-checker-and-credits), [Sprint 1 T-002 build plan](../sprints/s1/sprint-plans/build-plan.md#t-002-filesystem-and-randomness-traits-in-the-sim-crate), [Sprint 1 T-003 build plan](../sprints/s1/sprint-plans/build-plan.md#t-003-filesystem-boundary-only-sims-real-half-touches-the-real-filesystem), [Sprint 1 T-005 build plan](../sprints/s1/sprint-plans/build-plan.md#t-005-crash-matrix-with-negative-controls), [T-011 backlog](../work/tasks.md), [Sprint 2 T-003 build plan](../sprints/s2/sprint-plans/build-plan.md#t-003-the-operation-names-its-view-closure-through-references-inside-objects), [Sprint 2 T-004 build plan](../sprints/s2/sprint-plans/build-plan.md#t-004-a-scan-syscall-an-executable-bit-capability-and-operating-system-randomness-in-sim), [Sprint 2 T-007 build plan](../sprints/s2/sprint-plans/build-plan.md#t-007-snapshot-crash-scenario-and-edit-corpora), [T-014 backlog](../work/tasks.md)
+- **Completion evidence:** [T-001 completion](../work/completed-tasks.md#t-001-sprint-0), [Sprint 1 T-002 completion](../work/completed-tasks.md#t-002-sprint-1), [Sprint 1 T-003 completion](../work/completed-tasks.md#t-003-sprint-1), [Sprint 1 T-005 completion](../work/completed-tasks.md#t-005-sprint-1), [Sprint 2 T-004 completion](../work/completed-tasks.md#t-004-sprint-2), [Sprint 2 T-007 completion](../work/completed-tasks.md#t-007-sprint-2)
+- **Code evidence:** [clippy.toml](../../clippy.toml), [crates/sim](../../crates/sim/src/lib.rs), [crash matrix](../../crates/store/tests/common/matrix.rs), [workspace crash matrix](../../crates/workspace/tests/crash.rs)
 - **Test evidence:** [Sprint 0 test report](../sprints/s0/sprint-tests/test-report.md), [Sprint 1 test report](../sprints/s1/sprint-tests/test-report.md), [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md)
 - **Documentation evidence:** none
 
@@ -72,8 +72,18 @@ filesystem and clock simulation, the crash matrix and the determinism rules.
   each masked the other. Acknowledged objects are now checked, and a
   two-writer scenario exercises the re-sync on its own.
 
+- An oracle must not read the state it checks. In Sprint 2 the edit corpus
+  took "tracked before" from the workspace, so a `new` that dropped tracked
+  files passed; the corpus now keeps an independent model of the tracked paths
+  and modes (test critique round 1, C-001). Mutation runs by the reviewers are
+  the check that an oracle can fail.
+- Randomness reaches a boundary crate only through `sim::os_seed`, enforced
+  for `getrandom` by `cargo policy`. `std::hash::RandomState` and transitive
+  sources (`rand`, `uuid`) are not yet banned (backlog T-014).
+
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §2.9 and R2-E23).
 - 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-001). The first plan critique noted that `codec` is the first serialised code path, so AC-4's Clippy guard against randomly seeded hash collections lands now, workspace-wide; the simulation work itself stays with the first storage code.
 - 2026-10-31: `planned` → `active` (Sprint 0 build, T-001 starts: the Clippy hash-collection guard).
 - 2026-11-06: revised while `active` (Sprint 1 Loop): Consequences record the lenient mode's ordered-journal model, the unsimulated process crash, and the lesson that each durability measure needs its own probe. AC-1 to AC-4 are met by the Sprint 1 test report; AC-5 (network faults) remains, so the chapter stays `active`.
+- 2026-11-07: revised while `active` (Sprint 2 Loop): Consequences record that an oracle must not read the state it checks, and the randomness routes not yet banned (T-014). AC-1 to AC-4 hold again for the new syscall and the Snapshot matrix; AC-5 (network faults) remains, so the chapter stays `active`.
