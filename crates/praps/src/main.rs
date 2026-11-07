@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use hash::HashAlg;
-use sim::{RealFs, os_seed};
+use sim::{Fs, RealFs, os_seed};
 use store::Store;
 use workspace::{PRAPS_DIR, STORE_DIR, Workspace};
 
@@ -119,12 +119,16 @@ fn status(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
     }
 }
 
-/// The store `fsck` checks: the repository's in `DIR/.praps/store` if there
-/// is one, otherwise `DIR` itself, as a bare store.
+/// The store `fsck` checks: `DIR/.praps/store` when `DIR` holds a `.praps`
+/// entry, whatever state that store is in, so damage there is reported
+/// rather than hidden by checking `DIR` instead (code review CR-09);
+/// otherwise `DIR` itself, as a bare store.
 fn store_dir(dir: &Path) -> PathBuf {
-    let inner = dir.join(PRAPS_DIR).join(STORE_DIR);
-    if Store::inspect(RealFs, &inner, HashAlg::DEFAULT).is_ok() {
-        inner
+    let has_praps = RealFs
+        .list(dir)
+        .is_ok_and(|names| names.iter().any(|name| name == PRAPS_DIR));
+    if has_praps {
+        dir.join(PRAPS_DIR).join(STORE_DIR)
     } else {
         dir.to_path_buf()
     }

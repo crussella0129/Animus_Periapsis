@@ -31,9 +31,29 @@ fn real_store_reopens_clean() {
         let mut store = Store::init(RealFs, &root, HashAlg::DEFAULT, 7).unwrap();
         let a = store.put_object(&blob(b"first")).unwrap();
         let b = store.put_object(&blob(b"second")).unwrap();
-        let mut commit = |parents: BTreeSet<HashRef>, heads: BTreeSet<HashRef>| {
+        let mut commit = |parents: BTreeSet<HashRef>, blobs: BTreeSet<HashRef>| {
+            let holder = codec::Changeset {
+                parents: Vec::new(),
+                change_id: [0; 16],
+                changes: blobs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, blob)| {
+                        (
+                            codec::RepoPath::new(format!("f{i}")).unwrap(),
+                            codec::Entry::Put {
+                                blob: *blob,
+                                mode: codec::Mode::Regular,
+                            },
+                        )
+                    })
+                    .collect(),
+                description: Vec::new(),
+            }
+            .to_envelope();
+            let changeset = store.put_object(&holder).unwrap();
             let view = View {
-                heads,
+                heads: [changeset].into(),
                 workspaces: Default::default(),
             };
             let view = store.put_object(&view.to_envelope()).unwrap();

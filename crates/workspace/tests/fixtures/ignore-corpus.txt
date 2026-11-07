@@ -118,3 +118,22 @@ end
 path x.tmp git=ignored snapshot=untracked
 path keep git=ignored snapshot=untracked
 path other git=kept snapshot=tracked
+case bom
+gitignore .gitignore
+﻿*.log
+end
+path a.log git=ignored snapshot=untracked
+path b.txt git=kept snapshot=tracked
+case trailing-space
+gitignore .gitignore
+trail   
+end
+path trail git=ignored snapshot=untracked
+path trailing git=kept snapshot=tracked
+case whitelist-dir
+gitignore .gitignore
+logs/*
+!logs/keep/
+end
+path logs/x git=ignored snapshot=untracked
+path logs/keep/y git=kept snapshot=tracked

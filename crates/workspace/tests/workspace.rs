@@ -605,3 +605,136 @@ fn ignore_is_case_sensitive() {
         [".gitignore", "a.log", "build/x"]
     );
 }
+
+// ------------------------------------------------ code-review regressions
+
+/// Where files carry no executable bit, a file the working-copy change
+/// deleted and the user then restores takes its parent's mode back
+/// (code review CR-01).
+#[test]
+fn no_executable_bit_restores_the_parents_mode() {
+    let mut ws = fresh(20);
+    let fs = fs_of(&ws);
+    put(&fs, "run", b"#!");
+    fs.set_executable(&Path::new(ROOT).join("run"), true)
+        .unwrap();
+    ws.new_change().unwrap();
+    fs.set_has_executable_bit(false);
+    delete(&fs, "run");
+    assert_eq!(
+        ws.status().unwrap().changes,
+        [(path("run"), Change::Deleted)]
+    );
+    put(&fs, "run", b"#!");
+    assert!(
+        ws.status().unwrap().changes.is_empty(),
+        "restored as it was"
+    );
+    assert_eq!(
+        ws.working_copy().unwrap().2[&path("run")].mode,
+        Mode::Executable
+    );
+}
+
+/// A file deleted between the scan and its read counts as deleted; the
+/// snapshot does not fail (code review CR-05).
+#[test]
+fn a_file_vanishing_mid_scan_is_deleted() {
+    let mut ws = fresh(21);
+    let fs = fs_of(&ws);
+    put(&fs, "stays", b"s");
+    put(&fs, "zz.swp", b"swap");
+    ws.snapshot().unwrap();
+    put(&fs, "zz.swp", b"changed");
+    let hook_fs = Rc::clone(&fs);
+    let mut fired = false;
+    fs.set_hook(Some(Box::new(move |_| {
+        let scanned_top = hook_fs.trace().last().is_some_and(|l| l == "scan repo");
+        if !fired && scanned_top {
+            fired = true;
+            hook_fs.remove_file(Path::new("repo/zz.swp")).unwrap();
+        }
+    })));
+    let result = ws.snapshot();
+    fs.set_hook(None);
+    result.unwrap();
+    assert_eq!(paths(&ws.working_copy().unwrap().2), ["stays"]);
+}
+
+/// `init` and `open` sync the root's parent every time, not only when they
+/// create the root (code review CR-06).
+#[test]
+fn init_and_open_sync_the_roots_parent() {
+    let ws = fresh(22);
+    let fs = fs_of(&ws);
+    drop(ws);
+    for open in [false, true] {
+        let before = fs.trace().len();
+        if open {
+            Workspace::open(Rc::clone(&fs), Path::new(ROOT), 22).unwrap();
+        } else {
+            Workspace::init(Rc::clone(&fs), Path::new(ROOT), 22).unwrap();
+        }
+        let trace = fs.trace();
+        assert!(
+            trace[before..].iter().any(|l| l == "sync_dir repo/.."),
+            "open {open}: {:?}",
+            &trace[before..]
+        );
+    }
+}
+
+/// Every component of a reported path is shown escaped, not only the last
+/// (code review CR-08).
+#[test]
+fn reported_paths_are_escaped_in_full() {
+    let mut ws = fresh(23);
+    let fs = fs_of(&ws);
+    let dir = Path::new(ROOT).join("a\u{1}b");
+    fs.create_dir(&dir).unwrap();
+    fs.make_raw(&dir, RawName::Bytes(vec![0xff]), b"").unwrap();
+    let reported = ws.snapshot().unwrap().reported;
+    assert_eq!(
+        reported,
+        [Reported {
+            path: r"a\u{1}b/\xff".to_owned(),
+            reason: Reason::NotUtf8
+        }]
+    );
+}
+
+/// An op file that does not hash to its name stops every command, rather
+/// than letting its parent silently become the head (code review CR-10).
+#[test]
+fn invalid_op_files_are_refused() {
+    let mut ws = fresh(24);
+    let fs = fs_of(&ws);
+    put(&fs, "f", b"x");
+    let op = ws.snapshot().unwrap().op.unwrap();
+    let op_path = Path::new("repo/.praps/store/ops").join(store::names::file_name(&op));
+    let mut bytes = fs.read(&op_path).unwrap();
+    *bytes.last_mut().unwrap() ^= 1;
+    fs.overwrite(&op_path, &bytes).unwrap();
+    let error = ws.snapshot().unwrap_err();
+    assert!(
+        matches!(&error, Error::Corrupt(what) if what.contains("praps fsck")),
+        "{error}"
+    );
+    let error = Workspace::init(Rc::clone(&fs), Path::new(ROOT), 24)
+        .err()
+        .unwrap();
+    assert!(matches!(error, Error::Corrupt(_)), "{error}");
+}
+
+/// `.praps` and `.git` at the top are ignored whatever their case, as a
+/// case-insensitive filesystem treats them (code review CR-13).
+#[test]
+fn always_ignored_names_ignore_case() {
+    let mut ws = fresh(25);
+    let fs = fs_of(&ws);
+    put(&fs, ".Git/config", b"x");
+    put(&fs, ".PRAPS/x", b"x");
+    put(&fs, "kept", b"x");
+    ws.snapshot().unwrap();
+    assert_eq!(paths(&ws.working_copy().unwrap().2), ["kept"]);
+}

@@ -70,7 +70,7 @@ fn parse() -> Vec<Case> {
 #[test]
 fn ignore_rule_corpus() {
     let cases = parse();
-    assert!(cases.len() >= 15, "{} cases", cases.len());
+    assert!(cases.len() >= 18, "{} cases", cases.len());
     let mut checked = 0;
     for (seed, case) in cases.iter().enumerate() {
         let fs = Rc::new(SimFs::new(seed as u64, Mode::Strict));

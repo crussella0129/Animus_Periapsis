@@ -141,3 +141,47 @@ fn real_scan_reports_the_executable_bit() {
 fn os_seed_varies() {
     assert_ne!(os_seed(), os_seed());
 }
+
+/// Names that Win32 path normalisation would rewrite (a trailing dot or
+/// space) or turn into a device (`aux.txt`, `CON`) are created, listed and
+/// read as themselves, each with its own content (code review CR-02). On
+/// Linux they are ordinary names.
+#[test]
+fn real_fs_keeps_names_win32_would_rewrite() {
+    let dir = claim("win32names");
+    let names = ["foo", "foo.", "foo ", "aux.txt", "CON", "nul.c"];
+    for name in names {
+        let path = dir.join(name);
+        RealFs.create_new(&path).unwrap();
+        RealFs.write(&path, name.as_bytes()).unwrap();
+        RealFs.sync_file(&path).unwrap();
+    }
+    let scanned: Vec<String> = RealFs
+        .scan(&dir)
+        .unwrap()
+        .iter()
+        .map(|entry| entry.name.as_utf8().unwrap().to_owned())
+        .collect();
+    let mut expected: Vec<String> = names.iter().map(|n| (*n).to_owned()).collect();
+    expected.sort();
+    assert_eq!(scanned, expected);
+    for name in names {
+        assert_eq!(
+            RealFs.read(&dir.join(name)).unwrap(),
+            name.as_bytes(),
+            "{name:?}"
+        );
+    }
+    // A relative path with `.` and `..` reaches the same file.
+    RealFs.create_dir(&dir.join("sub")).unwrap();
+    let cwd = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&dir).unwrap();
+    let relative = RealFs.read(Path::new("./sub/../foo."));
+    std::env::set_current_dir(cwd).unwrap();
+    assert_eq!(relative.unwrap(), b"foo.");
+    for name in names {
+        RealFs.remove_file(&dir.join(name)).unwrap();
+    }
+    RealFs.sync_dir(&dir).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}

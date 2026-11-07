@@ -15,7 +15,8 @@ A repository is a directory, the working copy. Its store is
 [Storage durability](storage-durability.md).
 
 `praps init [DIR]` does the following, in order:
-1. If `DIR` is missing, creates it and syncs its parent.
+1. If `DIR` is missing, creates it. Either way it syncs `DIR`'s parent, so
+   a root left by an interrupted `init` becomes durable.
 2. If `.praps` is missing, creates it, then syncs `.praps` and `DIR`, so the
    `.praps` entry is durable.
 3. Initialises the store.
@@ -48,13 +49,18 @@ repository writes nothing, so neither snapshots. An edit made before one of
 them is captured by the next command that does.
 
 A snapshot does the following:
-1. **Loads the state.** It finds the single op head. With no op it reports
+1. **Loads the state.** If `ops/` holds an op file that does not hash to
+   its name or does not decode, it stops and points to `praps fsck`. It finds
+   the single op head. With no op it reports
    that the repository is not initialised. With several op heads it stops,
    names every head, and writes nothing. Concurrent ops are not merged
    until [INT-0010](../intents/INT-0010-lock-free-concurrency.md).
 2. **Scans** the working copy, from the top down, following the ignore rules
    below. Each regular file's bytes are read exactly as found, with no
-   normalisation ([INT-0034](../intents/INT-0034-any-content.md)).
+   normalisation ([INT-0034](../intents/INT-0034-any-content.md)). A file
+   deleted between the listing and its read counts as deleted. On Windows
+   every path is passed verbatim (`\\?\`), so a name with a trailing dot or
+   space, or a device name such as `aux.txt`, is read as itself.
 3. **Compares** the scanned tree with the working-copy change's tree. If
    they are equal, it writes nothing.
 4. **Records** the new tree, writing in this order:
@@ -99,7 +105,11 @@ negation, a trailing `/` for directories only, `#` comments, `\` escapes):
   edits snapshotted, even if a rule now ignores it or its directory. Once it
   is deleted, the rule applies to it again.
 - **Always ignored.** `.praps` and `.git` at the top of the working copy are
-  never snapshotted. Below the top they are ordinary names.
+  never snapshotted, whatever their letter case (a case-insensitive
+  filesystem treats `.Git` as `.git`). Below the top they are ordinary
+  names.
+- **Byte-order mark.** A UTF-8 byte-order mark at the start of a
+  `.gitignore` is not part of its first pattern, as in Git.
 - **Files not read.** Git's global excludes file and `.git/info/exclude` are
   not read, so a snapshot does not depend on the machine it runs on.
 - **Line endings.** A carriage return at the end of a `.gitignore` line is
@@ -124,7 +134,7 @@ reports each one, and its siblings are still snapshotted:
 - a symbolic link (symlinks are not specified yet; mode `02` is reserved);
 - a FIFO, socket or device.
 
-Names are shown in one escaped form:
+Every component of a reported path is shown in one escaped form:
 - every `\` is shown as `\\`, and a control character as `\u{NN}`;
 - in a name with no UTF-8 form, a byte that is not valid UTF-8 is shown as
   `\xNN`, and an unpaired surrogate as `\u{DNNN}`.

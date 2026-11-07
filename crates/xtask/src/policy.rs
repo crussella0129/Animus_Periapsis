@@ -56,7 +56,12 @@ const FS_REAL_HALF: (&str, &str) = ("sim", "src/real.rs");
 const OS_RANDOM: (&str, &str) = ("getrandom", "sim");
 /// Its functions, which every boundary crate's Clippy config must disallow
 /// (only `crates/sim/src/real.rs` may switch the lint off).
-const OS_RANDOM_METHODS: [&str; 3] = ["getrandom::fill", "getrandom::u32", "getrandom::u64"];
+const OS_RANDOM_METHODS: [&str; 4] = [
+    "getrandom::fill",
+    "getrandom::fill_uninit",
+    "getrandom::u32",
+    "getrandom::u64",
+];
 /// The `ignore` crate's types and functions that read the real filesystem,
 /// which a boundary crate depending on it must disallow: it may only feed
 /// `GitignoreBuilder::add_line` with lines read through `sim::Fs`.
@@ -322,6 +327,10 @@ fn deps(root: &Path, members: &[PathBuf]) -> Vec<String> {
     // The workspace dependency keys that name the store, by key or by
     // `package`.
     let mut store_keys = BTreeSet::from([store.to_owned()]);
+    // Likewise the keys that name `getrandom`, so an alias such as
+    // `osrand = { package = "getrandom" }` is caught (code review CR-07).
+    let (random, random_owner) = OS_RANDOM;
+    let mut random_keys = BTreeSet::from([random.to_owned()]);
     let mut problems = match parse(root, &root.join("Cargo.toml")) {
         Ok(workspace) => {
             let mut problems = Vec::new();
@@ -330,6 +339,9 @@ fn deps(root: &Path, members: &[PathBuf]) -> Vec<String> {
             {
                 for (key, entry) in entries.iter() {
                     let package = lookup(entry, &["package"]).and_then(Item::as_str);
+                    if key == random || package == Some(random) {
+                        random_keys.insert(key.to_owned());
+                    }
                     if key == store || package == Some(store) {
                         store_keys.insert(key.to_owned());
                         if strings(entry, &["features"]).contains(&feature) {
@@ -355,13 +367,12 @@ fn deps(root: &Path, members: &[PathBuf]) -> Vec<String> {
                     ));
                 }
                 let dev = table.ends_with("dev-dependencies") || table.ends_with("dev_dependencies");
-                let (random, random_owner) = OS_RANDOM;
-                let random_dependency = name == random
+                let random_dependency = random_keys.contains(name)
                     || lookup(entry, &["package"]).and_then(Item::as_str) == Some(random);
                 if random_dependency && package != Some(random_owner) {
                     problems.push(format!(
-                        "{dir} depends on `{random}` in [{table}]; only `{random_owner}` may \
-                         (INT-0005 AC-1)"
+                        "{dir} depends on `{random}` (as `{name}`) in [{table}]; only \
+                         `{random_owner}` may (INT-0005 AC-1)"
                     ));
                 }
                 if store_keys.contains(name) && !dev && strings(entry, &["features"]).contains(&feature) {
@@ -2025,6 +2036,24 @@ mod tests {
             fixture
         };
         with("random-sim", "sim", "getrandom.workspace = true").passes();
+        // An alias in the workspace table, used under its own key.
+        let fixture = with("random-alias", "store", "osrand.workspace = true");
+        fixture.write(
+            "Cargo.toml",
+            &replace(
+                WORKSPACE,
+                "hash = { path = \"crates/hash\" }\n",
+                "hash = { path = \"crates/hash\" }\nosrand = { version = \"0.4.3\", package = \"getrandom\" }\n",
+            ),
+        );
+        let failures = fixture.failures();
+        let deps = failures.iter().find(|(rule, _)| *rule == "deps");
+        assert!(
+            deps.is_some_and(|(_, problems)| problems
+                .iter()
+                .any(|p| p.contains("only `sim` may") && p.contains("osrand"))),
+            "{failures:?}"
+        );
         for (i, (member_name, dependency)) in [
             ("store", "getrandom.workspace = true"),
             (

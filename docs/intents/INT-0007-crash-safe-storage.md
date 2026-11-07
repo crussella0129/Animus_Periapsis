@@ -72,11 +72,13 @@ and referential integrity.
   relative name such as `repo` or `.`, whose parent path is empty.
 - Closure follows references inside objects (op → view → changesets →
   blobs). The store refuses an object or op whose direct references are not
-  present and valid. Closure holds through reachability: no op can name an
-  object before that object's put is acknowledged, and an acknowledged put is
-  durable with everything it reaches, by induction. An unacknowledged object
-  that survives a crash with a lost reference is unreachable from every op;
-  `fsck` lists it as a leftover, not a fault.
+  present, valid and of the kind it must be. Closure holds by induction over
+  acknowledged puts, for two reasons. A writer syncs a file's data before
+  renaming it. Every object lives in `objects/`, and each put ends with a
+  sync of that directory, which also makes durable a name that another
+  writer renamed but has not synced. An unacknowledged object that survives
+  a crash with a lost reference is unreachable from every op; `fsck` lists
+  it as a leftover, not a fault.
 - A writer may name another writer's view or parent op that is present but
   not yet durable, so `commit_op` re-syncs the view with `objects/`, and each
   parent op with `ops/`, before writing the op. The parent re-sync is needed
@@ -95,3 +97,4 @@ and referential integrity.
 - 2026-11-07: revised while `active` (Sprint 2 Plan): Consequences record that closure follows references inside objects and holds by induction, because an object is written only after its direct references are present, valid and synced.
 - 2026-11-07: revised while `active` (Sprint 2 plan critique, round 1): the closure-by-induction Consequence now says which re-syncs are needed: none for references inside `objects/`, which the object's own directory sync covers, and `commit_op`'s cross-directory re-sync of the view and parents.
 - 2026-11-07: revised while `active` (Sprint 2 plan critique, round 2): the closure Consequence is restated through reachability from ops, with unreachable objects reported as leftovers, and the re-sync Consequence names both the view and the same-directory parent re-sync, each probed by its own race.
+- 2026-11-07: revised while `active` (Sprint 2 code review, CR-11 and CR-14): references must also be of the kind they name (a view's heads and workspaces are changesets, a changeset's puts are blobs), and the closure Consequence rests on data-before-names and the shared `objects/` directory sync rather than on acknowledgement order alone.

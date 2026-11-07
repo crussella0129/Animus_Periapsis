@@ -22,6 +22,6 @@ pub use envelope::{
 pub use error::DecodeError;
 pub use operation::Operation;
 pub use path::{PathError, RepoPath};
-pub use references::references;
+pub use references::{references, typed_references};
 pub use view::View;
 pub use wire::{Bytes, Decode, Decoder, Encode, Encoder, from_slice, to_vec};

@@ -44,7 +44,11 @@ fn matcher(content: &[u8]) -> Gitignore {
     builder
         .case_insensitive(false)
         .expect("case-sensitive matching builds");
-    for line in String::from_utf8_lossy(content).split('\n') {
+    let text = String::from_utf8_lossy(content);
+    // A UTF-8 byte-order mark is not part of the first pattern, as Git and
+    // `GitignoreBuilder::add` treat it (code review CR-03).
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    for line in text.split('\n') {
         // A CRLF file's lines end in `\r`, which is not part of a pattern.
         let line = line.strip_suffix('\r').unwrap_or(line);
         // A pattern Git cannot parse either is skipped, as Git skips it.

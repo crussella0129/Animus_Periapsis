@@ -201,6 +201,10 @@ struct Scan<'a, F: Fs> {
     root: &'a Path,
     /// The working-copy change's tree: what was tracked before.
     tracked: &'a Tree,
+    /// Its parent's tree, for the mode where files carry no executable bit.
+    parent: &'a Tree,
+    /// Blobs already in the store: their content is not kept.
+    known: &'a BTreeSet<HashRef>,
     has_bit: bool,
     ignores: Ignores,
     out: Scanned,
@@ -233,15 +237,30 @@ impl<F: Fs> Scan<'_, F> {
                 format!("{dir}/{name}")
             }
         };
+        // The directory's components are UTF-8 repository path components;
+        // each is shown escaped, as the entry's name is (code review CR-08).
+        let shown_dir: Vec<String> = dir
+            .split('/')
+            .filter(|c| !c.is_empty())
+            .map(|c| Name::Utf8(c.to_owned()).display())
+            .collect();
         for entry in entries {
-            let shown = join(&entry.name.display());
+            let mut shown = shown_dir.clone();
+            shown.push(entry.name.display());
+            let shown = shown.join("/");
             let Name::Utf8(name) = &entry.name else {
                 if !tracked_only {
                     self.report(shown, Reason::NotUtf8);
                 }
                 continue;
             };
-            if dir.is_empty() && ALWAYS_IGNORED.contains(&name.as_str()) {
+            // Compared case-insensitively, so `.Git` is ignored on every
+            // system, as it names `.git` on a case-insensitive one (CR-13).
+            if dir.is_empty()
+                && ALWAYS_IGNORED
+                    .iter()
+                    .any(|ignored| ignored.eq_ignore_ascii_case(name))
+            {
                 continue;
             }
             let full = join(name);
@@ -254,10 +273,14 @@ impl<F: Fs> Scan<'_, F> {
             let ignored = tracked_only || self.ignores.is_ignored(&full, entry.kind == Kind::Dir);
             match entry.kind {
                 Kind::Dir => {
-                    let below = self
-                        .tracked
-                        .keys()
-                        .any(|p| p.starts_with(&path) && *p != path);
+                    // Paths below `dir` sort right after `dir/`, so one range
+                    // probe answers whether any is tracked (CR-04).
+                    let below = ignored
+                        && self
+                            .tracked
+                            .range(path.clone()..)
+                            .take_while(|(p, _)| p.starts_with(&path))
+                            .any(|(p, _)| *p != path);
                     if !ignored || below {
                         self.dir(&full, ignored)?;
                     }
@@ -266,7 +289,13 @@ impl<F: Fs> Scan<'_, F> {
                     if ignored && !self.tracked.contains_key(&path) {
                         continue;
                     }
-                    let content = self.fs.read(&fs_dir.join(name))?;
+                    // A file deleted between the listing and the read is
+                    // absent: the snapshot records it as deleted (CR-05).
+                    let content = match self.fs.read(&fs_dir.join(name)) {
+                        Ok(content) => content,
+                        Err(error) if error.kind() == ErrorKind::NotFound => continue,
+                        Err(error) => return Err(error.into()),
+                    };
                     let id = object_id(ALG, &blob(&content));
                     let mode = if self.has_bit {
                         if executable {
@@ -275,12 +304,17 @@ impl<F: Fs> Scan<'_, F> {
                             Mode::Regular
                         }
                     } else {
+                        // The mode the working-copy change, or else its
+                        // parent, last recorded (CR-01).
                         self.tracked
                             .get(&path)
+                            .or_else(|| self.parent.get(&path))
                             .map_or(Mode::Regular, |file| file.mode)
                     };
                     self.out.tree.insert(path, File { blob: id, mode });
-                    self.out.contents.insert(id, content);
+                    if !self.known.contains(&id) {
+                        self.out.contents.insert(id, content);
+                    }
                 }
                 Kind::Symlink if !ignored => self.report(shown, Reason::Symlink),
                 Kind::Other if !ignored => self.report(shown, Reason::Special),
@@ -321,13 +355,15 @@ fn dir_exists(fs: &impl Fs, dir: &Path) -> io::Result<bool> {
 }
 
 /// Makes `root` and `root/.praps` exist and their entries durable: creates
-/// whichever is missing (syncing the root's parent if it created the root),
-/// then syncs `.praps` and the root.
+/// whichever is missing, then syncs the root's parent, `.praps` and the root.
 fn prepare(fs: &impl Fs, root: &Path) -> io::Result<PathBuf> {
     if !dir_exists(fs, root)? {
         fs.create_dir(root)?;
-        fs.sync_dir(&parent_dir(root))?;
     }
+    // Synced every time, not only when created here: a process that died
+    // between creating the root and syncing its parent leaves a root that
+    // exists but whose entry is not durable (code review CR-06).
+    fs.sync_dir(&parent_dir(root))?;
     let praps = root.join(PRAPS_DIR);
     if !dir_exists(fs, &praps)? {
         fs.create_dir(&praps)?;
@@ -363,7 +399,9 @@ impl<F: Fs> Workspace<F> {
             root: root.to_path_buf(),
             rng: Rng::new(seed),
         };
-        if !workspace.store.ops()?.is_empty() {
+        let ops = workspace.store.ops()?;
+        workspace.refuse_invalid_ops(ops.len())?;
+        if !ops.is_empty() {
             return Ok((workspace, false));
         }
         let change = Changeset {
@@ -452,9 +490,29 @@ impl<F: Fs> Workspace<F> {
         Ok(tree)
     }
 
+    /// Refuses a store whose `ops/` holds op files that do not hash to their
+    /// names or do not decode: `Store::ops` skips them, so a damaged head
+    /// would otherwise silently give way to its parent, or a store whose ops
+    /// are all damaged look uninitialised (code review CR-10).
+    fn refuse_invalid_ops(&self, valid: usize) -> Result<(), Error> {
+        let names = self.store.fs().list(&self.store.root().join(store::OPS))?;
+        let files = names
+            .iter()
+            .filter(|name| !name.starts_with(store::names::TMP_PREFIX))
+            .count();
+        if files > valid {
+            return Err(corrupt(format!(
+                "{} of {files} op files do not hash to their names or do not decode (run `praps fsck`)",
+                files - valid
+            )));
+        }
+        Ok(())
+    }
+
     /// The working-copy change as the single op head leaves it.
     fn load(&self) -> Result<Loaded, Error> {
         let ops = self.store.ops()?;
+        self.refuse_invalid_ops(ops.len())?;
         let heads = store::heads_of(&ops);
         let head = match heads.len() {
             0 => return Err(Error::NotInitialised(self.root.clone())),
@@ -486,12 +544,19 @@ impl<F: Fs> Workspace<F> {
     }
 
     /// Scans the working copy, putting no blob yet.
-    fn scan(&self, tracked: &Tree) -> Result<Scanned, Error> {
+    fn scan(
+        &self,
+        tracked: &Tree,
+        parent: &Tree,
+        known: &BTreeSet<HashRef>,
+    ) -> Result<Scanned, Error> {
         let fs = self.store.fs();
         let mut scan = Scan {
             fs,
             root: &self.root,
             tracked,
+            parent,
+            known,
             has_bit: fs.has_executable_bit(),
             ignores: Ignores::default(),
             out: Scanned::default(),
@@ -509,24 +574,24 @@ impl<F: Fs> Workspace<F> {
     /// whose parent is the single head. Otherwise it writes nothing.
     pub fn snapshot(&mut self) -> Result<Snapshot, Error> {
         let loaded = self.load()?;
-        let Scanned {
-            tree,
-            contents,
-            reported,
-        } = self.scan(&loaded.wc_tree)?;
-        if tree == loaded.wc_tree {
-            return Ok(Snapshot { op: None, reported });
-        }
         let known: BTreeSet<HashRef> = loaded
             .wc_tree
             .values()
             .chain(loaded.parent_tree.values())
             .map(|file| file.blob)
             .collect();
-        for (id, content) in &contents {
-            if !known.contains(id) && tree.values().any(|file| file.blob == *id) {
-                self.store.put_object(&blob(content))?;
-            }
+        let Scanned {
+            tree,
+            contents,
+            reported,
+        } = self.scan(&loaded.wc_tree, &loaded.parent_tree, &known)?;
+        if tree == loaded.wc_tree {
+            return Ok(Snapshot { op: None, reported });
+        }
+        // `contents` holds only blobs the store does not have yet, each in
+        // the new tree (CR-04).
+        for content in contents.values() {
+            self.store.put_object(&blob(content))?;
         }
         let changeset = Changeset {
             parents: loaded.wc.parents.clone(),

@@ -5,7 +5,7 @@ use std::fmt;
 use std::io;
 use std::path::Path;
 
-use codec::{ObjectKind, Operation, decode_envelope, object_id, references};
+use codec::{ObjectKind, Operation, decode_envelope, object_id, typed_references};
 use hash::HashRef;
 use sim::Fs;
 
@@ -26,7 +26,8 @@ pub enum ProblemKind {
     /// A valid op names a parent op that is missing or invalid.
     MissingParent(HashRef),
     /// A valid op names a view, or an object reachable from a valid op names
-    /// an object, that is missing, invalid, or (for an op's view) not a view.
+    /// an object, that is missing, invalid, or not of the kind it must be (a
+    /// view, a changeset or a blob; code review CR-11).
     MissingReference(HashRef),
     /// The store's directory holds something other than `objects/` and
     /// `ops/`, such as a pointer file.
@@ -104,7 +105,9 @@ pub(crate) fn check(fs: &impl Fs, root: &Path) -> io::Result<Report> {
     }
 
     // Each valid object: its file name, its kind and the ids it names.
-    let mut objects: BTreeMap<HashRef, (String, ObjectKind, Vec<HashRef>)> = BTreeMap::new();
+    #[allow(clippy::type_complexity)]
+    let mut objects: BTreeMap<HashRef, (String, ObjectKind, Vec<(HashRef, ObjectKind)>)> =
+        BTreeMap::new();
     for name in object_names {
         let mut decoded = None;
         if let Some(id) = file(fs, root, OBJECTS, &name, &mut report, |bytes| {
@@ -112,7 +115,7 @@ pub(crate) fn check(fs: &impl Fs, root: &Path) -> io::Result<Report> {
             if kind == ObjectKind::Operation {
                 return Err("an operation is not an object".to_owned());
             }
-            let refs = references(bytes).map_err(|e| e.to_string())?;
+            let refs = typed_references(bytes).map_err(|e| e.to_string())?;
             decoded = Some((kind, refs));
             Ok(())
         }) {
@@ -160,8 +163,11 @@ pub(crate) fn check(fs: &impl Fs, root: &Path) -> io::Result<Report> {
             continue;
         }
         let (name, _, refs) = &objects[&id];
-        for reference in refs {
-            if objects.contains_key(reference) {
+        for (reference, kind) in refs {
+            if objects
+                .get(reference)
+                .is_some_and(|(_, found, _)| found == kind)
+            {
                 stack.push(*reference);
             } else {
                 report.problems.push(Problem {
@@ -173,7 +179,10 @@ pub(crate) fn check(fs: &impl Fs, root: &Path) -> io::Result<Report> {
     }
     // An object no op reaches, with a reference missing, is a leftover.
     for (id, (name, _, refs)) in &objects {
-        if !reachable.contains(id) && refs.iter().any(|r| !objects.contains_key(r)) {
+        let broken = |(r, kind): &(HashRef, ObjectKind)| {
+            !objects.get(r).is_some_and(|(_, found, _)| found == kind)
+        };
+        if !reachable.contains(id) && refs.iter().any(broken) {
             report.leftovers.push(format!("{OBJECTS}/{name}"));
         }
     }

@@ -196,6 +196,11 @@ fn key(path: &Path) -> io::Result<PathBuf> {
     let mut key = PathBuf::new();
     for part in path.components() {
         match part {
+            // A NUL is refused, as real filesystems refuse it; it also keeps
+            // the raw-name keys (see [`raw_key`]) out of reach (CR-12).
+            Component::Normal(name) if name.as_encoded_bytes().contains(&0) => {
+                return Err(error(ErrorKind::InvalidInput, "a name holds a NUL", path));
+            }
             Component::Normal(name) => key.push(name),
             Component::CurDir => {}
             Component::ParentDir if key.pop() => {}
@@ -320,6 +325,18 @@ impl SimFs {
     /// Creates a file in `dir` whose name has no UTF-8 form, holding
     /// `content`. Not a syscall.
     pub fn make_raw(&self, dir: &Path, raw: RawName, content: &[u8]) -> io::Result<()> {
+        // Only a name that really has no UTF-8 form is raw (CR-12).
+        let has_utf8_form = match &raw {
+            RawName::Bytes(bytes) => std::str::from_utf8(bytes).is_ok(),
+            RawName::Wide(units) => char::decode_utf16(units.iter().copied()).all(|c| c.is_ok()),
+        };
+        if has_utf8_form {
+            return Err(error(
+                ErrorKind::InvalidInput,
+                "the raw name has a UTF-8 form",
+                dir,
+            ));
+        }
         let key_name = raw_key(&raw);
         let id = {
             let mut st = self.state.borrow_mut();

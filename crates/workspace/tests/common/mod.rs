@@ -116,10 +116,13 @@ pub fn files_on_disk(fs: &impl Fs) -> BTreeMap<String, (Vec<u8>, bool)> {
 
 /// What the working-copy change must hold after a snapshot: every regular
 /// file that is not ignored or was tracked before, with its content, and
-/// its mode under the filesystem's executable-bit rule.
+/// its mode under the filesystem's executable-bit rule as the spec states it
+/// (`docs/spec/working-copy.md`): from the bit where there is one, else the
+/// mode the working-copy change, or else its parent, last recorded.
 pub fn expected_tree(
     fs: &impl Fs,
     tracked_before: &Tree,
+    parent: &Tree,
     rules: &BTreeSet<&str>,
 ) -> BTreeMap<String, (Vec<u8>, Mode)> {
     let mut expected = BTreeMap::new();
@@ -136,7 +139,9 @@ pub fn expected_tree(
                 Mode::Regular
             }
         } else {
-            before.map_or(Mode::Regular, |file| file.mode)
+            before
+                .or_else(|| parent.get(&repo_path))
+                .map_or(Mode::Regular, |file| file.mode)
         };
         expected.insert(path, (content, mode));
     }
@@ -211,8 +216,9 @@ pub fn edit_sequence<F: Fs>(
             _ => put(fs, name, b""),
         }
         let tracked_before = ws.working_copy().unwrap().2;
+        let parent = ws.parent_tree().unwrap();
         ws.snapshot().unwrap();
-        let expected = expected_tree(ws.store().fs(), &tracked_before, &rules);
+        let expected = expected_tree(ws.store().fs(), &tracked_before, &parent, &rules);
         let recorded = recorded_tree(ws);
         assert_eq!(recorded, expected, "seed {seed} step {step}: lost edit");
         checked += 1;

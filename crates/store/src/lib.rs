@@ -23,7 +23,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 
-use codec::{ObjectKind, Operation, decode_envelope, from_slice, object_id, references, to_vec};
+use codec::{
+    ObjectKind, Operation, decode_envelope, from_slice, object_id, to_vec, typed_references,
+};
 use hash::{HashAlg, HashRef};
 use sim::{Fs, Rng};
 
@@ -249,11 +251,15 @@ impl<F: Fs> Store<F> {
                 "an operation is committed with commit_op, not put as an object",
             ));
         }
-        for reference in references(envelope).map_err(invalid)? {
-            if !self.valid_object(&reference)? {
+        for (reference, kind) in typed_references(envelope).map_err(invalid)? {
+            if !self.valid_object(&reference, kind)? {
                 return Err(io::Error::new(
                     ErrorKind::NotFound,
-                    format!("object {} is not in the store", file_name(&reference)),
+                    format!(
+                        "object {} is not in the store as a {}",
+                        file_name(&reference),
+                        kind.name()
+                    ),
                 ));
             }
         }
@@ -318,9 +324,10 @@ impl<F: Fs> Store<F> {
     }
 
     /// Whether the object file for `id` exists and hashes to `id`.
-    fn valid_object(&self, id: &HashRef) -> io::Result<bool> {
+    fn valid_object(&self, id: &HashRef, kind: ObjectKind) -> io::Result<bool> {
         match self.fs.read(&self.objects.join(file_name(id))) {
-            Ok(bytes) => Ok(object_id(id.alg(), &bytes) == *id),
+            Ok(bytes) => Ok(object_id(id.alg(), &bytes) == *id
+                && decode_envelope(&bytes).is_ok_and(|envelope| envelope.kind == kind)),
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
             Err(error) => Err(error),
         }

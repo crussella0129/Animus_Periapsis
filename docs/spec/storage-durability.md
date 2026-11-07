@@ -47,18 +47,31 @@ with `objects/` and each parent op with `ops/`, and only then writes the op.
 It returns after step 5 of the op file; that return is the acknowledgement.
 
 Closure (INT-0007 AC-1) follows the references inside objects: op → view →
-changesets → blobs. It holds through reachability. No op can name an object
-before that object's put is acknowledged, and an acknowledged put is durable
-with everything it reaches, by induction: its references were acknowledged
-before it, and its own write ends with a sync of their shared directory. So
-`put_object` does not re-sync its references. An object that a crash leaves
-behind unacknowledged, with a reference lost, is reachable from no op, and
-`fsck` lists it as a leftover, not as corruption. `commit_op` does re-sync,
-because the op it writes can name another writer's view or parent op that is
-present but not yet durable. That includes a parent in the same directory: a
-crash between the new op's rename and its own directory sync could otherwise
-keep the in-flight op and lose the parent. The crash matrix probes both
-re-syncs with a race of each kind and a negative control. `init` creates whichever of the root, `objects/` and
+changesets → blobs. It rests on two facts:
+- **Data before names.** Every writer syncs a file's data before renaming it
+  into place, so any object present under its final name has durable data.
+- **One shared directory.** Every object lives in `objects/`, and every
+  object write ends with `sync_dir(objects)`, which makes every name then in
+  the directory durable at once, including a name another writer renamed
+  into place but has not synced yet.
+
+So when an object's put is acknowledged, everything it references, which
+the put checked was present, is durable too. `put_object` needs no separate
+re-sync, even for a reference another writer has not acknowledged. Closure
+then holds by induction over acknowledged puts. An object that a crash
+leaves behind unacknowledged, with a reference lost, is reachable from no op,
+and `fsck` lists it as a leftover, not as corruption.
+
+`commit_op` writes in another directory, `ops/`, so it re-syncs the view
+with `objects/` before writing the op. It also re-syncs each parent op with
+`ops/`: a crash between the new op's rename and its own directory sync could
+otherwise keep the in-flight op and lose a parent another writer had not
+synced. The crash matrix probes both re-syncs with a race of each kind and a
+negative control. The race in which a second writer's `put_object` names a
+first writer's unsynced object is covered by the shared-directory sync
+above, not by a scenario of its own.
+
+`init` creates whichever of the root, `objects/` and
 `ops/` is missing and then syncs `objects/`, `ops/`, the root and the
 directory holding the root's entry (its parent, or `root/..` for a bare
 relative name), so an interrupted `init` is completed by running it again.

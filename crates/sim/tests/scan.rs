@@ -146,3 +146,26 @@ fn raw_display_never_equals_a_utf8_display() {
         Name::Raw(RawName::Bytes(vec![b'a', 0xff, b'b'])).display()
     );
 }
+
+/// The simulator refuses a NUL in a name, and a "raw" name that has a UTF-8
+/// form, so raw-name keys can never collide with a real name (code review
+/// CR-12).
+#[test]
+fn simfs_refuses_nul_names_and_false_raw_names() {
+    let fs = SimFs::new(0, Mode::Strict);
+    fs.create_dir(Path::new("d")).unwrap();
+    assert_eq!(
+        fs.create_new(Path::new("d/a\0b")).unwrap_err().kind(),
+        std::io::ErrorKind::InvalidInput
+    );
+    for raw in [
+        RawName::Bytes(b"plain".to_vec()),
+        RawName::Wide("plain".encode_utf16().collect()),
+    ] {
+        assert_eq!(
+            fs.make_raw(Path::new("d"), raw, b"").unwrap_err().kind(),
+            std::io::ErrorKind::InvalidInput
+        );
+    }
+    assert!(fs.scan(Path::new("d")).unwrap().is_empty());
+}

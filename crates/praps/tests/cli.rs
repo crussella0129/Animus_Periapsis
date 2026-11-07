@@ -46,8 +46,29 @@ fn repo(label: &str) -> Repo {
     let root = dir.join("repo");
     let mut store = Store::init(RealFs, &root, HashAlg::DEFAULT, 1).unwrap();
     let object = store.put_object(&blob(b"hello\n")).unwrap();
+    let blobs = [object];
+    let holder = codec::Changeset {
+        parents: Vec::new(),
+        change_id: [0; 16],
+        changes: blobs
+            .iter()
+            .enumerate()
+            .map(|(i, blob)| {
+                (
+                    codec::RepoPath::new(format!("f{i}")).unwrap(),
+                    codec::Entry::Put {
+                        blob: *blob,
+                        mode: codec::Mode::Regular,
+                    },
+                )
+            })
+            .collect(),
+        description: Vec::new(),
+    }
+    .to_envelope();
+    let changeset = store.put_object(&holder).unwrap();
     let view = View {
-        heads: [object].into(),
+        heads: [changeset].into(),
         workspaces: Default::default(),
     };
     let view = store.put_object(&view.to_envelope()).unwrap();
