@@ -49,6 +49,14 @@ const FS_BOUNDARY_CRATES: [&str; 3] = ["sim", "store", "praps"];
 /// The one source file in those crates that may touch the real filesystem,
 /// relative to the `sim` crate.
 const FS_REAL_HALF: (&str, &str) = ("sim", "src/real.rs");
+/// The crate that supplies operating-system randomness, and the one member
+/// that may depend on it: only `sim`'s real half draws from the operating
+/// system, so every simulated run stays a function of its seed (INT-0005
+/// AC-1).
+const OS_RANDOM: (&str, &str) = ("getrandom", "sim");
+/// Its functions, which every boundary crate's Clippy config must disallow
+/// (only `crates/sim/src/real.rs` may switch the lint off).
+const OS_RANDOM_METHODS: [&str; 3] = ["getrandom::fill", "getrandom::u32", "getrandom::u64"];
 /// `std::fs` types a boundary crate's Clippy config must disallow.
 const FS_TYPES: [&str; 3] = [
     "std::fs::File",
@@ -331,6 +339,15 @@ fn deps(root: &Path, members: &[PathBuf]) -> Vec<String> {
                     ));
                 }
                 let dev = table.ends_with("dev-dependencies") || table.ends_with("dev_dependencies");
+                let (random, random_owner) = OS_RANDOM;
+                let random_dependency = name == random
+                    || lookup(entry, &["package"]).and_then(Item::as_str) == Some(random);
+                if random_dependency && package != Some(random_owner) {
+                    problems.push(format!(
+                        "{dir} depends on `{random}` in [{table}]; only `{random_owner}` may \
+                         (INT-0005 AC-1)"
+                    ));
+                }
                 if store_keys.contains(name) && !dev && strings(entry, &["features"]).contains(&feature) {
                     problems.push(format!(
                         "{dir} enables `{feature}` of `{store}` in [{table}]; only [dev-dependencies] may"
@@ -515,6 +532,7 @@ fn fs_boundary(root: &Path, members: &[PathBuf]) -> Vec<String> {
                     for (key, banned) in [
                         ("disallowed-types", &FS_TYPES[..]),
                         ("disallowed-methods", &FS_METHODS[..]),
+                        ("disallowed-methods", &OS_RANDOM_METHODS[..]),
                     ] {
                         let listed = disallowed(&config, key);
                         for path in banned.iter().filter(|path| !listed.contains(path)) {
@@ -1710,6 +1728,7 @@ mod tests {
             .collect();
         let methods: Vec<String> = super::FS_METHODS
             .iter()
+            .chain(super::OS_RANDOM_METHODS.iter())
             .filter(|path| **path != without)
             .map(|path| format!("  \"{path}\",\n"))
             .collect();
@@ -1740,7 +1759,12 @@ mod tests {
         fs::remove_file(fixture.0.join("crates/store/clippy.toml")).unwrap();
         fixture.fails_only("fs-boundary", "crates/store/clippy.toml is missing");
 
-        for missing in ["std::fs::File", "std::fs::read", "std::path::Path::exists"] {
+        for missing in [
+            "std::fs::File",
+            "std::fs::read",
+            "std::path::Path::exists",
+            "getrandom::u64",
+        ] {
             let fixture = with_store(&format!("boundary-without-{}", missing.replace(':', "")));
             fixture.write("crates/store/clippy.toml", &boundary_config(missing));
             fixture.fails_exactly(&["fs-boundary"], &["crates/store/clippy.toml", missing]);
@@ -1901,6 +1925,40 @@ mod tests {
             "#![allow(clippy::disallowed_methods)]\n",
         );
         fixture.fails_only("fs-boundary", "crates/sim/src/simfs.rs");
+    }
+
+    /// Only `sim` may depend on `getrandom`, under any key and in any
+    /// dependency table (Sprint 2 T-004). The Clippy bans are checked by
+    /// `policy_enforces_the_fs_boundary`.
+    #[test]
+    fn policy_confines_getrandom_to_sim() {
+        let with = |name: &str, member_name: &str, dependency: &str| {
+            // The rule reads the member tables; the workspace table is left
+            // alone so that only `deps` can fail.
+            let fixture = Fixture::new(name);
+            let dir = format!("crates/{member_name}");
+            fixture.write(
+                &format!("{dir}/Cargo.toml"),
+                &member(member_name, dependency),
+            );
+            fixture.write(&format!("{dir}/src/lib.rs"), "#![forbid(unsafe_code)]\n");
+            fixture.write(&format!("{dir}/clippy.toml"), &boundary_config(""));
+            fixture
+        };
+        with("random-sim", "sim", "getrandom.workspace = true").passes();
+        for (i, (member_name, dependency)) in [
+            ("store", "getrandom.workspace = true"),
+            (
+                "praps",
+                "rand = { workspace = true, package = \"getrandom\" }",
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            with(&format!("random-{i}"), member_name, dependency)
+                .fails_exactly(&["deps"], &["only `sim` may", member_name]);
+        }
     }
 
     #[test]

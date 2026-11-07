@@ -40,4 +40,7 @@ disallowed-methods = [
     { path = "std::path::Path::read_link", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
     { path = "std::path::Path::symlink_metadata", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
     { path = "std::path::Path::try_exists", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "getrandom::fill", reason = "operating-system randomness belongs to sim's real half; use sim::Rng (INT-0005 AC-1)" },
+    { path = "getrandom::u32", reason = "operating-system randomness belongs to sim's real half; use sim::Rng (INT-0005 AC-1)" },
+    { path = "getrandom::u64", reason = "operating-system randomness belongs to sim's real half; use sim::Rng (INT-0005 AC-1)" },
 ]

@@ -69,6 +69,7 @@ starts with `C allowed:` and gives the reason.
 | `pulldown-cmark` | 0.13.6 | MIT | `book`, `xtask`; tests (`codec`) | no (its build script only generates tests, behind the `gen-tests` feature) | `default-features = false`: the CommonMark parser without the HTML renderer and command-line options |
 | `toml_edit` | 0.25.17 | MIT OR Apache-2.0 | `xtask` | no | `default-features = false, features = ["parse"]`: the parser only |
 | `allocation-counter` | 0.8.1 | MIT OR Apache-2.0 | tests only (`codec`) | no | as published; it installs a counting global allocator, so only `crates/codec/tests/alloc.rs` uses it |
+| `getrandom` | 0.4.3 | MIT OR Apache-2.0 | `sim` (real half only: `sim::os_seed`, which seeds change IDs outside simulation) | no (on Windows it calls `ProcessPrng` through a raw-dylib import, on Linux `getrandom(2)` through `libc`; no build script compiles C) | `default-features = false`; confined to `crates/sim/src/real.rs` by `sim/clippy.toml` and the `deps` rule |
 
 ## Test data
 

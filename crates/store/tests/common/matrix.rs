@@ -398,13 +398,19 @@ pub fn digest(fs: &SimFs) -> HashRef {
     for (path, node) in fs.snapshot() {
         bytes.extend_from_slice(path.as_bytes());
         bytes.push(0);
+        let tag = match node {
+            Node::File(_) => b'f',
+            _ => b'x',
+        };
         match node {
             Node::Dir => bytes.push(b'd'),
-            Node::File(content) => {
-                bytes.push(b'f');
+            Node::File(content) | Node::Executable(content) => {
+                bytes.push(tag);
                 bytes.extend_from_slice(&(content.len() as u64).to_le_bytes());
                 bytes.extend_from_slice(&content);
             }
+            Node::Symlink => bytes.push(b'l'),
+            Node::Other => bytes.push(b'o'),
         }
     }
     HashAlg::Blake3.hash(&bytes)

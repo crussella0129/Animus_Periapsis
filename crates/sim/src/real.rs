@@ -8,6 +8,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use crate::fs::Fs;
+use crate::name::{DirEntry, Kind, Name, RawName};
 
 /// [`Fs`] on the real filesystem, through `std::fs`.
 #[derive(Clone, Copy, Debug, Default)]
@@ -96,4 +97,72 @@ impl Fs for RealFs {
     fn remove_file(&self, path: &Path) -> io::Result<()> {
         fs::remove_file(path)
     }
+
+    fn scan(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        let mut entries = Vec::new();
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            // `DirEntry::file_type` does not follow symbolic links.
+            let file_type = entry.file_type()?;
+            let kind = if file_type.is_symlink() {
+                Kind::Symlink
+            } else if file_type.is_dir() {
+                Kind::Dir
+            } else if file_type.is_file() {
+                Kind::File {
+                    executable: executable(&entry)?,
+                }
+            } else {
+                Kind::Other
+            };
+            entries.push(DirEntry {
+                name: name_of(entry.file_name()),
+                kind,
+            });
+        }
+        entries.sort_by_cached_key(|entry| entry.name.display());
+        Ok(entries)
+    }
+
+    fn has_executable_bit(&self) -> bool {
+        cfg!(unix)
+    }
+}
+
+/// A name exactly as the filesystem gave it.
+fn name_of(name: std::ffi::OsString) -> Name {
+    match name.into_string() {
+        Ok(utf8) => Name::Utf8(utf8),
+        #[cfg(unix)]
+        Err(raw) => {
+            use std::os::unix::ffi::OsStringExt;
+            Name::Raw(RawName::Bytes(raw.into_vec()))
+        }
+        #[cfg(windows)]
+        Err(raw) => {
+            use std::os::windows::ffi::OsStrExt;
+            Name::Raw(RawName::Wide(raw.encode_wide().collect()))
+        }
+    }
+}
+
+/// Whether a regular file's owner-execute bit is set; always `false` where
+/// files have no such bit.
+fn executable(entry: &fs::DirEntry) -> io::Result<bool> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        Ok(entry.metadata()?.permissions().mode() & 0o100 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = entry;
+        Ok(false)
+    }
+}
+
+/// 64 bits from the operating system's random source, to seed an [`crate::Rng`]
+/// outside simulation (change IDs must differ between runs; INT-0011).
+pub fn os_seed() -> u64 {
+    getrandom::u64().expect("the operating system provides randomness")
 }

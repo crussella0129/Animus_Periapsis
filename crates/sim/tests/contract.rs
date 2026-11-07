@@ -7,7 +7,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use sim::{Fs, Mode, Node, RealFs, Rng, SimFs, is_crash};
+use sim::{DirEntry, Fs, Kind, Mode, Name, Node, RealFs, Rng, SimFs, is_crash};
 
 /// Seeds tried where an outcome must be seen "across seeds".
 const SEEDS: u64 = 200;
@@ -74,6 +74,43 @@ fn contract(fs: &impl Fs, base: &Path) {
         ErrorKind::NotFound
     );
     fs.sync_dir(&dir).unwrap();
+    scan_contract(fs, base);
+}
+
+fn utf8(name: &str, kind: Kind) -> DirEntry {
+    DirEntry {
+        name: Name::Utf8(name.to_owned()),
+        kind,
+    }
+}
+
+const FILE: Kind = Kind::File { executable: false };
+
+/// `scan` on plain files and directories: kinds, and order by display form
+/// (Sprint 2 T-004).
+fn scan_contract(fs: &impl Fs, base: &Path) {
+    let dir = base.join("s");
+    fs.create_dir(&dir).unwrap();
+    assert_eq!(fs.scan(&dir).unwrap(), []);
+    for name in ["b.txt", "A", "é", "_"] {
+        fs.create_new(&dir.join(name)).unwrap();
+    }
+    fs.create_dir(&dir.join("sub")).unwrap();
+    assert_eq!(
+        fs.scan(&dir).unwrap(),
+        [
+            utf8("A", FILE),
+            utf8("_", FILE),
+            utf8("b.txt", FILE),
+            utf8("sub", Kind::Dir),
+            utf8("é", FILE),
+        ]
+    );
+    assert_eq!(fs.scan(&dir.join("sub")).unwrap(), []);
+    assert_eq!(
+        fs.scan(&base.join("nodir")).unwrap_err().kind(),
+        ErrorKind::NotFound
+    );
 }
 
 /// A directory under the OS temp directory that did not exist before: a name
@@ -447,7 +484,7 @@ fn stale_removals_spare_a_reused_name() {
 
 /// Every kind of syscall, once each, with every effect visible in a snapshot:
 /// create_dir, create_new, write, overwrite, sync_file, rename, sync_dir,
-/// read, list, remove_file.
+/// read, list, scan, remove_file.
 fn every_kind(fs: &SimFs) -> std::io::Result<()> {
     fs.create_dir(Path::new("d"))?;
     fs.create_new(Path::new("d/a"))?;
@@ -458,11 +495,12 @@ fn every_kind(fs: &SimFs) -> std::io::Result<()> {
     fs.sync_dir(Path::new("d"))?;
     fs.read(Path::new("d/b"))?;
     fs.list(Path::new("d"))?;
+    fs.scan(Path::new("d"))?;
     fs.remove_file(Path::new("d/b"))?;
     Ok(())
 }
 
-const EVERY_KIND_SYSCALLS: u64 = 10;
+const EVERY_KIND_SYSCALLS: u64 = 11;
 
 /// What a snapshot holds: every visible path and its node.
 type Snapshot = BTreeMap<String, Node>;
