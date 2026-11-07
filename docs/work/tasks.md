@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-009 (sprint 3) [intent: INT-0009, INT-0004, INT-0005, INT-0007, INT-0014]: Reversibility and hazard corpora, the Materialise crash scenario, and the extended edit corpus — touches: crates/workspace/tests/
 - [ ] T-010 (sprint 3) [intent: INT-0009, INT-0003]: README, credits and backlog — touches: README.md, docs/SUMMARY.md, docs/prior-art.md, docs/work/tasks.md
 - [ ] T-011 (backlog) [intent: INT-0007, INT-0005]: Writers in separate processes (INT-0007 AC-5, at least four, under crash injection), together with a simulated process crash in which a later process sees the crashed one's unsynced state before the system crash resolves it — touches: crates/sim/, crates/store/
 - [ ] T-012 (backlog) [intent: INT-0006]: Give the provisional `operation`, `changeset` and `view` bodies the fields INT-0006 names for them that they still lack: the operation's actor, advisory wall clock and signature (INT-0016); the changeset's author, intent references, renames and conflict terms (INT-0011, INT-0012, INT-0017); the view's named pointers. Sprint 2 gave the operation its view hash. Due before the Phase 1 exit gate freezes format v1 — touches: docs/spec/format-v1.md, crates/codec/

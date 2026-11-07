@@ -67,10 +67,10 @@ pub fn writes(trace: &[String]) -> Vec<&String> {
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use codec::Mode;
-use hash::HashAlg;
+use codec::{Changeset, Mode};
+use hash::{HashAlg, HashRef};
 use sim::{Kind, Rng};
-use workspace::Workspace;
+use workspace::{Error, Workspace};
 
 /// The ignore rules an edit sequence may switch on, with an oracle written
 /// apart from the workspace's matcher. Two live in the top `.gitignore`;
@@ -127,16 +127,122 @@ pub fn files_on_disk(fs: &impl Fs) -> BTreeMap<String, (Vec<u8>, bool)> {
     files
 }
 
+/// Files with their contents and modes, by path.
+pub type Files = BTreeMap<String, (Vec<u8>, Mode)>;
+
+/// The rules that a working copy's `.gitignore` files hold.
+pub fn rules_of(files: &Files) -> BTreeSet<&'static str> {
+    let lines = |path: &str| -> Vec<String> {
+        files
+            .get(path)
+            .map(|(content, _)| {
+                String::from_utf8_lossy(content)
+                    .lines()
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let (top, d2) = (lines(".gitignore"), lines("d2/.gitignore"));
+    RULES
+        .into_iter()
+        .filter(|rule| match rule.strip_prefix("d2:") {
+            Some(line) => d2.iter().any(|l| l == line),
+            None => top.iter().any(|l| l == rule),
+        })
+        .collect()
+}
+
+/// One op as the model predicts it.
+#[derive(Clone, Debug)]
+pub struct ModelOp {
+    /// The working-copy change's files.
+    pub files: Files,
+    /// The modes its parent change recorded (for the no-bit mode rule).
+    pub parent_modes: BTreeMap<String, Mode>,
+    /// The ignore rules its `.gitignore` files hold.
+    pub rules: BTreeSet<&'static str>,
+    /// Its parent op, by position.
+    pub parent: Option<usize>,
+    /// Its id, learned from `log` by position once the counts agree.
+    pub id: Option<HashRef>,
+}
+
 /// The oracle's own record of what the repository tracks, kept apart from
-/// the workspace: the working-copy change's paths and modes, and its
-/// parent's. It never reads the implementation's state.
-#[derive(Clone, Debug, Default)]
+/// the workspace: the working-copy change's paths and modes, its parent's,
+/// and its own op history. It never reads the implementation's state; op
+/// ids alone are taken from `log`, by position, after the op count agrees.
+#[derive(Clone, Debug)]
 pub struct Model {
     pub tracked: BTreeMap<String, Mode>,
     pub parent: BTreeMap<String, Mode>,
+    pub ops: Vec<ModelOp>,
+    pub head: usize,
+}
+
+impl Default for Model {
+    fn default() -> Self {
+        Model {
+            tracked: BTreeMap::new(),
+            parent: BTreeMap::new(),
+            ops: vec![ModelOp {
+                files: Files::new(),
+                parent_modes: BTreeMap::new(),
+                rules: BTreeSet::new(),
+                parent: None,
+                id: None,
+            }],
+            head: 0,
+        }
+    }
 }
 
 impl Model {
+    fn push(&mut self, files: Files, rules: BTreeSet<&'static str>) {
+        self.ops.push(ModelOp {
+            files,
+            parent_modes: self.parent.clone(),
+            rules,
+            parent: Some(self.head),
+            id: None,
+        });
+        self.head = self.ops.len() - 1;
+    }
+
+    /// Moves to op `k`'s state, as `undo` or `restore` does: a new op over
+    /// the head with that op's working copy.
+    pub fn goto(&mut self, k: usize) {
+        let target = self.ops[k].clone();
+        self.tracked = target
+            .files
+            .iter()
+            .map(|(p, (_, m))| (p.clone(), *m))
+            .collect();
+        self.parent = target.parent_modes.clone();
+        self.push(target.files, target.rules);
+    }
+
+    /// Whether writing op `k`'s files over the head's would be refused: a
+    /// path T writes that the head does not track, where the disk holds
+    /// another file (an ignored, untracked one). The names an edit sequence
+    /// uses never make a file and a directory share a path.
+    pub fn blocks(&self, k: usize, fs: &impl Fs) -> bool {
+        let from = &self.ops[self.head].files;
+        let disk = files_on_disk(fs);
+        self.ops[k].files.iter().any(|(path, (content, mode))| {
+            if from.contains_key(path) {
+                return false;
+            }
+            match disk.get(path) {
+                None => false,
+                Some((on_disk, executable)) => {
+                    on_disk != content
+                        || (fs.has_executable_bit() && *executable != (*mode == Mode::Executable))
+                }
+            }
+        })
+    }
+
     /// What a snapshot must record, by the spec (`docs/spec/working-copy.md`):
     /// every regular file not ignored or tracked before, with its content;
     /// its mode from the bit where there is one, else the mode the
@@ -166,12 +272,18 @@ impl Model {
             expected.insert(path, (content, mode));
         }
         self.tracked = expected.iter().map(|(p, (_, m))| (p.clone(), *m)).collect();
+        if expected != self.ops[self.head].files {
+            let rules = rules_of(&expected);
+            self.push(expected.clone(), rules);
+        }
         expected
     }
 
-    /// `new`: the change just snapshotted becomes the parent.
+    /// `new`: the change just snapshotted becomes the parent, in a new op.
     pub fn new_change(&mut self) {
         self.parent = self.tracked.clone();
+        let head = self.ops[self.head].clone();
+        self.push(head.files, head.rules);
     }
 }
 
@@ -232,27 +344,112 @@ fn write_rules(fs: &impl Fs, rules: &BTreeSet<&str>) {
     }
 }
 
+/// The files of the tree a working-copy changeset id names, read through
+/// the store and `workspace::tree`.
+pub fn tree_files<F: Fs>(ws: &Workspace<F>, id: &HashRef) -> Files {
+    let mut chain = Vec::new();
+    let mut next = Some(*id);
+    while let Some(current) = next {
+        let changeset =
+            Changeset::from_envelope(&ws.store().get_object(&current).unwrap()).unwrap();
+        next = changeset.parents.first().copied();
+        chain.push(changeset);
+    }
+    let mut tree = workspace::tree::Tree::new();
+    for changeset in chain.iter().rev() {
+        tree = workspace::tree::of(changeset, &tree);
+    }
+    tree.iter()
+        .map(|(path, file)| {
+            let envelope = ws.store().get_object(&file.blob).unwrap();
+            (
+                path.as_str().to_owned(),
+                (envelope[2..].to_vec(), file.mode),
+            )
+        })
+        .collect()
+}
+
+/// Checks `log` against the model's op list: the count first, then each op
+/// by position (the history is linear, so newest first is creation order
+/// reversed), learning each op's id. With `trees`, also each op's files.
+fn check_ops<F: Fs>(ws: &mut Workspace<F>, model: &mut Model, trees: bool, at: &str) {
+    let log = ws.log().unwrap();
+    assert_eq!(log.len(), model.ops.len(), "{at}: op count");
+    for (i, entry) in log.iter().rev().enumerate() {
+        let parent = model.ops[i]
+            .parent
+            .map(|p| model.ops[p].id.unwrap_or(entry.id));
+        assert_eq!(
+            entry.parents.first().copied(),
+            parent,
+            "{at}: op {i}'s parent"
+        );
+        if let Some(id) = model.ops[i].id {
+            assert_eq!(id, entry.id, "{at}: op {i} changed");
+        }
+        model.ops[i].id = Some(entry.id);
+        if trees {
+            assert_eq!(
+                tree_files(ws, &entry.working_copy),
+                model.ops[i].files,
+                "{at}: op {i}'s files"
+            );
+            assert_eq!(rules_of(&model.ops[i].files), model.ops[i].rules);
+        }
+    }
+}
+
+/// After a successful `undo` or `restore` to model op `k`: every file op `k`
+/// tracks is on disk with its content (and mode, where there is a bit), and
+/// every file the head before it tracked and `k` does not is gone.
+fn check_written(fs: &impl Fs, from: &Files, target: &Files, at: &str) {
+    let disk = files_on_disk(fs);
+    for (path, (content, mode)) in target {
+        let (on_disk, executable) = disk
+            .get(path)
+            .unwrap_or_else(|| panic!("{at}: {path} was not written"));
+        assert_eq!(on_disk, content, "{at}: {path}");
+        if fs.has_executable_bit() {
+            assert_eq!(
+                *executable,
+                *mode == Mode::Executable,
+                "{at}: {path}'s mode"
+            );
+        }
+    }
+    for path in from.keys().filter(|p| !target.contains_key(*p)) {
+        assert!(!disk.contains_key(path), "{at}: {path} was not removed");
+    }
+}
+
 /// One random edit sequence of `steps` steps, each followed by a snapshot
-/// (and sometimes a `new`), checked after every step against [`Model`],
-/// which starts from `model` and is never fed the workspace's own state.
-/// `set_exec` changes a file's executable bit, where the filesystem has one.
-/// Returns the number of snapshots checked.
+/// (and sometimes a `new`, an `undo` or a `restore` of a random earlier
+/// op), checked after every step against [`Model`], which starts from
+/// `model` and is never fed the workspace's own state. `set_exec` changes a
+/// file's executable bit, where the filesystem has one. Returns what it
+/// checked.
 pub fn edit_sequence<F: Fs>(
     ws: &mut Workspace<F>,
     mut model: Model,
     seed: u64,
     steps: usize,
     set_exec: &dyn Fn(&F, &str, bool),
-) -> usize {
+) -> Counts {
     let mut rng = Rng::new(seed);
-    let mut rules: BTreeSet<&str> = BTreeSet::new();
-    let mut checked = 0;
+    let mut rules: BTreeSet<&str> = rules_of(&model.ops[model.head].files);
+    let mut counts = Counts::default();
+    check_ops(ws, &mut model, false, &format!("seed {seed} start"));
     for step in 0..steps {
+        let at = format!("seed {seed} step {step}");
         let fs = ws.store().fs();
         let name = NAMES[rng.below(NAMES.len() as u64) as usize];
         let exists = files_on_disk(fs).contains_key(name);
+        // An earlier op to restore, chosen before any snapshot adds one.
+        let target = rng.below(model.ops.len() as u64) as usize;
         let mut new = false;
-        match rng.below(10) {
+        let mut history = None;
+        match rng.below(12) {
             0..=3 => put(
                 fs,
                 name,
@@ -268,6 +465,8 @@ pub fn edit_sequence<F: Fs>(
                 write_rules(fs, &rules);
             }
             8 => new = true,
+            9 => history = Some(None),
+            10 => history = Some(Some(target)),
             _ => put(fs, name, b""),
         }
         if new {
@@ -276,13 +475,100 @@ pub fn edit_sequence<F: Fs>(
             let expected = model.snapshot(ws.store().fs(), &rules);
             ws.new_change().unwrap();
             model.new_change();
-            assert_eq!(recorded_tree(ws), expected, "seed {seed} step {step}: new");
+            assert_eq!(recorded_tree(ws), expected, "{at}: new");
+        }
+        if let Some(restore) = history {
+            // Both snapshot first. `undo` goes to the parent of the head
+            // before that snapshot; `restore` to the chosen op.
+            let h = model.head;
+            let id = model.ops[target].id.expect("ids are learned every step");
+            model.snapshot(ws.store().fs(), &rules);
+            let before = files_on_disk(ws.store().fs());
+            let goal = match restore {
+                None => model.ops[h].parent,
+                Some(k) => Some(k),
+            };
+            let result = match restore {
+                None => ws.undo().map(|_| ()),
+                Some(_) => ws.restore(&id.to_string()).map(|_| ()),
+            };
+            match goal {
+                None => {
+                    assert!(
+                        matches!(result, Err(Error::NothingToUndo)),
+                        "{at}: {result:?}"
+                    );
+                    counts.refused += 1;
+                }
+                Some(k) if model.blocks(k, ws.store().fs()) => {
+                    assert!(matches!(result, Err(Error::Blocked(_))), "{at}: {result:?}");
+                    assert_eq!(
+                        files_on_disk(ws.store().fs()),
+                        before,
+                        "{at}: refused, unchanged"
+                    );
+                    counts.refused += 1;
+                    counts.blocked += 1;
+                }
+                Some(k) => {
+                    result.unwrap_or_else(|error| panic!("{at}: {error}"));
+                    if restore.is_some() {
+                        counts.restores += 1;
+                    } else {
+                        counts.undos += 1;
+                    }
+                    let from = model.ops[model.head].files.clone();
+                    model.goto(k);
+                    rules = model.ops[k].rules.clone();
+                    check_written(ws.store().fs(), &from, &model.ops[k].files, &at);
+                }
+            }
         }
         ws.snapshot().unwrap();
         let expected = model.snapshot(ws.store().fs(), &rules);
         let recorded = recorded_tree(ws);
-        assert_eq!(recorded, expected, "seed {seed} step {step}: lost edit");
-        checked += 1;
+        assert_eq!(recorded, expected, "{at}: lost edit");
+        check_ops(ws, &mut model, false, &at);
+        counts.snapshots += 1;
     }
-    checked
+    check_ops(ws, &mut model, true, &format!("seed {seed} end"));
+    counts.ops += model.ops.len();
+    counts
+}
+
+/// What edit sequences checked.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Counts {
+    /// Steps, each ending with a checked snapshot.
+    pub snapshots: usize,
+    /// Successful `undo`s and `restore`s, each checked file by file.
+    pub undos: usize,
+    pub restores: usize,
+    /// Refusals asserted: nothing to undo, or blocked.
+    pub refused: usize,
+    /// Of those, refusals because an entry was in the way.
+    pub blocked: usize,
+    /// Ops whose files were checked against `log`.
+    pub ops: usize,
+}
+
+impl std::ops::AddAssign for Counts {
+    fn add_assign(&mut self, other: Counts) {
+        self.snapshots += other.snapshots;
+        self.undos += other.undos;
+        self.restores += other.restores;
+        self.refused += other.refused;
+        self.blocked += other.blocked;
+        self.ops += other.ops;
+    }
+}
+
+impl std::fmt::Display for Counts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} snapshots, {} undos, {} restores, {} refusals ({} blocked), {} ops checked, 0 lost edits",
+            self.snapshots, self.undos, self.restores, self.refused, self.blocked, self.ops
+        )
+    }
 }

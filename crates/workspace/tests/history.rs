@@ -1,14 +1,15 @@
 //! `log`, `undo` and `restore` on the simulator (INT-0009 AC-1 to AC-3;
-//! Sprint 3 T-007). The corpora over every op type are in `reversible.rs`.
+//! Sprint 3 T-007), and the reversibility corpora over every op type
+//! (Sprint 3 T-009).
 
 mod common;
 
 use std::path::Path;
 use std::rc::Rc;
 
-use common::{ROOT, delete, files_on_disk, put, writes};
+use common::{ROOT, delete, files_on_disk, put, tree_files, writes};
 use hash::HashRef;
-use sim::{Mode as DirMode, NameRules, SimFs};
+use sim::{Fs, Mode as DirMode, NameRules, SimFs};
 use workspace::{Error, Workspace};
 
 type Ws = Workspace<Rc<SimFs>>;
@@ -254,5 +255,239 @@ fn hazards_are_refused_before_any_write() {
         );
         assert_eq!(ws.store().ops().unwrap().len(), ops, "{name}");
         assert!(files_on_disk(&*fs).is_empty(), "{name}");
+    }
+}
+
+// ------------------------------------------------- reversibility corpora (T-009)
+
+/// The tracked working copy on disk, as `(path, (content, mode))`, for a
+/// repository with no ignored files.
+fn disk_files(fs: &SimFs) -> common::Files {
+    files_on_disk(fs)
+        .into_iter()
+        .map(|(path, (content, executable))| {
+            let mode = if executable {
+                codec::Mode::Executable
+            } else {
+                codec::Mode::Regular
+            };
+            (path, (content, mode))
+        })
+        .collect()
+}
+
+/// The files of the working copy that op `op`'s view names.
+fn op_files(ws: &Ws, op: &HashRef) -> common::Files {
+    let view_id = view_of(ws, op);
+    let view = codec::View::from_envelope(&ws.store().get_object(&view_id).unwrap()).unwrap();
+    tree_files(ws, &view.workspaces["default"])
+}
+
+/// 200 pairs of working copies that differ only in uncommitted content,
+/// through `undo` and through `restore`: their snapshot ops never collapse,
+/// and `restore` of each snapshot op gives back its pre-state exactly
+/// (INT-0009 AC-2).
+#[test]
+fn two_hundred_pairs_stay_distinguishable() {
+    let mut runs = 0;
+    for pair in 0..200u64 {
+        for restore in [false, true] {
+            let mut snapshots = Vec::new();
+            for side in ["x", "y"] {
+                let (mut ws, fs) = fresh(pair);
+                put(&fs, "base", b"shared");
+                put(&fs, "f", b"committed");
+                ws.snapshot().unwrap();
+                ws.new_change().unwrap();
+                let earlier = head(&ws);
+                // Uncommitted: the sides differ in this content only.
+                put(&fs, "f", format!("{side}{pair}").as_bytes());
+                let pre = disk_files(&fs);
+                let new = if restore {
+                    ws.restore(&earlier.to_string()).unwrap().1
+                } else {
+                    ws.undo().unwrap().1
+                };
+                let snapshot = *ws.store().ops().unwrap()[&new].parents.first().unwrap();
+                assert_eq!(op_files(&ws, &snapshot), pre, "pair {pair}");
+                ws.restore(&snapshot.to_string()).unwrap();
+                assert_eq!(
+                    disk_files(&fs),
+                    pre,
+                    "pair {pair} {side}: recovered exactly"
+                );
+                snapshots.push(op_files(&ws, &snapshot));
+                runs += 1;
+            }
+            assert_ne!(snapshots[0], snapshots[1], "pair {pair}: collapsed");
+        }
+    }
+    println!("200 pairs: {runs} runs, 0 collapsed");
+}
+
+/// One step of the scripted history that covers every op type, with
+/// file-directory swaps and an executable file whose content changes.
+#[derive(Clone, Copy, Debug)]
+enum Step {
+    /// Edit, then snapshot.
+    Edit(u8),
+    New,
+    Undo,
+    /// Restore the op at this position in creation order.
+    Restore(usize),
+}
+
+const SCRIPT: [Step; 10] = [
+    Step::Edit(0),
+    Step::New,
+    Step::Edit(1),
+    Step::Undo,
+    Step::Edit(2),
+    Step::Restore(3),
+    Step::New,
+    Step::Edit(3),
+    Step::Undo,
+    Step::Restore(1),
+];
+
+fn edit(fs: &SimFs, round: u8) {
+    let exe = |on| {
+        fs.make_executable(&Path::new(ROOT).join("run"), on)
+            .unwrap()
+    };
+    match round {
+        0 => {
+            put(fs, "a", b"a file");
+            put(fs, "run", b"#!1");
+            exe(true);
+            put(fs, "d/x", b"x");
+        }
+        1 => {
+            // `a` becomes a directory; `run` changes content, keeps its bit.
+            delete(fs, "a");
+            put(fs, "a/inner", b"inside");
+            put(fs, "run", b"#!2");
+            exe(true);
+        }
+        2 => {
+            // `d` becomes a file; `run` loses its bit.
+            delete(fs, "d/x");
+            fs.sync_dir(&Path::new(ROOT).join("d")).unwrap();
+            fs.remove_dir(&Path::new(ROOT).join("d")).unwrap();
+            fs.sync_dir(Path::new(ROOT)).unwrap();
+            put(fs, "d", b"d file");
+            put(fs, "run", b"#!3");
+            exe(false);
+        }
+        _ => {
+            put(fs, "new", b"n");
+            put(fs, "run", b"#!4");
+            exe(true);
+        }
+    }
+}
+
+/// Replays the first `n` steps of [`SCRIPT`] on a fresh repository.
+fn replay(n: usize) -> (Ws, Rc<SimFs>) {
+    let (mut ws, fs) = fresh(100);
+    for step in &SCRIPT[..n] {
+        match *step {
+            Step::Edit(round) => {
+                edit(&fs, round);
+                ws.snapshot().unwrap();
+            }
+            Step::New => {
+                ws.new_change().unwrap();
+            }
+            Step::Undo => {
+                ws.undo().unwrap();
+            }
+            Step::Restore(k) => {
+                let ops = ws.log().unwrap();
+                let id = ops[ops.len() - 1 - k].id;
+                ws.restore(&id.to_string()).unwrap();
+            }
+        }
+    }
+    (ws, fs)
+}
+
+/// Every op of a history covering every op type, restored: the new head
+/// names that op's exact view, and the working copy equals its tree byte for
+/// byte, with modes (INT-0009 AC-3).
+#[test]
+fn restore_reaches_every_earlier_state() {
+    let (mut ws, fs) = replay(SCRIPT.len());
+    let ops: Vec<HashRef> = ws.log().unwrap().into_iter().map(|e| e.id).collect();
+    assert!(ops.len() >= 10, "{}", ops.len());
+    for op in &ops {
+        let (_, new) = ws.restore(&op.to_string()).unwrap();
+        assert_eq!(view_of(&ws, &new), view_of(&ws, op));
+        assert_eq!(disk_files(&fs), op_files(&ws, op), "op {op}");
+    }
+}
+
+/// `undo` right after each op type but `init`: back to the view of the
+/// op's parent, exactly (INT-0009 AC-3; `undo` right after `init` is
+/// `undo_on_the_root_op_fails`).
+#[test]
+fn undo_after_every_op_type() {
+    let mut seen = std::collections::BTreeSet::new();
+    for n in 1..=SCRIPT.len() {
+        let (mut ws, fs) = replay(n);
+        let h = head(&ws);
+        let parent = *ws.store().ops().unwrap()[&h].parents.first().unwrap();
+        let (restored, new) = ws.undo().unwrap();
+        assert_eq!(restored, parent);
+        let after = SCRIPT[n - 1];
+        assert_eq!(view_of(&ws, &new), view_of(&ws, &parent), "after {after:?}");
+        assert_eq!(disk_files(&fs), op_files(&ws, &parent), "after {after:?}");
+        seen.insert(match after {
+            Step::Edit(_) => "snapshot",
+            Step::New => "new",
+            Step::Undo => "undo",
+            Step::Restore(_) => "restore",
+        });
+    }
+    assert_eq!(seen.len(), 4, "snapshot, new, undo and restore");
+}
+
+/// Random command sequences: no command removes an op (INT-0009 AC-1).
+#[test]
+fn ops_are_never_removed() {
+    for seed in 0..100 {
+        let (mut ws, fs) = fresh(seed);
+        let mut rng = sim::Rng::new(seed);
+        let mut known = std::collections::BTreeSet::new();
+        for step in 0..15 {
+            match rng.below(5) {
+                0 => {
+                    let name = ["a", "b", "c/d"][rng.below(3) as usize];
+                    put(&fs, name, &rng.next_u64().to_le_bytes());
+                    ws.snapshot().unwrap();
+                }
+                1 => {
+                    ws.new_change().unwrap();
+                }
+                2 => {
+                    let _ = ws.undo();
+                }
+                3 => {
+                    let ops = ws.log().unwrap();
+                    let id = ops[rng.below(ops.len() as u64) as usize].id;
+                    ws.restore(&id.to_string()).unwrap();
+                }
+                _ => {
+                    ws.status().unwrap();
+                }
+            }
+            let now: std::collections::BTreeSet<HashRef> =
+                ws.store().ops().unwrap().into_keys().collect();
+            assert!(
+                now.is_superset(&known),
+                "seed {seed} step {step}: an op was removed"
+            );
+            known = now;
+        }
     }
 }

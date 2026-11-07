@@ -384,3 +384,241 @@ fn unchanged_hazardous_names_are_not_refused() {
         [("aux/x".to_owned(), "aux".to_owned())]
     );
 }
+
+// ------------------------------------- the corpora through a write (T-009)
+
+mod common;
+
+use std::path::Path;
+use std::rc::Rc;
+
+use common::{ROOT, delete, files_on_disk, put};
+use sim::{Fs, Mode as DirMode, SimFs};
+use workspace::{Error, Workspace};
+
+/// Ignore rules in both trees, so untracked variants can stand on disk.
+const GITIGNORE: &str = "*.ign\nnotes.TXT\n";
+
+/// Deletes every file under the repository but `.gitignore`, then every
+/// directory left empty, deepest first.
+fn clear(fs: &SimFs) {
+    for path in files_on_disk(fs).into_keys() {
+        if path != ".gitignore" {
+            delete(fs, &path);
+        }
+    }
+    let mut dirs: Vec<String> = fs
+        .snapshot()
+        .into_iter()
+        .filter(|(path, node)| {
+            *node == sim::Node::Dir && path.starts_with("repo/") && !path.starts_with("repo/.praps")
+        })
+        .map(|(path, _)| path)
+        .collect();
+    dirs.sort_by_key(|d| std::cmp::Reverse(d.matches('/').count()));
+    for dir in dirs {
+        let dir = Path::new(&dir);
+        fs.sync_dir(dir).unwrap();
+        fs.remove_dir(dir).unwrap();
+        fs.sync_dir(dir.parent().unwrap()).unwrap();
+    }
+}
+
+/// Builds T, then F with `untracked` files beside it, and restores T under
+/// `rules`. Returns whether it was refused as a hazard; a refusal must have
+/// changed nothing, and a success must have written T exactly.
+fn write_over(
+    from: &[(&str, &str)],
+    target: &[(&str, &str)],
+    untracked: &[&str],
+    rules: NameRules,
+) -> bool {
+    let fs = Rc::new(SimFs::new(1, DirMode::Strict));
+    let mut ws = Workspace::init(Rc::clone(&fs), Path::new(ROOT), 1)
+        .unwrap()
+        .0;
+    put(&*fs, ".gitignore", GITIGNORE.as_bytes());
+    for (path, content) in target {
+        put(&*fs, path, content.as_bytes());
+    }
+    ws.snapshot().unwrap();
+    let t_view = {
+        let ops = ws.store().ops().unwrap();
+        ops[ws.store().heads().unwrap().first().unwrap()].view
+    };
+    clear(&fs);
+    for (path, content) in from {
+        put(&*fs, path, content.as_bytes());
+    }
+    for path in untracked {
+        put(&*fs, path, b"untracked");
+    }
+    ws.snapshot().unwrap();
+    fs.set_name_rules(rules);
+    let before = fs.snapshot();
+    match ws.restore_view(&t_view) {
+        Err(Error::Hazards(hazards)) => {
+            assert!(!hazards.is_empty());
+            assert_eq!(fs.snapshot(), before, "a refusal changes nothing");
+            true
+        }
+        Ok(_) => {
+            let on_disk = files_on_disk(&*fs);
+            for (path, content) in target {
+                let (written, _) = on_disk
+                    .get(*path)
+                    .unwrap_or_else(|| panic!("{path:?} missing: {:?}", on_disk.keys()));
+                assert_eq!(written, content.as_bytes(), "{path}");
+            }
+            for (path, _) in from {
+                if !target.iter().any(|(p, _)| p == path) {
+                    assert!(!on_disk.contains_key(*path), "{path} was not removed");
+                }
+            }
+            for path in untracked {
+                assert_eq!(on_disk[*path].0, b"untracked", "{path} was touched");
+            }
+            false
+        }
+        Err(error) => panic!("{error}"),
+    }
+}
+
+type Files = &'static [(&'static str, &'static str)];
+
+/// The case corpus through a write: `(name, from, target, untracked,
+/// refused where names are case-insensitive)`.
+const CASE_WRITES: &[(&str, Files, Files, &[&str], bool)] = &[
+    (
+        "two files",
+        &[],
+        &[("README", "a"), ("readme", "b")],
+        &[],
+        true,
+    ),
+    (
+        "file a, directory A/",
+        &[],
+        &[("a", "1"), ("A/x", "2")],
+        &[],
+        true,
+    ),
+    (
+        "two directories",
+        &[],
+        &[("dir/Foo", "1"), ("DIR/bar", "2")],
+        &[],
+        true,
+    ),
+    (
+        "two levels down",
+        &[],
+        &[("p/q/Name", "1"), ("p/q/name", "2")],
+        &[],
+        true,
+    ),
+    ("non-ASCII", &[], &[("é", "1"), ("É", "2")], &[], true),
+    ("sigma", &[], &[("x/σ", "1"), ("x/ς", "2")], &[], true),
+    ("long s", &[], &[("s", "1"), ("ſ", "2")], &[], true),
+    (
+        "Kelvin sign",
+        &[],
+        &[("\u{212a}", "1"), ("k", "2")],
+        &[],
+        true,
+    ),
+    (
+        "an untracked directory variant",
+        &[],
+        &[("docs/x", "1")],
+        &["Docs/u.ign"],
+        true,
+    ),
+    (
+        "an untracked file variant",
+        &[],
+        &[("Notes.txt", "1")],
+        &["notes.TXT"],
+        true,
+    ),
+    (
+        "a case-only rename (T-016)",
+        &[("README", "1")],
+        &[("readme", "1")],
+        &[],
+        true,
+    ),
+    (
+        "names that differ in more",
+        &[],
+        &[("a", "1"), ("b", "2"), ("ab/a", "3"), ("aB.txt", "4")],
+        &[],
+        false,
+    ),
+    (
+        "a rewrite under its own spelling",
+        &[("D/b", "1")],
+        &[("D/b", "2")],
+        &[],
+        false,
+    ),
+    (
+        "an unchanged colliding pair",
+        &[("README", "1"), ("readme", "2")],
+        &[("README", "1"), ("readme", "2"), ("new", "3")],
+        &[],
+        false,
+    ),
+];
+
+#[test]
+fn case_corpus_through_a_write() {
+    assert!(CASE_WRITES.len() >= 12);
+    for (name, from, target, untracked, refused) in CASE_WRITES {
+        assert_eq!(
+            write_over(from, target, untracked, CASE),
+            *refused,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn case_sensitive_filesystems_materialise_the_same_trees() {
+    for (name, from, target, untracked, _) in CASE_WRITES {
+        assert!(!write_over(from, target, untracked, NEITHER), "{name}");
+    }
+}
+
+/// The Windows names a simulated write can be given on this host: on a
+/// Windows host, `Path` reads `a:` in `a:b` as a drive prefix, so names
+/// holding `:` run only on Linux (the pure check covers them everywhere).
+fn writable_here() -> impl Iterator<Item = &'static &'static str> {
+    WINDOWS_HAZARDS
+        .iter()
+        .filter(|name| !(cfg!(windows) && name.contains(':')))
+}
+
+#[test]
+fn windows_names_through_a_write() {
+    let mut count = 0;
+    for name in writable_here() {
+        assert!(write_over(&[], &[(name, "x")], &[], WINDOWS), "{name:?}");
+        count += 1;
+    }
+    assert!(count >= 34, "{count}");
+    // A tracked, unchanged hazardous name does not stop a write.
+    assert!(!write_over(
+        &[("CON", "1"), ("a|b", "1")],
+        &[("CON", "1"), ("a|b", "1"), ("ok", "2")],
+        &[],
+        WINDOWS
+    ));
+}
+
+#[test]
+fn other_filesystems_materialise_the_same_names() {
+    for name in writable_here() {
+        assert!(!write_over(&[], &[(name, "x")], &[], NEITHER), "{name:?}");
+    }
+}
