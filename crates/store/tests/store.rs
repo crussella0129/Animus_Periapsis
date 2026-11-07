@@ -227,6 +227,69 @@ fn present_files_are_synced_again() {
     assert!(position("sync_dir repo/ops") < create, "{trace:?}");
 }
 
+/// `inspect` and `fsck` only read: every syscall they make is a `read` or a
+/// `list` (test critique round 2, C-002).
+#[test]
+fn inspect_and_fsck_only_read() {
+    let mut store = fresh();
+    let o = store.put_object(&blob(b"o")).unwrap();
+    store.commit_op(&op(&[], &[&o])).unwrap();
+    let fs = store.fs();
+    let before = fs.trace().len();
+    let inspected = Store::inspect(fs, Path::new(ROOT), HashAlg::DEFAULT).unwrap();
+    assert!(inspected.fsck().unwrap().is_clean());
+    let trace = &fs.trace()[before..];
+    assert!(!trace.is_empty());
+    for line in trace {
+        assert!(
+            line.starts_with("read ") || line.starts_with("list "),
+            "{line} is not a read"
+        );
+    }
+    let missing = Store::inspect(fs, Path::new("nowhere"), HashAlg::DEFAULT);
+    assert_eq!(missing.err().unwrap().kind(), ErrorKind::NotFound);
+}
+
+/// A damaged copy under an object's final name is replaced through a
+/// temporary file and a rename (the write sequence in
+/// `docs/spec/storage-durability.md`; test critique round 2, C-003).
+#[test]
+fn a_damaged_copy_is_replaced() {
+    let mut store = fresh();
+    let envelope = blob(b"to be repaired");
+    let id = object_id(HashAlg::DEFAULT, &envelope);
+    let path = format!("repo/objects/{}", file_name(&id));
+    store.fs().create_new(Path::new(&path)).unwrap();
+    store.fs().write(Path::new(&path), &envelope[..5]).unwrap();
+    let (put, trace) = calls(&mut store, |s| s.put_object(&envelope).unwrap());
+    assert_eq!(put, id);
+    assert_eq!(store.get_object(&id).unwrap(), envelope);
+    let kinds: Vec<&str> = trace.iter().map(|l| l.split(' ').next().unwrap()).collect();
+    assert_eq!(
+        kinds,
+        [
+            "read",
+            "create_new",
+            "write",
+            "sync_file",
+            "rename",
+            "sync_dir"
+        ],
+        "{trace:?}"
+    );
+    assert!(
+        trace[1].starts_with("create_new repo/objects/tmp-"),
+        "{trace:?}"
+    );
+    assert_eq!(
+        trace[4],
+        format!(
+            "rename repo/objects/{}",
+            trace[1].rsplit('/').next().unwrap()
+        )
+    );
+}
+
 #[test]
 fn leftover_tmp_does_not_block_a_put() {
     // The store's first nonce comes from Rng::new(9) (`fresh`), so plant a

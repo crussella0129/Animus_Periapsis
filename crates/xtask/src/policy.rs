@@ -540,15 +540,14 @@ fn fs_boundary(root: &Path, members: &[PathBuf]) -> Vec<String> {
                     "{name} switches off the filesystem boundary: {attribute}"
                 ));
             }
-            // A `#[path]` module or an `include!` could pull exempt code
-            // (from tests/ or the real half) into the crate's own sources.
-            let compact: String = source.chars().filter(|c| !c.is_whitespace()).collect();
-            for (needle, what) in [("#[path", "a #[path] module"), ("include!", "include!")] {
-                if compact.contains(needle) {
-                    problems.push(format!(
-                        "{name} uses {what}, which could pull code past the filesystem boundary"
-                    ));
-                }
+            // A module path attribute (`#[path]`, or `path =` inside a
+            // `cfg_attr`) or the `include` macro (however it is named or
+            // imported) could pull exempt code, from tests/ or the real half,
+            // into the crate's own sources.
+            for what in escapes(&source) {
+                problems.push(format!(
+                    "{name} uses {what}, which could pull code past the filesystem boundary"
+                ));
             }
         }
     }
@@ -631,6 +630,48 @@ fn opt_outs(source: &str) -> Vec<String> {
             .any(|prefix| inner.starts_with(prefix));
         if switches && FS_OPT_OUTS.iter().any(|lint| inner.contains(lint)) {
             found.push(format!("#[{inner}]"));
+        }
+    }
+    found
+}
+
+/// Ways `source` could compile code from another file into itself: any
+/// attribute with a `path =` key (a module path, directly or through
+/// `cfg_attr`), and the identifier `include` (the macro, called or imported
+/// under another name; `include_str` and `include_bytes` read data, not
+/// code). Line comments are skipped; anything else that matches counts: the
+/// rule fails closed.
+fn escapes(source: &str) -> Vec<&'static str> {
+    let code: String = source
+        .lines()
+        .map(|line| line.split("//").next().unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut found = Vec::new();
+    let compact: String = code.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut rest = compact.as_str();
+    while let Some(start) = rest.find("#[").or_else(|| rest.find("#![")) {
+        let attribute = &rest[start..];
+        let end = attribute.find(']').map_or(attribute.len(), |end| end + 1);
+        if attribute[..end].contains("path=") {
+            found.push("a module path attribute");
+            break;
+        }
+        rest = &attribute[end.min(attribute.len())..];
+        if end == 0 {
+            break;
+        }
+    }
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let bytes: Vec<char> = code.chars().collect();
+    let needle: Vec<char> = "include".chars().collect();
+    for i in 0..bytes.len().saturating_sub(needle.len() - 1) {
+        if bytes[i..i + needle.len()] == needle[..]
+            && (i == 0 || !word(bytes[i - 1]))
+            && bytes.get(i + needle.len()).is_none_or(|c| !word(*c))
+        {
+            found.push("the include macro");
+            break;
         }
     }
     found
@@ -1805,6 +1846,9 @@ mod tests {
             "# [ path = \"../../sim/src/real.rs\" ]\nmod real;\n",
             "include!(\"../tests/escape.rs\");\n",
             "include ! (concat!(\"../tests/\", \"escape.rs\"));\n",
+            "#[cfg_attr(all(), path = \"../tests/escape.rs\")]\npub mod escape;\n",
+            "use std::include as inc;\ninc!(\"../tests/escape2.rs\");\n",
+            "use std::{include as inc2};\n",
         ]
         .into_iter()
         .enumerate()
@@ -1816,6 +1860,15 @@ mod tests {
                 &["crates/store/src/escape.rs", "past the filesystem boundary"],
             );
         }
+
+        // Data includes, comments and other attributes are not escapes.
+        let fixture = with_store("boundary-not-escapes");
+        fixture.write(
+            "crates/store/src/data.rs",
+            "// Tests include this module.\nconst A: &str = include_str!(\"a.txt\");\n\
+             const B: &[u8] = include_bytes!(\"b.bin\");\n#[doc = \"x\"]\nconst C: u8 = 0;\n",
+        );
+        fixture.passes();
 
         // Unrelated attributes pass.
         let fixture = with_store("boundary-unrelated");
