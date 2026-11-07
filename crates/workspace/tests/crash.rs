@@ -174,7 +174,7 @@ fn run(
     log.borrow_mut().acked_ops.extend(heads);
     for round in 0..4 {
         edit(&**fs, round)?;
-        log.borrow_mut().in_flight = Some(model(&**fs));
+        log.borrow_mut().in_flight = Some(model(fs));
         if let Some(op) = ws.snapshot()?.op {
             log.borrow_mut().acked_ops.push(op);
         }
