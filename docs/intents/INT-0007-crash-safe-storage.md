@@ -6,7 +6,7 @@
 - **Work evidence:** [Sprint 1 T-004 build plan](../sprints/s1/sprint-plans/build-plan.md#t-004-object-and-op-file-store-with-derived-heads-and-fsck-in-the-store-crate), [Sprint 1 T-005 build plan](../sprints/s1/sprint-plans/build-plan.md#t-005-crash-matrix-with-negative-controls), [Sprint 1 T-006 build plan](../sprints/s1/sprint-plans/build-plan.md#t-006-fsck-corruption-corpus-and-the-praps-fsck-command), [Sprint 1 T-007 build plan](../sprints/s1/sprint-plans/build-plan.md#t-007-windows-durability-strategy-and-real-filesystem-evidence), [T-011 backlog](../work/tasks.md), [Sprint 2 T-003 build plan](../sprints/s2/sprint-plans/build-plan.md#t-003-the-operation-names-its-view-closure-through-references-inside-objects), [Sprint 2 T-007 build plan](../sprints/s2/sprint-plans/build-plan.md#t-007-snapshot-crash-scenario-and-edit-corpora)
 - **Completion evidence:** [Sprint 1 T-004 completion](../work/completed-tasks.md#t-004-sprint-1), [Sprint 1 T-005 completion](../work/completed-tasks.md#t-005-sprint-1), [Sprint 1 T-006 completion](../work/completed-tasks.md#t-006-sprint-1), [Sprint 1 T-007 completion](../work/completed-tasks.md#t-007-sprint-1)
 - **Code evidence:** [crates/store](../../crates/store/src/lib.rs), [crates/praps](../../crates/praps/src/main.rs)
-- **Test evidence:** [Sprint 1 test report](../sprints/s1/sprint-tests/test-report.md)
+- **Test evidence:** [Sprint 1 test report](../sprints/s1/sprint-tests/test-report.md), [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md)
 - **Documentation evidence:** [Storage durability](../spec/storage-durability.md)
 
 ## Intent
