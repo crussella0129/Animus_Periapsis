@@ -14,8 +14,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use codec::{
-    Bytes, Decode, Encode, Envelope, ObjectKind, Operation, blob, decode_envelope, from_slice,
-    to_vec,
+    Bytes, Changeset, Decode, DecodeError, Encode, Entry, Envelope, Mode, ObjectKind, Operation,
+    RepoPath, View, blob, decode_envelope, from_slice, to_vec,
 };
 use hash::{HashAlg, HashRef};
 
@@ -66,6 +66,39 @@ fn corpus() -> Vec<Case> {
         parents: BTreeSet::from([HashAlg::Blake3.hash(b""), HashAlg::Sha256.hash(b"abc")]),
         objects: BTreeSet::from([HashAlg::Sha256.hash(b""), HashAlg::Sha256.hash(b"abc")]),
     };
+    let path = |p: &str| RepoPath::new(p).unwrap();
+    let changeset_root = Changeset {
+        parents: Vec::new(),
+        change_id: std::array::from_fn(|i| i as u8),
+        changes: BTreeMap::new(),
+        description: Vec::new(),
+    };
+    let changeset_edit = Changeset {
+        parents: vec![HashAlg::Blake3.hash(b"")],
+        change_id: [0xff; 16],
+        changes: BTreeMap::from([
+            (
+                path("README.md"),
+                Entry::Put {
+                    blob: HashAlg::Sha256.hash(b"abc"),
+                    mode: Mode::Regular,
+                },
+            ),
+            (
+                path("bin/run"),
+                Entry::Put {
+                    blob: HashAlg::Blake3.hash(b""),
+                    mode: Mode::Executable,
+                },
+            ),
+            (path("src/old.rs"), Entry::Delete),
+        ]),
+        description: b"fix".to_vec(),
+    };
+    let view = View {
+        heads: BTreeSet::from([HashAlg::Blake3.hash(b"")]),
+        workspaces: BTreeMap::from([("default".to_owned(), HashAlg::Blake3.hash(b""))]),
+    };
     vec![
         case("uvarint-0", 0u64),
         case("uvarint-127", 127u64),
@@ -101,19 +134,48 @@ fn corpus() -> Vec<Case> {
             )]),
         ),
         case("pair", ("key".to_owned(), true)),
+        case("path-nested", path("src/π/main.rs")),
         blob_case,
-        operation_case("operation-root", operation_root),
-        operation_case("operation-merge", operation_merge),
+        object_case(
+            "changeset-root",
+            changeset_root,
+            Changeset::to_envelope,
+            Changeset::from_envelope,
+        ),
+        object_case(
+            "changeset-edit",
+            changeset_edit,
+            Changeset::to_envelope,
+            Changeset::from_envelope,
+        ),
+        object_case("view", view, View::to_envelope, View::from_envelope),
+        object_case(
+            "operation-root",
+            operation_root,
+            Operation::to_envelope,
+            Operation::from_envelope,
+        ),
+        object_case(
+            "operation-merge",
+            operation_merge,
+            Operation::to_envelope,
+            Operation::from_envelope,
+        ),
     ]
 }
 
-/// An operation is pinned as its whole envelope, like the blob.
-fn operation_case(name: &'static str, value: Operation) -> Case {
+/// An object is pinned as its whole envelope, like the blob.
+fn object_case<T: PartialEq + Debug + 'static>(
+    name: &'static str,
+    value: T,
+    to_envelope: fn(&T) -> Vec<u8>,
+    from_envelope: fn(&[u8]) -> Result<T, DecodeError>,
+) -> Case {
     Case {
         name,
-        ty: type_name::<Operation>(),
-        bytes: value.to_envelope(),
-        decodes: Box::new(move |file| match Operation::from_envelope(file) {
+        ty: type_name::<T>(),
+        bytes: to_envelope(&value),
+        decodes: Box::new(move |file| match from_envelope(file) {
             Ok(decoded) if decoded == value => Ok(()),
             Ok(decoded) => Err(format!("decoded {decoded:?}, expected {value:?}")),
             Err(error) => Err(error.to_string()),
@@ -250,7 +312,11 @@ fn golden_corpus_has_the_spec_types() {
                 type_name::<BTreeMap<String, BTreeMap<u64, Option<Bytes>>>>()
             ),
             ("pair", type_name::<(String, bool)>()),
+            ("path-nested", type_name::<RepoPath>()),
             ("blob-envelope", type_name::<Envelope<'static>>()),
+            ("changeset-root", type_name::<Changeset>()),
+            ("changeset-edit", type_name::<Changeset>()),
+            ("view", type_name::<View>()),
             ("operation-root", type_name::<Operation>()),
             ("operation-merge", type_name::<Operation>()),
         ]
@@ -354,8 +420,8 @@ fn golden_undecodable_file_fails() {
         // A reserved kind, which fails to decode.
         (
             "blob-envelope",
-            vec![0x01, 0x02],
-            "object kind 0x02 is reserved and not yet specified",
+            vec![0x01, 0x05],
+            "object kind 0x05 is reserved and not yet specified",
         ),
     ];
     for (name, bytes, failure) in undecodable {

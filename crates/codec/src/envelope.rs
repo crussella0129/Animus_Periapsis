@@ -3,33 +3,47 @@
 use hash::{HashAlg, HashRef};
 
 use crate::error::DecodeError;
+use crate::wire::{Decode, from_slice};
 
 /// The format version this build writes and the only one it reads.
 pub const FORMAT_VERSION: u8 = 1;
 
 /// Kinds the registry names but whose bodies are not yet specified, as
 /// (id, name). They are rejected until the spec defines them.
-pub const RESERVED_KINDS: [(u8, &str); 3] = [(0x02, "changeset"), (0x04, "view"), (0x05, "event")];
+pub const RESERVED_KINDS: [(u8, &str); 1] = [(0x05, "event")];
 
 /// An object kind whose body format v1 defines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ObjectKind {
     /// File content. The body is the raw bytes, with no length prefix.
     Blob,
+    /// One version of a change, *provisional* until the Phase 1 exit gate;
+    /// see [`crate::Changeset`].
+    Changeset,
     /// An op-log entry, *provisional* until the Phase 1 exit gate; see
     /// [`crate::Operation`].
     Operation,
+    /// The repository state an operation leaves, *provisional* until the
+    /// Phase 1 exit gate; see [`crate::View`].
+    View,
 }
 
 impl ObjectKind {
     /// Every defined kind, in id order.
-    pub const ALL: [ObjectKind; 2] = [ObjectKind::Blob, ObjectKind::Operation];
+    pub const ALL: [ObjectKind; 4] = [
+        ObjectKind::Blob,
+        ObjectKind::Changeset,
+        ObjectKind::Operation,
+        ObjectKind::View,
+    ];
 
     /// The one-byte registry id.
     pub const fn id(self) -> u8 {
         match self {
             ObjectKind::Blob => 0x01,
+            ObjectKind::Changeset => 0x02,
             ObjectKind::Operation => 0x03,
+            ObjectKind::View => 0x04,
         }
     }
 
@@ -37,7 +51,9 @@ impl ObjectKind {
     pub const fn name(self) -> &'static str {
         match self {
             ObjectKind::Blob => "blob",
+            ObjectKind::Changeset => "changeset",
             ObjectKind::Operation => "operation",
+            ObjectKind::View => "view",
         }
     }
 
@@ -87,6 +103,19 @@ pub fn decode_envelope(bytes: &[u8]) -> Result<Envelope<'_>, DecodeError> {
         kind: ObjectKind::from_id(*kind)?,
         body,
     })
+}
+
+/// Decodes an envelope that must hold `kind`, and its body as `T`. Offsets
+/// in body errors are relative to the body.
+pub(crate) fn decode_as<T: Decode>(bytes: &[u8], kind: ObjectKind) -> Result<T, DecodeError> {
+    let envelope = decode_envelope(bytes)?;
+    if envelope.kind != kind {
+        return Err(DecodeError::UnexpectedObjectKind {
+            expected: kind.id(),
+            found: envelope.kind.id(),
+        });
+    }
+    from_slice(envelope.body)
 }
 
 /// The envelope of a blob holding `content`.

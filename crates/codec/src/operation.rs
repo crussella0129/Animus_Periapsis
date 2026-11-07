@@ -7,9 +7,9 @@ use std::collections::BTreeSet;
 
 use hash::HashRef;
 
-use crate::envelope::{ObjectKind, decode_envelope, encode_object};
+use crate::envelope::{ObjectKind, decode_as, encode_object};
 use crate::error::DecodeError;
-use crate::wire::{Decode, Decoder, Encode, Encoder, from_slice, to_vec};
+use crate::wire::{Decode, Decoder, Encode, Encoder, to_vec};
 
 /// One entry of the op log.
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -28,14 +28,7 @@ impl Operation {
 
     /// Decodes an envelope that must hold an operation.
     pub fn from_envelope(bytes: &[u8]) -> Result<Self, DecodeError> {
-        let envelope = decode_envelope(bytes)?;
-        if envelope.kind != ObjectKind::Operation {
-            return Err(DecodeError::UnexpectedObjectKind {
-                expected: ObjectKind::Operation.id(),
-                found: envelope.kind.id(),
-            });
-        }
-        from_slice(envelope.body)
+        decode_as(bytes, ObjectKind::Operation)
     }
 }
 

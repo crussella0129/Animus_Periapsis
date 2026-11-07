@@ -45,6 +45,14 @@ pub enum DecodeError {
     UnknownObjectKind { kind: u8 },
     /// An envelope holds a defined kind other than the one the caller decodes.
     UnexpectedObjectKind { expected: u8, found: u8 },
+    /// A changeset entry tag other than `0x00` (delete) or `0x01` (put).
+    UnknownEntryTag { at: usize, byte: u8 },
+    /// A file mode byte the registry does not name.
+    UnknownMode { at: usize, byte: u8 },
+    /// A file mode the registry reserves but does not yet specify (symlink).
+    ReservedMode { at: usize, byte: u8 },
+    /// A string that is not a valid repository path.
+    InvalidPath { at: usize },
 }
 
 impl fmt::Display for DecodeError {
@@ -97,6 +105,21 @@ impl fmt::Display for DecodeError {
                     f,
                     "expected object kind 0x{expected:02x}, found 0x{found:02x}"
                 )
+            }
+            DecodeError::UnknownEntryTag { at, byte } => {
+                write!(f, "unknown changeset entry tag 0x{byte:02x} at byte {at}")
+            }
+            DecodeError::UnknownMode { at, byte } => {
+                write!(f, "unknown file mode 0x{byte:02x} at byte {at}")
+            }
+            DecodeError::ReservedMode { at, byte } => {
+                write!(
+                    f,
+                    "file mode 0x{byte:02x} at byte {at} is reserved and not yet specified"
+                )
+            }
+            DecodeError::InvalidPath { at } => {
+                write!(f, "invalid repository path at byte {at}")
             }
         }
     }
