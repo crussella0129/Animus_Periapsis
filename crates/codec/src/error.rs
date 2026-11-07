@@ -1,8 +1,8 @@
 //! Decoding errors. A variant that carries `at` gives the absolute byte offset
 //! where the faulty value starts (for a string that is not UTF-8, its first
 //! content byte), so a rejected object can be located exactly. The exceptions,
-//! `UnsupportedFormatVersion`, `ReservedObjectKind` and `UnknownObjectKind`,
-//! carry no offset: they name envelope-header fields at fixed positions, the
+//! `UnsupportedFormatVersion`, `ReservedObjectKind`, `UnknownObjectKind` and
+//! `UnexpectedObjectKind`, carry no offset: they name envelope-header fields at fixed positions, the
 //! format version at byte 0 and the kind at byte 1.
 
 use std::error::Error;
@@ -43,6 +43,8 @@ pub enum DecodeError {
     ReservedObjectKind { kind: u8 },
     /// An object envelope names an invalid or unassigned kind.
     UnknownObjectKind { kind: u8 },
+    /// An envelope holds a defined kind other than the one the caller decodes.
+    UnexpectedObjectKind { expected: u8, found: u8 },
 }
 
 impl fmt::Display for DecodeError {
@@ -89,6 +91,12 @@ impl fmt::Display for DecodeError {
             }
             DecodeError::UnknownObjectKind { kind } => {
                 write!(f, "unknown object kind 0x{kind:02x}")
+            }
+            DecodeError::UnexpectedObjectKind { expected, found } => {
+                write!(
+                    f,
+                    "expected object kind 0x{expected:02x}, found 0x{found:02x}"
+                )
             }
         }
     }

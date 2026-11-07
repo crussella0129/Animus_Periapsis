@@ -38,7 +38,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Installs the toolchain and components pinned in rust-toolchain.toml.
       - run: rustup toolchain install
       - run: cargo ci
@@ -47,7 +47,7 @@ jobs:
     name: cargo deny check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
 "#;
 

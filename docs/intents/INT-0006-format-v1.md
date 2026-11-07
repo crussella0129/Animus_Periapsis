@@ -3,10 +3,10 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0006
 - **State:** active
-- **Work evidence:** [T-002 build plan](../sprints/s0/sprint-plans/build-plan.md#t-002-format-v1-specification), [T-003 build plan](../sprints/s0/sprint-plans/build-plan.md#t-003-algorithm-tagged-hashes-in-the-hash-crate), [T-004 build plan](../sprints/s0/sprint-plans/build-plan.md#t-004-canonical-binary-encoding-in-the-codec-crate), [T-005 build plan](../sprints/s0/sprint-plans/build-plan.md#t-005-golden-corpus-and-spec-consistency), [T-009 backlog](../work/tasks.md)
-- **Completion evidence:** [T-002 completion](../work/completed-tasks.md#t-002-sprint-0), [T-003 completion](../work/completed-tasks.md#t-003-sprint-0), [T-004 completion](../work/completed-tasks.md#t-004-sprint-0), [T-005 completion](../work/completed-tasks.md#t-005-sprint-0)
-- **Code evidence:** [hash crate](../../crates/hash/src/lib.rs), [codec crate](../../crates/codec/src/lib.rs), [golden test](../../crates/codec/tests/golden.rs)
-- **Test evidence:** [Sprint 0 test report](../sprints/s0/sprint-tests/test-report.md)
+- **Work evidence:** [T-002 build plan](../sprints/s0/sprint-plans/build-plan.md#t-002-format-v1-specification), [T-003 build plan](../sprints/s0/sprint-plans/build-plan.md#t-003-algorithm-tagged-hashes-in-the-hash-crate), [T-004 build plan](../sprints/s0/sprint-plans/build-plan.md#t-004-canonical-binary-encoding-in-the-codec-crate), [T-005 build plan](../sprints/s0/sprint-plans/build-plan.md#t-005-golden-corpus-and-spec-consistency), [Sprint 1 T-009 build plan](../sprints/s1/sprint-plans/build-plan.md#t-009-record-sprint-0s-github-actions-runs-and-owner-sign-offs), [Sprint 1 T-001 build plan](../sprints/s1/sprint-plans/build-plan.md#t-001-specify-and-implement-the-provisional-operation-object-kind), [T-010 backlog](../work/tasks.md), [T-012 backlog](../work/tasks.md)
+- **Completion evidence:** [T-002 completion](../work/completed-tasks.md#t-002-sprint-0), [T-003 completion](../work/completed-tasks.md#t-003-sprint-0), [T-004 completion](../work/completed-tasks.md#t-004-sprint-0), [T-005 completion](../work/completed-tasks.md#t-005-sprint-0), [Sprint 1 T-001 completion](../work/completed-tasks.md#t-001-sprint-1)
+- **Code evidence:** [hash crate](../../crates/hash/src/lib.rs), [codec crate](../../crates/codec/src/lib.rs), [golden test](../../crates/codec/tests/golden.rs), [operation.rs](../../crates/codec/src/operation.rs)
+- **Test evidence:** [Sprint 0 test report](../sprints/s0/sprint-tests/test-report.md), [Sprint 0 GitHub Actions record](../sprints/s1/sprint-tests/ci-sprint0.md), [Sprint 1 test report](../sprints/s1/sprint-tests/test-report.md)
 - **Documentation evidence:** [format spec v1](../spec/format-v1.md)
 
 ## Intent
@@ -28,6 +28,17 @@ erasure ops carry erased ids and byte counts); `View` (heads, named pointers
 with conflict states, per-workspace working-copy change); and typed event
 records ([INT-0017](INT-0017-event-records-and-book-view.md)). Trees and every
 index are derived ([INT-0013](INT-0013-derived-data.md)).
+
+A kind's body may first be specified as *provisional*, so storage can be
+built and crash-tested before every field it will carry is designed. A
+provisional encoding is specified, implemented and pinned by golden files
+like any other, but it is excluded from the AC-6 sign-off and from freezing:
+until the Phase 1 exit gate, its spec text, golden files and encoder may
+change together in one commit. Before it freezes it must carry the fields
+the object set above names for it. Sprint 1 specifies `Operation`
+provisionally as its parent ops and the ids of the objects it makes
+reachable; the object ids stand in for the view hash until `View` is
+specified.
 
 Removed from v1: a HEAD/pointer file, separate evolution-marker objects, CRDT
 record operations, and chunk lists in core (R3 §4.1).
@@ -101,8 +112,12 @@ laid out on disk is [INT-0007](INT-0007-crash-safe-storage.md) and
   together in one commit.
 - Derived data must be keyed by algorithm id and version so that a hash
   migration is an explicit derived-data migration (INT-0013).
+- Stores written with a provisional encoding are development stores: a
+  change to that encoding before Phase 1 exit may make them unreadable, and
+  no migration is owed for them.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §3.1 as slimmed by R3 §5).
 - 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-002 to T-005: spec first, then hashes, canonical encoding, golden corpus). After the first plan critique: object identity as the hash of the whole envelope, the reserved-kind error, and staged freezing (what Sprint 0 freezes versus the Phase 1 freeze of format v1) recorded in Intent. After the second plan critique: AC-3's "CI" defined as the canonical suite, locally and in the GitHub matrix; golden values carried as worked examples in the spec; freezing takes effect at the owner's AC-6 sign-off. After the third: the Consequences bullet on encoding changes now distinguishes frozen (signed-off) encodings from unfrozen ones.
 - 2026-10-31: `planned` → `active` (Sprint 0 build, T-002 starts: the spec lands before the code).
+- 2026-11-06: revised while `active`, after the Sprint 1 plan critique (round 1, C-009): Intent defines provisional kinds (specified and pinned, excluded from AC-6 sign-off and freezing until the Phase 1 exit gate, required to carry the object set's fields before freezing) and records that Sprint 1's provisional `Operation` uses the reachable object ids in place of the view hash; Consequences add that stores written with a provisional encoding are development stores.

@@ -21,7 +21,7 @@ use std::env;
 use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 
 const USAGE: &str = "usage: cargo ci | cargo policy   (no flags: both commands are idempotent)";
 
@@ -65,13 +65,108 @@ fn workspace_root() -> PathBuf {
 fn main() -> ExitCode {
     // `args_os`, because `args` panics on an argument that is not Unicode.
     let args: Vec<OsString> = env::args_os().skip(1).collect();
-    let code = cli(
+    let code = guarded(
         &args,
         &workspace_root(),
+        || (env::current_exe(), located_workspace()),
         &mut io::stdout(),
         &mut io::stderr(),
     );
     ExitCode::from(code)
+}
+
+/// `cli`, refused with exit 1 when this binary must not check `root`: see
+/// [`foreign`]. Arguments are validated first, so a usage error still exits
+/// 2; `paths` gives the running executable and the manifest of the current
+/// directory's workspace, and is only asked for a valid command.
+fn guarded(
+    args: &[OsString],
+    root: &Path,
+    paths: impl FnOnce() -> (io::Result<PathBuf>, io::Result<PathBuf>),
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> u8 {
+    if matches!(args, [command] if command == "ci" || command == "policy") {
+        let (exe, located) = paths();
+        if let Some(problem) = foreign(root, exe, located) {
+            writeln!(err, "{problem}").ok();
+            return 1;
+        }
+    }
+    cli(args, root, out, err)
+}
+
+/// Why this xtask binary must not check the checkout at `root`, if it must
+/// not (Sprint 0 test critiques round 3, C-005; round 5, C-006; round 6,
+/// C-008; round 7, C-007):
+///
+/// - the binary is not inside `<root>/target`: the `cargo ci` alias built it
+///   into a target directory outside the checkout (`CARGO_TARGET_DIR` or
+///   `build.target-dir`), where another checkout's build could stand in for
+///   this one's;
+/// - the current directory's workspace is not `root`: the binary was built
+///   for another checkout.
+///
+/// Paths are compared canonicalized, so Windows `\\?\` prefixes and letter
+/// case agree. Anything that cannot be resolved is refused.
+fn foreign(root: &Path, exe: io::Result<PathBuf>, located: io::Result<PathBuf>) -> Option<String> {
+    let canonical = |path: &Path| std::fs::canonicalize(path).ok();
+    let Some(root_dir) = canonical(root) else {
+        return Some(format!(
+            "xtask: cannot resolve its workspace {}",
+            root.display()
+        ));
+    };
+    let target = root.join("target");
+    let exe = exe.ok().and_then(|exe| canonical(&exe));
+    match (&exe, canonical(&target)) {
+        (Some(exe), Some(target_dir)) if exe.starts_with(&target_dir) => {}
+        _ => {
+            return Some(format!(
+                "xtask: {} is not inside {}; a target directory outside the checkout \
+                 (CARGO_TARGET_DIR or build.target-dir) is refused",
+                exe.as_deref()
+                    .map_or("the running executable".into(), |exe| exe
+                        .display()
+                        .to_string()),
+                target.display()
+            ));
+        }
+    }
+    let here = located
+        .ok()
+        .and_then(|manifest| manifest.parent().map(Path::to_path_buf))
+        .and_then(|dir| canonical(&dir));
+    match here {
+        Some(here) if here == root_dir => None,
+        Some(here) => Some(format!(
+            "xtask: built for the checkout at {}, but run in the workspace at {}",
+            root_dir.display(),
+            here.display()
+        )),
+        None => Some(format!(
+            "xtask: the current directory is not in a Cargo workspace; run it in {}",
+            root_dir.display()
+        )),
+    }
+}
+
+/// The root manifest of the current directory's workspace, as
+/// `cargo locate-project --workspace` reports it with the inherited
+/// environment.
+fn located_workspace() -> io::Result<PathBuf> {
+    let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let output = Command::new(cargo)
+        .args(["locate-project", "--workspace", "--message-format", "plain"])
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ));
+    }
+    Ok(PathBuf::from(
+        String::from_utf8_lossy(&output.stdout).trim(),
+    ))
 }
 
 #[cfg(test)]
@@ -81,7 +176,7 @@ mod tests {
     use std::path::Path;
     use std::process::{Command, ExitCode};
 
-    use super::{cli, workspace_root};
+    use super::{cli, foreign, guarded, located_workspace, workspace_root};
 
     const USAGE_LINE: &str =
         "usage: cargo ci | cargo policy   (no flags: both commands are idempotent)\n";
@@ -222,6 +317,86 @@ mod tests {
                 out.contains(&format!("PASS {rule}\n")),
                 "{rule} missing from {out}"
             );
+        }
+    }
+
+    #[test]
+    fn xtask_outside_its_target_dir_is_refused() {
+        let root = workspace_root();
+        let outside = env::temp_dir().join(format!("xtask-outside-{}", std::process::id()));
+        std::fs::write(&outside, b"stand-in executable").unwrap();
+        let located = Ok(root.join("Cargo.toml"));
+        let problem = foreign(&root, Ok(outside.clone()), located).unwrap();
+        let shown = std::fs::canonicalize(&outside).unwrap();
+        assert!(problem.contains(&shown.display().to_string()), "{problem}");
+        assert!(
+            problem.contains(&root.join("target").display().to_string()),
+            "{problem}"
+        );
+        assert!(problem.contains("CARGO_TARGET_DIR"), "{problem}");
+        // An executable that cannot be resolved is refused too.
+        assert!(
+            foreign(
+                &root,
+                Err(std::io::Error::other("gone")),
+                Ok(root.join("Cargo.toml"))
+            )
+            .is_some()
+        );
+        std::fs::remove_file(&outside).unwrap();
+    }
+
+    #[test]
+    fn xtask_for_another_checkout_is_refused() {
+        let root = workspace_root();
+        let exe = env::current_exe();
+        // Another workspace: here, a member directory stands in for it.
+        let other = root.join("crates/hash/Cargo.toml");
+        let problem = foreign(&root, exe, Ok(other)).unwrap();
+        assert!(problem.contains("built for the checkout"), "{problem}");
+        let problem = foreign(
+            &root,
+            env::current_exe(),
+            Err(std::io::Error::other("none")),
+        )
+        .unwrap();
+        assert!(problem.contains("not in a Cargo workspace"), "{problem}");
+    }
+
+    /// The real paths: this test binary lives in `<root>/target` (as `cargo ci`
+    /// builds it, with every CARGO_TARGET_* variable scrubbed), and cargo
+    /// locates this workspace. On Windows the canonical paths carry `\\?\`.
+    #[test]
+    fn xtask_in_its_own_target_dir_runs() {
+        let root = workspace_root();
+        let located = located_workspace();
+        assert!(located.is_ok(), "{located:?}");
+        assert_eq!(foreign(&root, env::current_exe(), located), None);
+    }
+
+    #[test]
+    fn usage_errors_come_before_the_checkout_checks() {
+        let root = workspace_root();
+        let outside = || {
+            (
+                Ok(env::temp_dir().join("no-such-xtask")),
+                Ok(workspace_root().join("Cargo.toml")),
+            )
+        };
+        let run = |args: &[&str]| {
+            let (mut out, mut err) = (Vec::new(), Vec::new());
+            let code = guarded(&os_args(args), &root, outside, &mut out, &mut err);
+            (code, out, String::from_utf8(err).unwrap())
+        };
+        let (code, out, err) = run(&["ci", "--fast"]);
+        assert_eq!((code, err.as_str()), (2, USAGE_LINE));
+        assert!(out.is_empty());
+        // A valid command is refused before anything runs.
+        for command in ["ci", "policy"] {
+            let (code, out, err) = run(&[command]);
+            assert_eq!(code, 1, "{err}");
+            assert!(out.is_empty(), "{command} must not run");
+            assert!(err.contains("is not inside"), "{err}");
         }
     }
 }

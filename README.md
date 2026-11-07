@@ -18,14 +18,18 @@ sprint's research, plans and test evidence are under
 
 ## Status
 
-Phase 0 has started. The format-v1 foundation exists, specified in
-[`docs/spec/format-v1.md`](docs/spec/format-v1.md); nothing user-facing does
-yet.
+Phase 1 storage has started. The format-v1 foundation is specified in
+[`docs/spec/format-v1.md`](docs/spec/format-v1.md). A crash-tested object
+store and op log exist, with one command so far: `praps fsck [DIR]` checks a
+store's files and references.
 
 | Crate | What it does |
 |---|---|
 | `hash` | Algorithm-tagged hashes: BLAKE3 by default, SHA-256 as a second algorithm |
 | `codec` | Canonical binary encoding and object envelopes |
+| `sim` | Filesystem and randomness, real and deterministically simulated with crashes |
+| `store` | The crash-safe object store and op log, with `fsck` |
+| `praps` | The Periapsis command (`praps fsck`) |
 | `book` | Checks the Book's typed acceptance criteria |
 | `xtask` | Project tooling behind `cargo ci` and `cargo policy` |
 

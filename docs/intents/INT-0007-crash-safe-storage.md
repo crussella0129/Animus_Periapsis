@@ -2,12 +2,12 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0007
-- **State:** proposed
-- **Work evidence:** none
-- **Completion evidence:** none
-- **Code evidence:** none
-- **Test evidence:** none
-- **Documentation evidence:** none
+- **State:** active
+- **Work evidence:** [Sprint 1 T-004 build plan](../sprints/s1/sprint-plans/build-plan.md#t-004-object-and-op-file-store-with-derived-heads-and-fsck-in-the-store-crate), [Sprint 1 T-005 build plan](../sprints/s1/sprint-plans/build-plan.md#t-005-crash-matrix-with-negative-controls), [Sprint 1 T-006 build plan](../sprints/s1/sprint-plans/build-plan.md#t-006-fsck-corruption-corpus-and-the-praps-fsck-command), [Sprint 1 T-007 build plan](../sprints/s1/sprint-plans/build-plan.md#t-007-windows-durability-strategy-and-real-filesystem-evidence), [T-011 backlog](../work/tasks.md)
+- **Completion evidence:** [Sprint 1 T-004 completion](../work/completed-tasks.md#t-004-sprint-1), [Sprint 1 T-005 completion](../work/completed-tasks.md#t-005-sprint-1), [Sprint 1 T-006 completion](../work/completed-tasks.md#t-006-sprint-1), [Sprint 1 T-007 completion](../work/completed-tasks.md#t-007-sprint-1)
+- **Code evidence:** [crates/store](../../crates/store/src/lib.rs), [crates/praps](../../crates/praps/src/main.rs)
+- **Test evidence:** [Sprint 1 test report](../sprints/s1/sprint-tests/test-report.md)
+- **Documentation evidence:** [Storage durability](../spec/storage-durability.md)
 
 ## Intent
 The object store and op log never lose an operation acknowledged to its caller
@@ -25,7 +25,7 @@ and referential integrity.
   - Proxy: the INT-0005 crash matrix.
 - **AC-2** `necessary` `empirical` — Every op acknowledged to the caller survives a crash at any later syscall.
   - Threshold: 0 violations across the crash matrix.
-- **AC-3** `necessary` `empirical` — After recovery, op heads recomputed from the op files equal the heads of the last acknowledged state, and the store contains no HEAD or pointer file.
+- **AC-3** `necessary` `empirical` — After recovery, op heads recomputed from the op files equal the heads of the last acknowledged state, extended only by in-flight ops (ops whose commit began but was not acknowledged before the crash, each of which is either wholly present and valid or absent), and the store contains no HEAD or pointer file.
 - **AC-4** `necessary` `empirical` — `fsck` detects every injected corruption (truncated op file, flipped bit in an object, missing referenced object) and reports nothing on healthy repositories.
   - Threshold: 100% detection, 0 false reports, over a corruption corpus.
 - **AC-5** `supporting` `empirical` — At least four processes writing ops concurrently produce no corrupt records and no lost ops, under crash injection.
@@ -57,7 +57,24 @@ and referential integrity.
 - Per-op files mean many small files; compaction and packing become later work.
 - Windows has no POSIX directory fsync, so the durability strategy there needs
   its own design and evidence (INT-0004 AC-5).
+- On-disk names cannot use the `HashRef` text form `<name>:<hex>`: on NTFS a
+  colon names an alternate data stream. Object and op files are named
+  `<algorithm id as two hex digits>-<digest hex>`, which keeps equal digests
+  under different algorithms apart and is legal on Windows and Linux.
+- An object or op that is already present is still synced, with its
+  directory, before an op that depends on it is acknowledged, because another
+  writer may have renamed it without syncing yet.
+- Opening a store for writing syncs its layout, as `init` does: a process
+  that died inside `init` can leave directories that exist but were never
+  made durable. Checking a store (`fsck`) opens it read-only and syncs
+  nothing, so it works on read-only media.
+- The directory holding a root's entry is its parent, or `root/..` for a bare
+  relative name such as `repo` or `.`, whose parent path is empty.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 I.5 step 8 and R2 §3).
 - 2026-11-01: revised while `proposed`, on owner direction: the command is `praps`, short for periapsis, replacing `peri` ([INT-0003](INT-0003-engineering-baseline.md)).
+- 2026-11-06: AC-3 revised while `proposed`, after the Sprint 1 plan critique (round 1, C-005): an op whose commit was interrupted after its file became durable but before it was acknowledged may survive, so the recovered heads are the last acknowledged heads extended only by such in-flight ops, each wholly present and valid or absent. Consequences gain the on-disk name form (C-007) and the rule that an already-present file is synced before a dependent op is acknowledged (C-004).
+- 2026-11-06: `proposed` → `planned` (Sprint 1 build plan T-004 to T-007: the store, the crash matrix, `fsck` and the Windows durability note; AC-5, four writing processes, is deferred to a later sprint).
+- 2026-11-06: `planned` → `active` (Sprint 1 build, T-004 starts: the store crate).
+- 2026-11-06: revised while `active` (Sprint 1 Loop): Consequences record that opening for writing syncs the layout, that `fsck` opens read-only, and how a relative root's parent is found (Sprint 1 code review and test critiques). AC-1 to AC-4 are met by the Sprint 1 test report; AC-5 (four writing processes) remains, so the chapter stays `active`.

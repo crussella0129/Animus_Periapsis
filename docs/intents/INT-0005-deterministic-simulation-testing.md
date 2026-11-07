@@ -3,10 +3,10 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0005
 - **State:** active
-- **Work evidence:** [T-001 build plan](../sprints/s0/sprint-plans/build-plan.md#t-001-workspace-guardrails-policy-checker-and-credits)
-- **Completion evidence:** [T-001 completion](../work/completed-tasks.md#t-001-sprint-0)
-- **Code evidence:** [clippy.toml](../../clippy.toml)
-- **Test evidence:** [Sprint 0 test report](../sprints/s0/sprint-tests/test-report.md)
+- **Work evidence:** [T-001 build plan](../sprints/s0/sprint-plans/build-plan.md#t-001-workspace-guardrails-policy-checker-and-credits), [Sprint 1 T-002 build plan](../sprints/s1/sprint-plans/build-plan.md#t-002-filesystem-and-randomness-traits-in-the-sim-crate), [Sprint 1 T-003 build plan](../sprints/s1/sprint-plans/build-plan.md#t-003-filesystem-boundary-only-sims-real-half-touches-the-real-filesystem), [Sprint 1 T-005 build plan](../sprints/s1/sprint-plans/build-plan.md#t-005-crash-matrix-with-negative-controls), [T-011 backlog](../work/tasks.md)
+- **Completion evidence:** [T-001 completion](../work/completed-tasks.md#t-001-sprint-0), [Sprint 1 T-002 completion](../work/completed-tasks.md#t-002-sprint-1), [Sprint 1 T-003 completion](../work/completed-tasks.md#t-003-sprint-1), [Sprint 1 T-005 completion](../work/completed-tasks.md#t-005-sprint-1)
+- **Code evidence:** [clippy.toml](../../clippy.toml), [crates/sim](../../crates/sim/src/lib.rs), [crash matrix](../../crates/store/tests/common/matrix.rs)
+- **Test evidence:** [Sprint 0 test report](../sprints/s0/sprint-tests/test-report.md), [Sprint 1 test report](../sprints/s1/sprint-tests/test-report.md)
 - **Documentation evidence:** none
 
 ## Intent
@@ -59,8 +59,21 @@ filesystem and clock simulation, the crash matrix and the determinism rules.
   forbids casual `std::fs` use in core crates.
 - The harness must grow with the format: each new durable structure needs
   invariants and at least one negative control.
+- The simulator's lenient mode models an ordered journal: when a file's own
+  entry becomes durable, so does every earlier entry change in its directory.
+  Promoting the one entry alone let an older change to the same name reappear
+  after a crash, an impossible state (Sprint 1 code review). Each pending entry
+  change acts only on the file it was made for.
+- The matrix models whole-system crashes. A process crash with the system
+  still running (unsynced state visible to the next process) is not
+  simulated yet; it belongs with multi-process writers (INT-0007 AC-5).
+- Each durability measure needs its own probe: in Sprint 1 the matrix at
+  first could not tell `put_object`'s sync from `commit_op`'s re-sync, because
+  each masked the other. Acknowledged objects are now checked, and a
+  two-writer scenario exercises the re-sync on its own.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §2.9 and R2-E23).
 - 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-001). The first plan critique noted that `codec` is the first serialised code path, so AC-4's Clippy guard against randomly seeded hash collections lands now, workspace-wide; the simulation work itself stays with the first storage code.
 - 2026-10-31: `planned` → `active` (Sprint 0 build, T-001 starts: the Clippy hash-collection guard).
+- 2026-11-06: revised while `active` (Sprint 1 Loop): Consequences record the lenient mode's ordered-journal model, the unsimulated process crash, and the lesson that each durability measure needs its own probe. AC-1 to AC-4 are met by the Sprint 1 test report; AC-5 (network faults) remains, so the chapter stays `active`.
