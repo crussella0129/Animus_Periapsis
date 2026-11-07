@@ -3,7 +3,7 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0002
 - **State:** active
-- **Work evidence:** [T-006 build plan](../sprints/s0/sprint-plans/build-plan.md#t-006-typed-acceptance-validator-in-the-book-crate), [T-007 build plan](../sprints/s0/sprint-plans/build-plan.md#t-007-canonical-suite-runner-and-ci-workflow), [Sprint 1 T-009 build plan](../sprints/s1/sprint-plans/build-plan.md#t-009-record-sprint-0s-github-actions-runs-and-owner-sign-offs), [T-010 backlog](../work/tasks.md)
+- **Work evidence:** [T-006 build plan](../sprints/s0/sprint-plans/build-plan.md#t-006-typed-acceptance-validator-in-the-book-crate), [T-007 build plan](../sprints/s0/sprint-plans/build-plan.md#t-007-canonical-suite-runner-and-ci-workflow), [Sprint 1 T-009 build plan](../sprints/s1/sprint-plans/build-plan.md#t-009-record-sprint-0s-github-actions-runs-and-owner-sign-offs), [T-010 backlog](../work/tasks.md), [Sprint 2 T-001 build plan](../sprints/s2/sprint-plans/build-plan.md#t-001-record-sprint-1s-github-actions-runs-and-owner-sign-offs)
 - **Completion evidence:** [T-006 completion](../work/completed-tasks.md#t-006-sprint-0), [T-007 completion](../work/completed-tasks.md#t-007-sprint-0)
 - **Code evidence:** [book crate](../../crates/book/src/lib.rs), [book command](../../crates/book/src/main.rs)
 - **Test evidence:** [Sprint 0 test report](../sprints/s0/sprint-tests/test-report.md)

@@ -100,3 +100,6 @@ Build in dependency order, each task with EARS acceptance and tests:
 
 ## Artifacts
 - This report is the only artifact. The Sprint 0 master report it builds on is at [master-report-v6.md](../../s0/sprint-research/master-report-v6.md).
+
+## Revision note
+After the plan critique (rounds 1 and 2), `praps new` moved into scope: it starts a child working-copy change without writing working-copy files, so `status` has a real parent and `M` and `D` occur. Writing working-copy files (checkout, `undo`, conflicts) stays out of scope. The plans are authoritative for the sprint's scope.

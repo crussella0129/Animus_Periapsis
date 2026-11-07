@@ -66,6 +66,12 @@ resolution policy lives in [INT-0011](INT-0011-change-identity-and-rewriting.md)
   AC-3); this intent covers views and pointers.
 - Once formal obligations exist they must be re-established whenever the merge
   changes (proof maintenance is a feature: it localises regressions).
+- Until this intent's merge is built, commands that find several op heads stop
+  and name them (Sprint 2,
+  [INT-0014](INT-0014-working-copy-and-workspaces.md) Consequences). That
+  contradicts this Intent's "no command fails because of another writer"; the
+  gap closes when the canonical merge lands.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §3.3, R1-E12, R4 and R5 §A.7).
+- 2026-11-07: revised while `proposed` (Sprint 2 plan critique, round 1): Consequences record the interim several-heads stop and that it contradicts this Intent until the canonical merge lands.
