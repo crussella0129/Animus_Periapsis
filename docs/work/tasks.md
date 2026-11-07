@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-006 (sprint 2) [intent: INT-0014]: praps init, praps new and praps status — touches: crates/praps/, Cargo.lock
 - [ ] T-007 (sprint 2) [intent: INT-0005, INT-0014, INT-0007]: Snapshot crash scenario and edit corpora — touches: crates/workspace/
 - [ ] T-008 (sprint 2) [intent: INT-0014, INT-0003, INT-0006]: Working-copy spec, README, credits and backlog — touches: docs/spec/working-copy.md, docs/SUMMARY.md, README.md, docs/prior-art.md, docs/work/tasks.md
 - [ ] T-011 (backlog) [intent: INT-0007, INT-0005]: Writers in separate processes (INT-0007 AC-5, at least four, under crash injection), together with a simulated process crash in which a later process sees the crashed one's unsynced state before the system crash resolves it — touches: crates/sim/, crates/store/

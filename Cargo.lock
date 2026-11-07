@@ -299,6 +299,7 @@ dependencies = [
  "hash",
  "sim",
  "store",
+ "workspace",
 ]
 
 [[package]]

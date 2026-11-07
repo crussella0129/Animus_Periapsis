@@ -12,6 +12,7 @@ publish.workspace = true
 hash.workspace = true
 sim.workspace = true
 store.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
 codec.workspace = true

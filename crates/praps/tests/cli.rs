@@ -1,4 +1,5 @@
-//! `praps fsck` on real stores (INT-0007 AC-4; exit codes 0, 1 and 2). These
+//! `praps` on real stores and working copies (INT-0007 AC-4, INT-0014 AC-1;
+//! exit codes 0, 1 and 2). These
 //! tests corrupt files by hand, so they use `std::fs`, which the
 //! filesystem boundary allows in `tests/` only.
 #![allow(clippy::disallowed_methods, clippy::disallowed_types)]
@@ -156,7 +157,10 @@ fn fsck_lists_corrupt_files_and_exits_one() {
         .unwrap();
     let output = praps(&["fsck", "repo"], &repo.dir);
     assert_eq!(code(&output), 0, "{output:?}");
-    assert!(stdout(&output).contains("temporary file"));
+    assert!(
+        stdout(&output).contains("tmp-0000000000000000: left by an interrupted write"),
+        "{output:?}"
+    );
 }
 
 #[test]
@@ -187,8 +191,201 @@ fn usage_errors_exit_two() {
         assert_eq!(code(&output), 2, "{args:?}: {output:?}");
         assert!(output.stdout.is_empty(), "{args:?}");
         assert!(
-            String::from_utf8_lossy(&output.stderr).starts_with("usage: praps fsck"),
+            String::from_utf8_lossy(&output.stderr).starts_with("usage: praps "),
             "{args:?}"
         );
     }
+}
+
+// ------------------------------------------------- init, new, status (T-006)
+
+fn write(root: &Path, path: &str, content: &[u8]) {
+    let file = path.split('/').fold(root.to_path_buf(), |p, c| p.join(c));
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(file, content).unwrap();
+}
+
+fn lines(output: &Output) -> Vec<String> {
+    stdout(output).lines().map(str::to_owned).collect()
+}
+
+#[test]
+fn praps_init_creates_a_repository() {
+    let dir = claim("init");
+    let output = praps(&["init", "repo"], &dir);
+    assert_eq!(code(&output), 0, "{output:?}");
+    assert!(stdout(&output).starts_with("initialised a Periapsis repository"));
+    assert!(dir.join("repo/.praps/store/objects").is_dir());
+    assert!(dir.join("repo/.praps/store/ops").is_dir());
+    // Without DIR, the current directory.
+    let here = dir.join("here");
+    fs::create_dir(&here).unwrap();
+    assert_eq!(code(&praps(&["init"], &here)), 0);
+    assert!(here.join(".praps/store/ops").is_dir());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn praps_init_is_idempotent() {
+    let dir = claim("init-again");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    let before = tree(&dir.join("repo"));
+    let output = praps(&["init", "repo"], &dir);
+    assert_eq!(code(&output), 0);
+    assert!(stdout(&output).contains("already a Periapsis repository"));
+    assert_eq!(tree(&dir.join("repo")), before, "nothing written");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn praps_new_prints_a_change_id() {
+    let dir = claim("new");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    write(&root, "f", b"x");
+    let first = praps(&["new"], &root);
+    let second = praps(&["new", "repo"], &dir);
+    for output in [&first, &second] {
+        assert_eq!(code(output), 0, "{output:?}");
+        let text = stdout(output);
+        let hex = text.trim().strip_prefix("new change ").unwrap();
+        assert_eq!(hex.len(), 32, "{text}");
+        assert!(hex.bytes().all(|b| b.is_ascii_hexdigit()));
+    }
+    assert_ne!(
+        stdout(&first),
+        stdout(&second),
+        "each change gets its own ID"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn praps_status_lists_changes() {
+    let dir = claim("status");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    write(&root, "keep", b"k");
+    write(&root, "edit", b"1");
+    write(&root, "drop", b"d");
+    write(&root, ".gitignore", b"*.o\n");
+    write(&root, "x.o", b"ignored");
+    let output = praps(&["status", "repo"], &dir);
+    assert_eq!(code(&output), 0, "{output:?}");
+    assert_eq!(
+        lines(&output),
+        ["A .gitignore", "A drop", "A edit", "A keep"]
+    );
+    assert_eq!(code(&praps(&["new", "repo"], &dir)), 0);
+    write(&root, "edit", b"2");
+    fs::remove_file(root.join("drop")).unwrap();
+    write(&root, "sub/added", b"a");
+    let output = praps(&["status"], &root);
+    assert_eq!(code(&output), 0, "{output:?}");
+    assert_eq!(lines(&output), ["D drop", "M edit", "A sub/added"]);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn praps_status_outside_a_repository_fails() {
+    let dir = claim("status-outside");
+    for args in [&["status"][..], &["new"][..], &["status", "nowhere"][..]] {
+        let output = praps(args, &dir);
+        assert_eq!(code(&output), 1, "{args:?}: {output:?}");
+        assert!(output.stdout.is_empty());
+        let err = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            err.contains("not an initialised Periapsis repository"),
+            "{err}"
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Two ops with the same parent: `status` stops, names both heads and exits
+/// 1 (until INT-0010's merge).
+#[test]
+fn praps_status_with_several_heads_fails() {
+    let dir = claim("heads");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    let mut store = Store::open(RealFs, &root.join(".praps/store"), HashAlg::DEFAULT, 5).unwrap();
+    let head = *store.heads().unwrap().first().unwrap();
+    let view = store.ops().unwrap()[&head].view;
+    let a = store
+        .commit_op(&Operation {
+            parents: [head].into(),
+            view,
+        })
+        .unwrap();
+    let mut other = View::from_envelope(&store.get_object(&view).unwrap()).unwrap();
+    other
+        .workspaces
+        .insert("other".to_owned(), other.workspaces["default"]);
+    let other = store.put_object(&other.to_envelope()).unwrap();
+    let b = store
+        .commit_op(&Operation {
+            parents: [head].into(),
+            view: other,
+        })
+        .unwrap();
+    let output = praps(&["status", "repo"], &dir);
+    assert_eq!(code(&output), 1, "{output:?}");
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(err.contains("2 heads"), "{err}");
+    assert!(
+        err.contains(&a.to_string()) && err.contains(&b.to_string()),
+        "{err}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn praps_fsck_checks_a_working_copy() {
+    let dir = claim("fsck-wc");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    write(&root, "f", b"x");
+    assert_eq!(code(&praps(&["status", "repo"], &dir)), 0);
+    let output = praps(&["fsck", "repo"], &dir);
+    assert_eq!(code(&output), 0, "{output:?}");
+    assert_eq!(stdout(&output).trim(), "clean");
+    // Corrupt one object of the repository's store: fsck on the working copy
+    // finds it.
+    let objects = root.join(".praps/store/objects");
+    let victim = fs::read_dir(&objects)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut bytes = fs::read(&victim).unwrap();
+    *bytes.last_mut().unwrap() ^= 0x01;
+    fs::write(&victim, &bytes).unwrap();
+    let output = praps(&["fsck"], &root);
+    assert_eq!(code(&output), 1, "{output:?}");
+    assert!(stdout(&output).contains("does not hash to its name"));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn praps_rejects_flags_and_extra_arguments() {
+    let dir = claim("flags");
+    for args in [
+        &["init", "--bare"][..],
+        &["status", "-s"][..],
+        &["new", "-m", "message"][..],
+        &["status", "a", "b"][..],
+        &["init", "a", "b"][..],
+        &["snapshot"][..],
+    ] {
+        let output = praps(args, &dir);
+        assert_eq!(code(&output), 2, "{args:?}: {output:?}");
+        assert!(output.stdout.is_empty());
+    }
+    assert!(
+        fs::read_dir(&dir).unwrap().next().is_none(),
+        "nothing created"
+    );
+    let _ = fs::remove_dir_all(&dir);
 }
