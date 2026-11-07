@@ -1,12 +1,14 @@
 # The working copy
 
-This is how Periapsis records a working copy, as built in Sprint 2. It
+This is how Periapsis records a working copy, as built in Sprint 2, and writes one, as built in Sprint 3. It
 realises [INT-0014](../intents/INT-0014-working-copy-and-workspaces.md) AC-1
 and AC-2 and [INT-0004](../intents/INT-0004-windows-and-linux.md) AC-2 and
 AC-7, on the provisional `changeset` and `view` kinds of
 [format v1](format-v1.md). The `workspace` crate implements it, through
-`sim::Fs`. Writing to the working copy (checkout, conflicts), several
-workspaces and the stat cache come later.
+`sim::Fs`. Sprint 3 adds writing the working copy for `undo` and
+`restore` ([Writing the working copy](#writing-the-working-copy)) and INT-0004
+AC-3 and AC-4. Checkout of another change, conflicts, several workspaces and
+the stat cache come later.
 
 ## Layout
 
@@ -148,6 +150,152 @@ Where files carry an owner-execute bit (Linux), the snapshot records
 file keeps the mode that the working-copy change, or else its parent, last
 recorded, and a new file is recorded as `regular`. A checkout made on Linux
 therefore keeps its executable bits when edited on Windows.
+
+## Writing the working copy
+
+Sprint 3 adds the commands that write files: `undo` and `restore`
+([INT-0009](../intents/INT-0009-reversible-by-default.md)). Each moves the
+working copy from a tree F, the working-copy change after the command's
+opening snapshot, to a tree T, the working-copy change of a target view.
+This is called *materialising* F → T.
+
+### History commands
+
+- **`log`** snapshots, then lists every op, newest first: its id, parents and
+  working-copy change. "Newest first" means a topological order, children
+  before parents, ties broken by id.
+- **`undo`** takes H, the single op head when the command starts, before its
+  snapshot. It then snapshots. If H has no parent, it fails with "nothing to
+  undo", having written only that snapshot. Otherwise the target view is the
+  view object of H's parent. A second `undo` restores the view before the
+  first, so `undo` toggles. The edits a snapshot captured stay reachable by
+  `restore`.
+- **`restore OP`** snapshots, then takes OP's view as the target. OP is an op
+  id in text form or a unique prefix of its hex digest (with or without the
+  `blake3:` part). A prefix that matches no op, or several, is an error
+  listing the candidates, written after the snapshot only.
+
+Both `undo` and `restore` then:
+1. check hazards and blocking entries (below), failing with nothing more
+   written;
+2. write the record;
+3. commit an op whose single parent is the head after the snapshot and whose
+   view is the target view, the exact view object, unchanged;
+4. materialise F → T.
+
+No command removes an op (INT-0009 AC-1).
+
+### The record
+
+`.praps/working-copy` holds two lines, `from <op>` and `target <op>`, each
+op id in its text form. `from` is the head after the snapshot, whose
+working-copy tree is F. `target` is the op step 3 commits, whose view's
+working-copy tree is T. The target op's id is computed from its envelope
+before it is committed.
+
+The record is written as `.praps/working-copy.new` (replacing any left
+over), synced, renamed to `.praps/working-copy`, and then `.praps` is synced,
+all before the target op is committed. A record exists only while a write is
+in flight. One that does not decode is a `Corrupt` error.
+
+### Classifying paths
+
+"Matches F" means the file's bytes equal F's version and, where the
+filesystem has an executable bit, so does its mode. Each path in F or T, or
+present on disk, falls into one class:
+- **to remove:** tracked by F, not by T, and still matching F;
+- **to write:** in T with an entry different from F's, and either matching F
+  or absent where F has none;
+- **done:** already equal to T's entry, or absent where T has none, as after
+  a partial run. Nothing is done and nothing is noted;
+- **kept:** everything else. It is a user edit and is left as it is, for the
+  next snapshot.
+
+The F→T diff is the sorted list of paths whose entry differs between F and
+T. The *n*th path of the diff (from 0) has the temporary name
+`.praps-tmp-<n>` in its own directory. The name is a pure function of F and
+T, so a resumed run uses the same names. No name is ignored by snapshots: a
+user's file called `.praps-tmp-1` is tracked like any other.
+
+An *F-owned* entry is any of these:
+- a path to remove;
+- a directory holding only paths to remove;
+- an empty directory where F had files and T has none.
+
+A *blocking* entry is any of the following that is not F-owned:
+- an entry at a path to write;
+- an entry where a path to write needs a directory;
+- a directory where a path to write needs a file;
+- an entry, or any F or T path, equal to a temporary name this run needs.
+  On a case-insensitive filesystem, "equal" ignores case.
+
+Blocking entries are refused like hazards, before anything is written.
+
+### Hazards
+
+The naming rules come from `Fs::name_rules`. They are checked for every
+component of each path to write, and of each directory to create. Paths that
+stay unchanged are not checked, so a tracked file with a hazardous name never
+blocks `undo`.
+
+- **Case-insensitive filesystems.** Two names are equal if they match under
+  `to_lowercase` or under `to_uppercase`. This test is deliberately
+  conservative. A hazard is either of:
+  - two such components that are equal yet spelled differently, among T's
+    paths;
+  - such a component that equals an existing entry spelled differently in
+    the same directory.
+
+  The second case includes a case-only rename, which is refused as a known
+  limit (backlog T-016).
+- **Windows names.** A hazard is a component with any of:
+  - a character from `<>:"|?*`, or a code below 32;
+  - a trailing `.` or space;
+  - a reserved base name. The base is the part before the first `.`, with
+    trailing spaces removed, compared ignoring case. The reserved bases are
+    `CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, `COM0` to `COM9`,
+    `LPT0` to `LPT9`, and `COM` or `LPT` followed by `¹`, `²` or `³`.
+
+A command that finds a hazard fails with an error naming every offending
+path. Its only write is its opening snapshot.
+
+### Materialise
+
+With nothing blocking, materialise does the following, in order:
+1. remove the paths to remove, then sync each parent directory touched;
+2. remove the emptied directories (empty, holding no T path, where F had
+   files), deepest first: sync the directory, remove it, sync its parent;
+3. create missing directories, shallowest first, syncing each parent;
+4. write each path to write through its temporary name: create it, write
+   T's bytes, set the executable bit, `sync_file`, rename over the path;
+5. sync every touched directory;
+6. remove the record;
+7. sync `.praps`.
+
+Setting the bit before the rename means T's bytes never appear with F's
+mode. Where files have no executable bit, setting it does nothing, and the
+mode is kept as described in [The executable bit](#the-executable-bit).
+
+### Resume
+
+Every command that opens the working copy (every one but `init`) first looks
+for a record:
+- **The target op is the current single head.** Resume removes the diff's
+  temporary names that exist, then materialises F → T again with the same
+  rules. A path that still blocks, or has since become a hazard (a case
+  variant created after the crash, say), does not fail the command. Resume
+  finishes every other path, drops the record, and adds a note naming the
+  paths it left as they are.
+- **The target op is absent.** The files were never touched. Resume drops
+  the record and touches no file.
+- **The target op is present but not the head.** Resume removes the diff's
+  temporary names that exist, drops the record, touches no other file, and
+  adds a note.
+
+Dropping the record means removing it and syncing `.praps`. While a record
+exists, its diff's temporary names belong to `praps`. Notes are returned by
+`Workspace::notes()`, and `praps` prints each on stderr as `note: …`. `init`
+never resumes, so a repeated `init` still writes nothing.
 
 ## Costs deferred to the stat cache
 

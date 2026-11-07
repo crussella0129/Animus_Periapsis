@@ -2,12 +2,12 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0009
-- **State:** planned
+- **State:** active
 - **Work evidence:** [Sprint 3 T-004 build plan](../sprints/s3/sprint-plans/build-plan.md#t-004-specify-writing-the-working-copy-undo-restore-and-log), [Sprint 3 T-006 build plan](../sprints/s3/sprint-plans/build-plan.md#t-006-materialise-the-working-copy-record-and-resume), [Sprint 3 T-007 build plan](../sprints/s3/sprint-plans/build-plan.md#t-007-log-undo-and-restore-in-workspace), [Sprint 3 T-008 build plan](../sprints/s3/sprint-plans/build-plan.md#t-008-praps-log-praps-undo-and-praps-restore-op), [Sprint 3 T-009 build plan](../sprints/s3/sprint-plans/build-plan.md#t-009-reversibility-and-hazard-corpora-the-materialise-crash-scenario-and-the-extended-edit-corpus), [Sprint 3 T-010 build plan](../sprints/s3/sprint-plans/build-plan.md#t-010-readme-credits-and-backlog)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none
-- **Documentation evidence:** none
+- **Documentation evidence:** [working-copy spec](../spec/working-copy.md#writing-the-working-copy)
 
 ## Intent
 Every operation that is not an explicit erasure is injective on repository
@@ -73,3 +73,4 @@ byte counts.
 - 2026-11-07: revised while `proposed` (Sprint 3 Plan): Consequences record that `undo` and `restore` are themselves operations (undo toggles; edits stay reachable) and that writing the working copy is journalled by a record in `.praps/`.
 - 2026-11-07: `proposed` → `planned` (Sprint 3 build plan T-004 to T-008: AC-1 to AC-3; AC-4 and AC-5 wait for signed erasure and partial clones).
 - 2026-11-07: revised while `planned` (Sprint 3 plan critique, round 1, C-001): the `undo` Consequence names H as the head at the command's start, before its snapshot.
+- 2026-11-07: `planned` → `active` (Sprint 3 build, T-004 starts: the working-copy spec for undo, restore and log).
