@@ -1,5 +1,12 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-010 (backlog) [intent: INT-0001, INT-0002, INT-0003, INT-0004, INT-0006]: Record the Sprint 1 checkpoint's GitHub Actions run (head SHA, both matrix legs with the crash matrix's counts and `cargo ci` results, the `deny` job, runner OS and `rustc`) and the owner's sign-offs: INT-0001 AC-1, INT-0002 AC-1, INT-0003 AC-5, INT-0006 AC-6 (Sprint 0's frozen sections), INT-0004 AC-5 (the Windows durability strategy) — touches: docs/sprints/s2/, docs/intents/
+- [ ] T-001 (sprint 2) [intent: INT-0003, INT-0004, INT-0006, INT-0001, INT-0002]: Record Sprint 1's GitHub Actions runs and owner sign-offs (absorbs former backlog T-010) — touches: docs/sprints/s2/sprint-tests/ci-sprint1.md, docs/intents/, docs/work/tasks.md
+- [ ] T-002 (sprint 2) [intent: INT-0006]: Specify and implement the provisional changeset and view kinds and repository paths — touches: docs/spec/format-v1.md, crates/codec/
+- [ ] T-003 (sprint 2) [intent: INT-0006, INT-0007, INT-0005]: The operation names its view; closure through references inside objects (part of backlog T-012) — touches: docs/spec/, crates/codec/, crates/store/, crates/praps/tests/cli.rs
+- [ ] T-004 (sprint 2) [intent: INT-0005, INT-0004]: A scan syscall, an executable-bit capability and operating-system randomness in sim — touches: crates/sim/, crates/store/tests/common/matrix.rs, crates/xtask/src/policy.rs, Cargo.toml, Cargo.lock
+- [ ] T-005 (sprint 2) [intent: INT-0014, INT-0004, INT-0013]: The workspace crate: init, snapshot, new and status — touches: crates/workspace/, crates/xtask/src/policy.rs, Cargo.toml, Cargo.lock
+- [ ] T-006 (sprint 2) [intent: INT-0014]: praps init, praps new and praps status — touches: crates/praps/, Cargo.lock
+- [ ] T-007 (sprint 2) [intent: INT-0005, INT-0014, INT-0007]: Snapshot crash scenario and edit corpora — touches: crates/workspace/
+- [ ] T-008 (sprint 2) [intent: INT-0014, INT-0003, INT-0006]: Working-copy spec, README, credits and backlog — touches: docs/spec/working-copy.md, docs/SUMMARY.md, README.md, docs/prior-art.md, docs/work/tasks.md
 - [ ] T-011 (backlog) [intent: INT-0007, INT-0005]: Writers in separate processes (INT-0007 AC-5, at least four, under crash injection), together with a simulated process crash in which a later process sees the crashed one's unsynced state before the system crash resolves it — touches: crates/sim/, crates/store/
 - [ ] T-012 (backlog) [intent: INT-0006]: Give the provisional `operation` body the fields INT-0006 names for it (view hash, actor, advisory wall clock, signature) once `view` (INT-0014) and signing (INT-0016) are specified, before the Phase 1 exit gate freezes format v1 — touches: docs/spec/format-v1.md, crates/codec/
