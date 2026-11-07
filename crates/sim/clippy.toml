@@ -7,6 +7,7 @@
 disallowed-types = [
     { path = "std::collections::HashMap", reason = "randomly seeded; use BTreeMap or a seeded hasher (INT-0005 AC-4)" },
     { path = "std::collections::HashSet", reason = "randomly seeded; use BTreeSet or a seeded hasher (INT-0005 AC-4)" },
+    { path = "std::hash::RandomState", reason = "randomly seeded; use a seeded hasher (INT-0005 AC-4)" },
     { path = "std::fs::File", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
     { path = "std::fs::OpenOptions", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
     { path = "std::fs::DirBuilder", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },

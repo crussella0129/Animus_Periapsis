@@ -62,6 +62,13 @@ const OS_RANDOM_METHODS: [&str; 4] = [
     "getrandom::u32",
     "getrandom::u64",
 ];
+/// Randomly seeded standard types every boundary crate's Clippy config must
+/// disallow (Sprint 2 code review CR-07).
+const RANDOM_TYPES: [&str; 1] = ["std::hash::RandomState"];
+/// Crates that draw operating-system randomness, which no boundary crate but
+/// `sim` may reach through its normal dependencies (Sprint 2 code review
+/// CR-07).
+const OS_RANDOM_CRATES: [&str; 4] = ["getrandom", "rand", "uuid", "fastrand"];
 /// The `ignore` crate's types and functions that read the real filesystem,
 /// which a boundary crate depending on it must disallow: it may only feed
 /// `GitignoreBuilder::add_line` with lines read through `sim::Fs`.
@@ -401,7 +408,129 @@ fn deps(root: &Path, members: &[PathBuf]) -> Vec<String> {
         }
         problems
     }));
+    problems.extend(transitive_randomness(root, members));
     problems
+}
+
+/// No boundary crate but `sim` reaches an operating-system randomness crate
+/// through normal dependencies (Sprint 2 code review CR-07). Members' edges
+/// come from their manifests' `[dependencies]` tables, target-specific ones
+/// included, with each key resolved to its package through `package` or the
+/// workspace table; registry crates' edges come from `Cargo.lock`, whose
+/// entries may read `"name"` or `"name version"`. Dev and build dependencies
+/// of members are not edges, and an edge into `sim`, the crate that owns
+/// operating-system randomness, is not followed.
+fn transitive_randomness(root: &Path, members: &[PathBuf]) -> Vec<String> {
+    let owner = OS_RANDOM.1;
+    let Ok(workspace) = parse(root, &root.join("Cargo.toml")) else {
+        return Vec::new(); // `deps` already reports it.
+    };
+    let mut aliases = BTreeMap::new();
+    if let Some(entries) =
+        lookup(workspace.as_item(), &["workspace", "dependencies"]).and_then(Item::as_table_like)
+    {
+        for (key, entry) in entries.iter() {
+            let package = lookup(entry, &["package"])
+                .and_then(Item::as_str)
+                .unwrap_or(key);
+            aliases.insert(key.to_owned(), package.to_owned());
+        }
+    }
+    // Each member's package name, and the packages its normal dependencies
+    // name.
+    let mut member_edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for dir in members {
+        let Ok(manifest) = parse(root, &dir.join("Cargo.toml")) else {
+            continue;
+        };
+        let Some(name) = lookup(manifest.as_item(), &["package", "name"]).and_then(Item::as_str)
+        else {
+            continue;
+        };
+        let mut edges = Vec::new();
+        for (table, entries) in dependency_tables(&manifest) {
+            if !(table == "dependencies" || table.ends_with(".dependencies")) {
+                continue;
+            }
+            for (key, entry) in entries.iter() {
+                let package = match lookup(entry, &["package"]).and_then(Item::as_str) {
+                    Some(package) => package.to_owned(),
+                    None if is_true(entry, &["workspace"]) => {
+                        aliases.get(key).cloned().unwrap_or_else(|| key.to_owned())
+                    }
+                    None => key.to_owned(),
+                };
+                edges.push(package);
+            }
+        }
+        member_edges.insert(name.to_owned(), edges);
+    }
+    let lock_edges = match lock_edges(root) {
+        Ok(edges) => edges,
+        Err(problem) => return vec![problem],
+    };
+    let mut problems = Vec::new();
+    for start in FS_BOUNDARY_CRATES.into_iter().filter(|name| *name != owner) {
+        if !member_edges.contains_key(start) {
+            continue;
+        }
+        // Breadth first, so each reported route is a shortest one.
+        let mut routes: BTreeMap<String, Vec<String>> =
+            BTreeMap::from([(start.to_owned(), vec![start.to_owned()])]);
+        let mut queue = std::collections::VecDeque::from([start.to_owned()]);
+        while let Some(node) = queue.pop_front() {
+            let route = routes[&node].clone();
+            let next: &[String] = match member_edges.get(&node) {
+                Some(edges) => edges,
+                None => lock_edges.get(&node).map(Vec::as_slice).unwrap_or_default(),
+            };
+            for package in next {
+                if package == owner || routes.contains_key(package) {
+                    continue;
+                }
+                let mut longer = route.clone();
+                longer.push(package.clone());
+                if OS_RANDOM_CRATES.contains(&package.as_str()) {
+                    problems.push(format!(
+                        "{start} reaches `{package}` through {}; only `{owner}` may \
+                         (INT-0005 AC-1)",
+                        longer.join(" → ")
+                    ));
+                }
+                routes.insert(package.clone(), longer);
+                queue.push_back(package.clone());
+            }
+        }
+    }
+    problems
+}
+
+/// Every package's dependencies in `Cargo.lock`, by package name, versions
+/// merged: an entry reads `"name"`, `"name version"` or
+/// `"name version (source)"`.
+fn lock_edges(root: &Path) -> Result<BTreeMap<String, Vec<String>>, String> {
+    let mut edges: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let path = root.join("Cargo.lock");
+    if !path.is_file() {
+        return Ok(edges); // `lockfile` reports it.
+    }
+    let lock = parse(root, &path)?;
+    let Some(packages) = lock.get("package").and_then(Item::as_array_of_tables) else {
+        return Ok(edges);
+    };
+    for package in packages.iter() {
+        let Some(name) = package.get("name").and_then(Item::as_str) else {
+            continue;
+        };
+        let entry = edges.entry(name.to_owned()).or_default();
+        for dependency in strings(&Item::Table(package.clone()), &["dependencies"]) {
+            let dependency = dependency.split(' ').next().unwrap_or_default().to_owned();
+            if !entry.contains(&dependency) {
+                entry.push(dependency);
+            }
+        }
+    }
+    Ok(edges)
 }
 
 /// Every third-party workspace dependency has a complete row in the
@@ -572,6 +701,7 @@ fn fs_boundary(root: &Path, members: &[PathBuf]) -> Vec<String> {
                     };
                     for (key, banned) in [
                         ("disallowed-types", &FS_TYPES[..]),
+                        ("disallowed-types", &RANDOM_TYPES[..]),
                         ("disallowed-methods", &FS_METHODS[..]),
                         ("disallowed-methods", &OS_RANDOM_METHODS[..]),
                     ]
@@ -1767,6 +1897,7 @@ mod tests {
         let types: Vec<String> = super::DISALLOWED
             .iter()
             .chain(super::FS_TYPES.iter())
+            .chain(super::RANDOM_TYPES.iter())
             .filter(|path| **path != without)
             .map(|path| format!("  \"{path}\",\n"))
             .collect();
@@ -2066,6 +2197,150 @@ mod tests {
         {
             with(&format!("random-{i}"), member_name, dependency)
                 .fails_exactly(&["deps"], &["only `sim` may", member_name]);
+        }
+    }
+
+    /// A boundary config without the `RandomState` ban fails `fs-boundary`
+    /// (Sprint 3 T-002).
+    #[test]
+    fn policy_requires_the_random_state_ban() {
+        let fixture = Fixture::new("random-state");
+        fixture.write("crates/store/Cargo.toml", &member("store", ""));
+        fixture.write("crates/store/src/lib.rs", "#![forbid(unsafe_code)]\n");
+        fixture.write("crates/store/clippy.toml", &boundary_config(""));
+        fixture.passes();
+        fixture.write(
+            "crates/store/clippy.toml",
+            &boundary_config("std::hash::RandomState"),
+        );
+        fixture.fails_only("fs-boundary", "std::hash::RandomState");
+    }
+
+    /// No boundary crate but `sim` reaches a randomness crate through normal
+    /// dependencies, by any route (Sprint 3 T-002).
+    #[test]
+    fn policy_rejects_transitive_randomness() {
+        const LOCK: &str = "version = 4\n\n\
+            [[package]]\nname = \"x\"\nversion = \"1.0.0\"\ndependencies = [\"rand 0.9.0\"]\n\n\
+            [[package]]\nname = \"y\"\nversion = \"1.0.0\"\ndependencies = [\"fastrand\"]\n\n\
+            [[package]]\nname = \"rand\"\nversion = \"0.9.0\"\n\n\
+            [[package]]\nname = \"fastrand\"\nversion = \"2.3.0\"\n\n\
+            [[package]]\nname = \"getrandom\"\nversion = \"0.4.3\"\n\n\
+            [[package]]\nname = \"proptest\"\nversion = \"1.0.0\"\ndependencies = [\"rand\"]\n";
+        // A fixture whose `store` has `dependencies` (one line per entry) in
+        // `table`, with `extra` added to the workspace table.
+        let with = |name: &str, table: &str, dependencies: &str, extra: &str| {
+            let fixture = Fixture::new(name);
+            fixture.write(
+                "Cargo.toml",
+                &replace(
+                    WORKSPACE,
+                    "hash = { path = \"crates/hash\" }\n",
+                    &format!(
+                        "hash = {{ path = \"crates/hash\" }}\nsim = {{ path = \"crates/sim\" }}\n\
+                         store = {{ path = \"crates/store\" }}\nx = \"1\"\ny = \"1\"\n\
+                         proptest = \"1\"\ngetrandom = \"0.4.3\"\n{extra}"
+                    ),
+                ),
+            );
+            fixture.write("Cargo.lock", LOCK);
+            fixture.write(
+                "crates/store/Cargo.toml",
+                &format!(
+                    "[package]\nname = \"store\"\npublish.workspace = true\n\n[{table}]\n{dependencies}\n\n\
+                     [lints]\nworkspace = true\n"
+                ),
+            );
+            fixture.write("crates/store/src/lib.rs", "#![forbid(unsafe_code)]\n");
+            fixture.write("crates/store/clippy.toml", &boundary_config(""));
+            fixture.write(
+                "crates/sim/Cargo.toml",
+                &member("sim", "getrandom.workspace = true"),
+            );
+            fixture.write("crates/sim/src/lib.rs", "#![forbid(unsafe_code)]\n");
+            fixture.write("crates/sim/clippy.toml", &boundary_config(""));
+            fixture
+        };
+        // The problems of `deps` alone: other rules (credits for the
+        // fixture's registry crates) are not under test.
+        let deps = |fixture: &Fixture| -> Vec<String> {
+            fixture
+                .failures()
+                .into_iter()
+                .find(|(rule, _)| *rule == "deps")
+                .map(|(_, problems)| problems)
+                .unwrap_or_default()
+        };
+        let fails = |fixture: Fixture, needles: &[&str]| {
+            let problems = deps(&fixture);
+            assert!(
+                problems
+                    .iter()
+                    .any(|p| needles.iter().all(|n| p.contains(n))),
+                "{problems:?} should mention {needles:?}"
+            );
+        };
+        let deps_table = "dependencies";
+        fails(
+            with("rand-registry", deps_table, "x.workspace = true", ""),
+            &["store → x → rand", "only `sim` may"],
+        );
+        fails(
+            with(
+                "rand-renamed",
+                deps_table,
+                "z = { workspace = true, package = \"x\" }",
+                "",
+            ),
+            &["store → x → rand"],
+        );
+        fails(
+            with(
+                "rand-alias",
+                deps_table,
+                "w.workspace = true",
+                "w = { version = \"1\", package = \"x\" }\n",
+            ),
+            &["store → x → rand"],
+        );
+        fails(
+            with(
+                "rand-target",
+                "target.'cfg(windows)'.dependencies",
+                "x.workspace = true",
+                "",
+            ),
+            &["store → x → rand"],
+        );
+        fails(
+            with("fastrand", deps_table, "y.workspace = true", ""),
+            &["store → y → fastrand"],
+        );
+        // `"rand 0.9.0"` in x's entry is a `"name version"` entry; this one
+        // spells the source too.
+        let fixture = with("rand-source", deps_table, "x.workspace = true", "");
+        fixture.write(
+            "Cargo.lock",
+            &replace(
+                LOCK,
+                "[\"rand 0.9.0\"]",
+                "[\"rand 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)\"]",
+            ),
+        );
+        fails(fixture, &["store → x → rand"]);
+        // Passing routes: a dev-only `proptest`, a build dependency, and
+        // `getrandom` behind `sim`.
+        for (name, table, dependencies) in [
+            (
+                "proptest-dev",
+                "dev-dependencies",
+                "proptest.workspace = true",
+            ),
+            ("build-only", "build-dependencies", "x.workspace = true"),
+            ("through-sim", deps_table, "sim.workspace = true"),
+        ] {
+            let problems = deps(&with(name, table, dependencies, ""));
+            assert!(problems.is_empty(), "{name}: {problems:?}");
         }
     }
 
