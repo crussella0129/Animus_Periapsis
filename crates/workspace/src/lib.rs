@@ -70,6 +70,13 @@ pub enum Error {
     /// Entries on disk stand where the write must put files or directories
     /// (each described). Nothing but the opening snapshot was written.
     Blocked(Vec<String>),
+    /// `undo` found no earlier op to return to: the op head when it started
+    /// was the root op.
+    NothingToUndo,
+    /// `restore` was given an op id or prefix that names no op.
+    UnknownOp(String),
+    /// `restore` was given a prefix that names several ops.
+    AmbiguousOp(String, Vec<HashRef>),
 }
 
 impl fmt::Display for Error {
@@ -100,7 +107,7 @@ impl fmt::Display for Error {
             Error::Hazards(hazards) => {
                 write!(
                     f,
-                    "the working copy cannot be written on this filesystem; nothing was changed:"
+                    "the working copy cannot be written on this filesystem; no file was changed:"
                 )?;
                 for hazard in hazards {
                     write!(f, "\n  {hazard}")?;
@@ -110,10 +117,19 @@ impl fmt::Display for Error {
             Error::Blocked(entries) => {
                 write!(
                     f,
-                    "untracked entries are in the way; move them and try again (nothing was changed):"
+                    "untracked entries are in the way; move them and try again (no file was changed):"
                 )?;
                 for entry in entries {
                     write!(f, "\n  {entry}")?;
+                }
+                Ok(())
+            }
+            Error::NothingToUndo => f.write_str("nothing to undo: the last op is the root op"),
+            Error::UnknownOp(spec) => write!(f, "no op matches `{spec}`"),
+            Error::AmbiguousOp(spec, candidates) => {
+                write!(f, "`{spec}` matches {} ops:", candidates.len())?;
+                for candidate in candidates {
+                    write!(f, "\n  {candidate}")?;
                 }
                 Ok(())
             }
@@ -878,4 +894,124 @@ impl<F: Fs> Workspace<F> {
     pub fn parent_tree(&self) -> Result<Tree, Error> {
         Ok(self.load()?.parent_tree)
     }
+
+    /// Snapshots, then lists every op, newest first: children before
+    /// parents, ties broken by id ("History commands" in the spec).
+    pub fn log(&mut self) -> Result<Vec<LogEntry>, Error> {
+        self.snapshot()?;
+        let ops = self.store.ops()?;
+        self.refuse_invalid_ops(ops.len())?;
+        let mut children: BTreeMap<&HashRef, usize> = ops.keys().map(|id| (id, 0)).collect();
+        for op in ops.values() {
+            for parent in &op.parents {
+                if let Some(count) = children.get_mut(parent) {
+                    *count += 1;
+                }
+            }
+        }
+        let mut ready: BTreeSet<&HashRef> = children
+            .iter()
+            .filter(|(_, count)| **count == 0)
+            .map(|(id, _)| *id)
+            .collect();
+        let mut entries = Vec::with_capacity(ops.len());
+        while let Some(id) = ready.pop_first() {
+            let op = &ops[id];
+            for parent in &op.parents {
+                if let Some(count) = children.get_mut(parent) {
+                    *count -= 1;
+                    if *count == 0 {
+                        ready.insert(parent);
+                    }
+                }
+            }
+            let view = self.view_of(op)?;
+            let working_copy = *view
+                .workspaces
+                .get(DEFAULT_WORKSPACE)
+                .ok_or_else(|| corrupt(format!("view {}: no default workspace", op.view)))?;
+            entries.push(LogEntry {
+                id: *id,
+                parents: op.parents.clone(),
+                working_copy,
+                change_id: self.changeset(&working_copy)?.change_id,
+                files: self.tree_of(&working_copy)?.len(),
+            });
+        }
+        Ok(entries)
+    }
+
+    /// Undoes the last op: takes H, the single head now, snapshots, and
+    /// moves to the view of H's parent with [`Workspace::restore_view`].
+    /// Returns H's parent and the new op. With no parent it fails with
+    /// [`Error::NothingToUndo`], having written only the snapshot.
+    pub fn undo(&mut self) -> Result<(HashRef, HashRef), Error> {
+        let h = self.load()?.head;
+        self.snapshot()?;
+        let ops = self.store.ops()?;
+        let op = ops
+            .get(&h)
+            .ok_or_else(|| corrupt(format!("op {h} disappeared")))?;
+        let Some(parent) = op.parents.first().copied() else {
+            return Err(Error::NothingToUndo);
+        };
+        let view = ops
+            .get(&parent)
+            .ok_or_else(|| corrupt(format!("op {h} names a missing parent {parent}")))?
+            .view;
+        let new = self.restore_view(&view)?;
+        Ok((parent, new))
+    }
+
+    /// Snapshots, then moves to the view of the op `spec` names: an op id
+    /// in text form, or a unique prefix of its hex digest, with or without
+    /// the algorithm name. Returns that op and the new op.
+    pub fn restore(&mut self, spec: &str) -> Result<(HashRef, HashRef), Error> {
+        self.snapshot()?;
+        let ops = self.store.ops()?;
+        let target = resolve(&ops, spec)?;
+        let new = self.restore_view(&ops[&target].view)?;
+        Ok((target, new))
+    }
+}
+
+/// The op `spec` names among `ops`.
+fn resolve(ops: &BTreeMap<HashRef, Operation>, spec: &str) -> Result<HashRef, Error> {
+    let unknown = || Error::UnknownOp(spec.to_owned());
+    let hex = match spec.split_once(':') {
+        Some((alg, hex)) if alg == ALG.name() => hex,
+        Some(_) => return Err(unknown()),
+        None => spec,
+    };
+    if hex.is_empty() || !hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+        return Err(unknown());
+    }
+    let matches: Vec<HashRef> = ops
+        .keys()
+        .filter(|id| {
+            let digest: String = id.digest().iter().map(|b| format!("{b:02x}")).collect();
+            digest.starts_with(hex)
+        })
+        .copied()
+        .collect();
+    match matches.as_slice() {
+        [] => Err(unknown()),
+        [one] => Ok(*one),
+        _ => Err(Error::AmbiguousOp(spec.to_owned(), matches)),
+    }
+}
+
+/// One op, as `log` lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LogEntry {
+    /// The op's id.
+    pub id: HashRef,
+    /// Its parent ops.
+    pub parents: BTreeSet<HashRef>,
+    /// The working-copy changeset of its view.
+    pub working_copy: HashRef,
+    /// That changeset's change ID.
+    pub change_id: [u8; CHANGE_ID_LEN],
+    /// How many files its tree holds.
+    pub files: usize,
 }
