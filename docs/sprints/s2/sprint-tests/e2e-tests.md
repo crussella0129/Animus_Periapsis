@@ -1,6 +1,6 @@
 # Sprint 2 End-to-End Test Results
 
-- **Status:** possible, and run, at tested head `d248ccf` ([test-matrix-log.md](test-matrix-log.md)).
+- **Status:** possible, and run, at tested head `c5c6965` ([test-matrix-log.md](test-matrix-log.md)).
 
 ### praps_end_to_end
 - **Intents:**
@@ -29,9 +29,22 @@
   - `fsck` is clean.
   - Passed on both systems.
 
+### praps_status_reports_non_utf8_names_and_directories
+- **Intents:** [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-7
+- **Run:** three more names with no UTF-8 form per platform, made with the platform's own API:
+  - on ext4, a leading, a trailing and a truncated invalid byte;
+  - on NTFS, a leading surrogate, two surrogates and a trailing surrogate.
+
+  The last is a directory holding a file. There is also a plain sibling (test critique C-005).
+- **Result:**
+  - `praps status` prints `A sibling` and one `skipped … (name is not UTF-8)` line per name, in escaped form.
+  - The directory's file is never tracked, and every file keeps its content.
+  - `fsck` is clean.
+  - Passed on both systems.
+
 ### The CLI and real-filesystem suites
 Sections `e2e praps_fsck_end_to_end`, on both systems:
-- **`praps` (`tests/cli.rs`):** 13 of 13 passed. They are the 8 new init, new, status, fsck and usage tests and the 5 Sprint 1 fsck tests.
+- **`praps` (`tests/cli.rs`):** 14 of 14 passed. They are the 9 new init, new, status, fsck and usage tests (including `praps_fsck_reports_a_broken_repository_store`) and the 5 Sprint 1 fsck tests.
 - **Sprint 1 real-filesystem tests:** `real_store_reopens_clean`, `write_sequence_succeeds_on_the_real_filesystem` and `directory_flush_needs_write_access` passed again.
 - **`sim` real-filesystem scan tests:** 5 of 5 passed, including `real_fs_keeps_names_win32_would_rewrite`. On NTFS it reads `foo.`, `foo `, `aux.txt`, `CON` and `nul.c` as themselves, through verbatim paths (code review CR-02).
 
@@ -40,7 +53,7 @@ Sections `e2e praps_fsck_end_to_end`, on both systems:
   - [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-2 to AC-4
   - [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-1
 - **Run:** a fresh `git clone --branch dev` into the WSL ext4 home directory, then `rustup toolchain install`, then a cold `cargo ci`.
-- **Result:** every step PASS, exit 0 in 368 s, with 327 tests passed. The run changed no tracked file, and the clone was removed afterwards.
+- **Result:** every step PASS, exit 0 in 1,181 s (the Windows leg ran at the same time), with 332 tests passed. The run changed no tracked file, and the clone was removed afterwards.
 
 ### Not yet possible
 - **Power-loss crashes:** they would need hardware fault injection. The simulator's crash matrices stand in, under a fault model at least as harsh as the filesystems they model ([INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md)).

@@ -1,8 +1,8 @@
 # Sprint 2 Unit Test Results
 
-- **Tested head:** `d248ccf6d0d8e3dc65c39370c2f6af11297becf2` on `dev`, committed, with a clean working tree. It includes the fixes for the Test-phase [code review](code-review.md) (`d248ccf`).
+- **Tested head:** `c5c6965249467a27ea8aecd21a30aec21b625458` on `dev`, committed, with a clean working tree. It includes the fixes for the Test-phase [code review](code-review.md) (`d248ccf`) and for the [round-1 test critique](critique-round1.md) (`c5c6965`).
 - **Runner:** the `test` step of `cargo ci` (`cargo test --workspace --locked`). It ran in the Windows working checkout and in a fresh WSL ext4 clone; see [test-matrix-log.md](test-matrix-log.md), sections `int_ci_windows` and `e2e fresh_clone_ci`.
-- **Result:** 327 passed, 0 failed, 0 ignored on both systems. Sprint 1 ended with 242; Sprint 2 adds 85.
+- **Result:** 332 passed, 0 failed, 0 ignored on both systems. Sprint 1 ended with 242; Sprint 2 adds 90.
   - Some tests run differently on each system:
     - `real_scan_keeps_non_utf8_names` uses byte `0xff` on ext4 and an unpaired surrogate on NTFS;
     - `real_scan_reports_the_executable_bit` sets the bit on Unix and checks there is none on Windows;
@@ -27,11 +27,11 @@
 | `store` `tests/store.rs` | 23 (17 before; +6) |
 | `store` `tests/crash.rs` | 7 (6 before; +1) |
 | `store` `tests/fsck.rs`, `tests/real_store.rs`, `tests/relative_root.rs` | 5, 1, 1 |
-| `workspace` `tests/workspace.rs` (new) | 28 |
+| `workspace` `tests/workspace.rs` (new) | 31 |
 | `workspace` `tests/crash.rs`, `tests/edits.rs`, `tests/real_edits.rs`, `tests/ignore.rs`, `tests/real_workspace.rs` (new) | 3, 1, 1, 1, 1 |
-| `praps` `tests/cli.rs` | 13 (5 before; +8) |
-| `praps` `tests/e2e.rs` (new) | 2 |
-| **Total** | **327** |
+| `praps` `tests/cli.rs` | 14 (5 before; +9) |
+| `praps` `tests/e2e.rs` (new) | 3 |
+| **Total** | **332** |
 
 Each table below maps one task's EARS clauses, from the locked [build plan](../sprint-plans/build-plan.md), to the tests that assert them.
 
@@ -84,10 +84,10 @@ Each table below maps one task's EARS clauses, from the locked [build plan](../s
 | `init` creates, syncs and commits the root op; idempotent; completes an interrupted init | `init_creates_a_root_change`, `init_makes_praps_dir_durable` (40 strict seeds), `init_is_idempotent`, `init_completes_an_interrupted_init`, `init_and_open_sync_the_roots_parent` (CR-06) | pass |
 | `init_with_store` uses the given store; change IDs follow the seed | `init_with_store_uses_the_given_store`, `change_ids_follow_the_seed` | pass |
 | `open` refuses no op and several heads | `open_without_ops_fails`, `several_heads_stop_every_command`, `invalid_op_files_are_refused` (CR-10) | pass |
-| Snapshot writes blobs, changeset, view and op; nothing when unchanged; replaces its head | `snapshot_records_each_edit_kind`, `unchanged_working_copy_writes_nothing`, `snapshot_replaces_its_head`, `a_file_vanishing_mid_scan_is_deleted` (CR-05) | pass |
+| Snapshot writes blobs, changeset, view and op; nothing when unchanged; replaces its head and no other | `snapshot_records_each_edit_kind`, `unchanged_working_copy_writes_nothing`, `snapshot_replaces_its_head`, `snapshot_keeps_other_heads` (critique C-003), `a_file_vanishing_mid_scan_is_deleted` (CR-05) | pass |
 | `new` starts a child change without writing files | `new_starts_a_child_change` | pass |
-| Ignore rules; tracked files stay tracked; case-sensitive; always-ignored names | `ignore_rule_corpus` (47 paths, 18 cases, all agreeing with Git), `praps_and_git_dirs_are_always_ignored`, `tracked_file_stays_tracked_when_ignored`, `tracked_file_under_ignored_dir_is_snapshotted`, `ignore_is_case_sensitive`, `always_ignored_names_ignore_case` (CR-13) | pass |
-| Reported entries left alone; escaped in full | `snapshot_reports_and_leaves_raw_names`, `reported_paths_are_escaped_in_full` (CR-08) | pass |
+| Ignore rules; tracked files stay tracked; case-sensitive; always-ignored names | `ignore_rule_corpus` (47 paths, 18 cases, all agreeing with Git), `praps_and_git_dirs_are_always_ignored`, `tracked_file_stays_tracked_when_ignored`, `tracked_file_under_ignored_dir_is_snapshotted`, `ignore_is_case_sensitive`, `always_ignored_names_ignore_case` (CR-13), `ignore_strips_cr_before_an_escaped_space` (critique C-008, checked by mutation) | pass |
+| Reported entries left alone; escaped in full | `snapshot_reports_and_leaves_raw_names`, `raw_named_directories_are_reported_and_left_alone` (three raw forms; critique C-005), `reported_paths_are_escaped_in_full` (CR-08) | pass |
 | Executable-bit rule on each kind of filesystem | `executable_bit_is_recorded`, `no_executable_bit_keeps_the_recorded_mode`, `no_executable_bit_restores_the_parents_mode` (CR-01) | pass |
 | `status` lists A, M, D (including a mode change) | `status_lists_added_modified_deleted_after_new`, `status_lists_changes_sorted` | pass |
 | Same tree on NTFS and ext4 gives one changeset id | `real_snapshot_id_is_host_independent` (`blake3:9ad9ad90…28c3` on both) | pass |
@@ -100,7 +100,7 @@ Each table below maps one task's EARS clauses, from the locked [build plan](../s
 | `init` creates or reports | `praps_init_creates_a_repository`, `praps_init_is_idempotent` | pass |
 | `new` prints a change ID | `praps_new_prints_a_change_id` | pass |
 | `status` lists changes and skipped entries; exit 1 outside a repository or with several heads | `praps_status_lists_changes`, `praps_status_outside_a_repository_fails`, `praps_status_with_several_heads_fails` | pass |
-| `fsck` on a working copy | `praps_fsck_checks_a_working_copy`, the Sprint 1 fsck tests | pass |
+| `fsck` on a working copy | `praps_fsck_checks_a_working_copy`, `praps_fsck_reports_a_broken_repository_store` (CR-09; critique C-004), the Sprint 1 fsck tests | pass |
 | Flags and extra arguments exit 2 | `praps_rejects_flags_and_extra_arguments`, `usage_errors_exit_two` | pass |
 
 ### T-007: crash scenario and edit corpora

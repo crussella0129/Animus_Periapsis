@@ -1,6 +1,6 @@
 # Sprint 2 Integration Test Results
 
-These are the results at tested head `d248ccf`, the final run of the Test phase. Every run is in [test-matrix-log.md](test-matrix-log.md), under the section named here. The two legs ran at the same time, which made both slower.
+These are the results at tested head `c5c6965`, the final run of the Test phase. The run at `d248ccf`, before the [round-1 test critique](critique-round1.md), gave the same matrix, corpus and digest figures. Every run is in [test-matrix-log.md](test-matrix-log.md), under the section named here. The two legs ran at the same time, which made both slower.
 
 ### Canonical runner on the Windows host and in WSL
 - **Intents:**
@@ -13,8 +13,8 @@ These are the results at tested head `d248ccf`, the final run of the Test phase.
 
 | Run | System | Result |
 |---|---|---|
-| `int_ci_windows` | Windows 11 Pro 10.0.26300, NTFS working checkout, rustc 1.99.1 | `cargo ci`: PASS for fmt, clippy, test, policy and book; exit 0 in 664 s; 327 tests passed |
-| `e2e fresh_clone_ci` | Ubuntu 26.04.1 (WSL2), fresh ext4 clone, rustc 1.99.1 | cold `cargo ci`: every step PASS, exit 0 in 368 s; 327 tests passed; 0 tracked files changed |
+| `int_ci_windows` | Windows 11 Pro 10.0.26300, NTFS working checkout, rustc 1.99.1 | `cargo ci`: PASS for fmt, clippy, test, policy and book; exit 0 in 1,270 s; 332 tests passed |
+| `e2e fresh_clone_ci` | Ubuntu 26.04.1 (WSL2), fresh ext4 clone, rustc 1.99.1 | cold `cargo ci`: every step PASS, exit 0 in 1,181 s; 332 tests passed; 0 tracked files changed |
 | `int_deny_windows` | Windows, cargo-deny 0.20.2 | advisories, bans, licenses and sources all ok, including the new `getrandom` and `ignore` trees |
 | `cargo policy` (inside `cargo ci`) | both | every rule PASS, including `fs-boundary` (the `workspace` crate, the `getrandom` and `ignore` bans) and `deps` (getrandom confined to `sim`) |
 
@@ -59,7 +59,7 @@ Sections `int_snapshot_matrix_windows` and `int_snapshot_matrix_linux`.
 | Correct | 12,680 | 0 closure, durability, recency and liveness, in both modes |
 | UnsyncedObjects | 11,640 | strict: closure 100,560, recency 9,939, liveness 9,379; lenient: closure 101,135, recency 9,909, liveness 9,508 |
 
-**Determinism:** every cell reproduces, and the digest over all 25,360 correct cells is `blake3:c1e39cb10607ff208e0f2774eee8770659aad590dbc8c71abd76522b69013ea3` on both systems. The cell count grew from 12,400 before the code-review fixes, because `init` now always syncs the root's parent (CR-06).
+**Determinism:** every cell reproduces, with the same state, trace and violations, and the digest over all 25,360 correct cells is `blake3:c1e39cb10607ff208e0f2774eee8770659aad590dbc8c71abd76522b69013ea3` on both systems. The cell count grew from 12,400 before the code-review fixes, because `init` now always syncs the root's parent (CR-06).
 
 ### Edit corpora and the ignore corpus
 - **Intents:**
@@ -67,8 +67,11 @@ Sections `int_snapshot_matrix_windows` and `int_snapshot_matrix_linux`.
   - [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-1, AC-2
 
 Sections `int_edit_corpora_*`:
-- **`edit_corpus_loses_nothing`:** 500 seeded sequences, 6,000 snapshots, 0 lost edits on both systems. Half the sequences run without an executable bit.
-- **`real_edit_corpus_loses_nothing`:** 20 sequences, 240 snapshots on NTFS and on ext4, 0 lost edits. On NTFS no sequence can set an executable bit, so mode preservation there is covered by the simulator.
+- **`edit_corpus_loses_nothing`:** 500 seeded sequences, 6,000 snapshots, 0 lost edits on both systems.
+  - The oracle is an independent model of the tracked paths and modes, of the change and its parent. It never reads the workspace's state, and after every `new` the tree must be unchanged (critique C-001).
+  - The rules toggled include a nested `d2/.gitignore` with a whitelist and a directory rule, and a `.gitignore` is deleted when it holds no active rule (C-007).
+  - Half the sequences run without an executable bit, starting from tracked executable files recorded while there was one (C-002).
+- **`real_edit_corpus_loses_nothing`:** 20 sequences, 240 snapshots on NTFS and on ext4, against the same model, 0 lost edits. NTFS has no executable bit to set; the no-bit rule is exercised by the simulator corpus and the `no_executable_bit_*` tests.
 - **`ignore_rule_corpus`:** 47 paths in 18 cases agree with Git 2.56.0.windows.3's recorded verdicts.
 - **`real_snapshot_id_is_host_independent`:** the changeset is `blake3:9ad9ad907eb641bf35322a3db8ed790384b4b1c8bd6f5f4377fe54c2142228c3` on both systems.
 
