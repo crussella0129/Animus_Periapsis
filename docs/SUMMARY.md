@@ -45,6 +45,7 @@
     - [INT-0028 Entropy layer](intents/INT-0028-entropy-layer.md)
 - [Format v1 specification](spec/format-v1.md)
 - [Storage durability](spec/storage-durability.md)
+- [The working copy](spec/working-copy.md)
 - [Tasks](work/tasks.md)
 - [Completed tasks](work/completed-tasks.md)
 - [Sprint 0](sprints/s0/sprint-meta.md)
