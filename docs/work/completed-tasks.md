@@ -199,3 +199,11 @@
 - **Files modified:** docs/spec/working-copy.md, docs/SUMMARY.md, README.md, docs/prior-art.md, docs/work/tasks.md
 - **Evidence:** `docs/spec/working-copy.md` (new, linked from SUMMARY.md) states the layout and the durable init, the working-copy change and derived trees, the snapshot and `new` sequences and which commands snapshot, the ignore rules (scope, precedence, case sensitivity, ignored directories, tracked files, always-ignored `.praps`/`.git`, files not read, CR stripping, the `.`-rooted matcher), reported entries and the display escaping, the executable-bit rule, the several-heads stop, and the costs deferred to the stat cache. README lists the `workspace` crate and the `init`, `status`, `new`, `fsck` commands. prior-art.md credits Jujutsu's working-copy model, Mononoke's Bonsai changesets and Git's `.gitignore` semantics as adopted designs (`ignore` and `getrandom` were credited as dependencies in T-005 and T-004). Backlog T-012 is revised to the fields still missing (the operation's actor, wall clock and signature; the changeset's author, intent references, renames and conflict terms; the view's named pointers); T-011 and T-013 remain. `cargo policy` (credits, spec, book) and `cargo run -p book` (34 chapters, 0 violations) pass.
 - **Commit:** `bd44c894b5eb348007bb86b2ff7824374246148e`
+
+## T-001 (sprint 3)
+- **Description:** Record Sprint 2's GitHub Actions runs and owner sign-offs
+- **Intent:** [INT-0001](../intents/INT-0001-periapsis-charter.md), [INT-0002](../intents/INT-0002-typed-acceptance-criteria.md), [INT-0003](../intents/INT-0003-engineering-baseline.md), [INT-0004](../intents/INT-0004-windows-and-linux.md), [INT-0006](../intents/INT-0006-format-v1.md)
+- **Completed:** 2026-11-07T21:29:15Z
+- **Files modified:** docs/sprints/s3/sprint-tests/ci-sprint2.md, docs/intents/INT-0001-periapsis-charter.md, docs/intents/INT-0002-typed-acceptance-criteria.md, docs/intents/INT-0003-engineering-baseline.md, docs/intents/INT-0004-windows-and-linux.md, docs/intents/INT-0006-format-v1.md, docs/work/tasks.md
+- **Evidence:** ci-sprint2.md records runs 42403413644, 42403409376 and 42404724911 from gh run view: every job success, 332 tests per cargo ci leg on ubuntu-26.04 and windows-2025-vs2026 with rustc 1.99.1, cargo deny ok. No sign-off was given; they carry forward as backlog T-017.
+- **Commit:** PENDING
