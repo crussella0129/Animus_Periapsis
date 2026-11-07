@@ -586,8 +586,9 @@ impl<F: Fs> Workspace<F> {
         if heads.len() == 1 && heads.contains(&record.target) {
             let plan =
                 materialise::plan(fs, &self.root, &from, &target, fs.name_rules(), ALG, true)?;
-            materialise::apply(fs, &self.root, &plan, |id| self.content(id))?;
-            for skipped in &plan.skipped {
+            let kept =
+                materialise::apply(fs, &self.root, &from, ALG, &plan, |id| self.content(id))?;
+            for skipped in plan.skipped.iter().chain(&kept) {
                 self.notes.push(format!(
                     "an interrupted write of the working copy left this as it was: {skipped}"
                 ));
@@ -654,7 +655,10 @@ impl<F: Fs> Workspace<F> {
             )));
         }
         let fs = self.store.fs();
-        materialise::apply(fs, &self.root, &plan, |blob| self.content(blob))?;
+        let kept = materialise::apply(fs, &self.root, &loaded.wc_tree, ALG, &plan, |blob| {
+            self.content(blob)
+        })?;
+        self.notes.extend(kept);
         if journalled {
             record::drop_record(fs, &praps)?;
         }

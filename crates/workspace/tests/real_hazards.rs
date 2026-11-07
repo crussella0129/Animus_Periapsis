@@ -161,3 +161,50 @@ fn real_hazard_trees_materialise_on_ext4() {
     remove_all(&base);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A directory replaced by a symbolic link after a crash is never followed:
+/// nothing outside the working copy is removed (code review CR-05).
+#[cfg(unix)]
+#[test]
+fn real_symlinked_directories_are_not_followed() {
+    use workspace::materialise;
+    use workspace::tree::{File, Tree};
+    let base = claim();
+    let root = base.join("repo");
+    RealFs.create_dir(&root).unwrap();
+    put(&base, "elsewhere/x", b"F's x");
+    std::os::unix::fs::symlink(base.join("elsewhere"), root.join("d")).unwrap();
+    let from: Tree = [(
+        codec::RepoPath::new("d/x").unwrap(),
+        File {
+            blob: codec::object_id(hash::HashAlg::DEFAULT, &codec::blob(b"F's x")),
+            mode: codec::Mode::Regular,
+        },
+    )]
+    .into();
+    let plan = materialise::plan(
+        &RealFs,
+        &root,
+        &from,
+        &Tree::new(),
+        RealFs.name_rules(),
+        hash::HashAlg::DEFAULT,
+        true,
+    )
+    .unwrap();
+    assert!(plan.remove.is_empty(), "{:?}", plan.remove);
+    assert!(plan.emptied.is_empty(), "{:?}", plan.emptied);
+    let kept = materialise::apply(
+        &RealFs,
+        &root,
+        &from,
+        hash::HashAlg::DEFAULT,
+        &plan,
+        |_| unreachable!(),
+    )
+    .unwrap();
+    assert!(kept.is_empty());
+    assert_eq!(std::fs::read(base.join("elsewhere/x")).unwrap(), b"F's x");
+    remove_all(&base);
+    let _ = std::fs::remove_dir_all(&base);
+}

@@ -93,6 +93,16 @@ pub fn diff(from: &Tree, target: &Tree) -> Vec<(RepoPath, String)> {
         .collect()
 }
 
+/// A directory entry's key in a listing: its name where it is UTF-8 (as a
+/// repository path spells it), else a NUL and its display form, which no
+/// repository path can equal (code review CR-02).
+fn listing_key(name: &sim::Name) -> String {
+    match name.as_utf8() {
+        Some(utf8) => utf8.to_owned(),
+        None => format!("\0{}", name.display()),
+    }
+}
+
 /// Reads the disk lazily, one directory scan each.
 struct Disk<'a, F: Fs> {
     fs: &'a F,
@@ -109,7 +119,7 @@ impl<F: Fs> Disk<'_, F> {
                 Ok(entries) => Some(
                     entries
                         .into_iter()
-                        .map(|entry| (entry.name.display(), entry.kind))
+                        .map(|entry| (listing_key(&entry.name), entry.kind))
                         .collect(),
                 ),
                 Err(error)
@@ -208,23 +218,36 @@ pub fn plan(
     let t_dirs: BTreeSet<&str> = target.keys().flat_map(|p| ancestors(p.as_str())).collect();
 
     let mut plan = Plan::default();
-    // Files to remove: tracked by F, not by T, and still holding F's entry.
+    // Files to remove: tracked by F, not by T, still holding F's entry, and
+    // reached through real directories only, so a directory replaced by a
+    // symbolic link is never followed (code review CR-05).
     let mut to_remove = Vec::new();
     for (path, _) in &diff {
         if let (Some(file), None) = (from.get(path), target.get(path))
             && disk.holds(path.as_str(), file, alg)?
         {
-            to_remove.push(path.clone());
+            let mut real = true;
+            for dir in ancestors(path.as_str()) {
+                real &= disk.at(dir)? == OnDisk::Dir;
+            }
+            if real {
+                to_remove.push(path.clone());
+            }
         }
     }
     let remove: BTreeSet<&str> = to_remove.iter().map(RepoPath::as_str).collect();
 
     // Directories F had files under that hold no T path: deepest first.
-    let mut emptied: Vec<&str> = f_dirs
-        .iter()
-        .copied()
-        .filter(|dir| !t_dirs.contains(dir))
-        .collect();
+    let mut emptied: Vec<&str> = Vec::new();
+    for dir in f_dirs.iter().copied().filter(|dir| !t_dirs.contains(dir)) {
+        let mut real = true;
+        for at in ancestors(dir).chain(std::iter::once(dir)) {
+            real &= disk.at(at)? == OnDisk::Dir;
+        }
+        if real {
+            emptied.push(dir);
+        }
+    }
     emptied.sort_by_key(|dir| std::cmp::Reverse((dir.matches('/').count(), *dir)));
     plan.emptied = emptied.iter().map(|dir| (*dir).to_owned()).collect();
 
@@ -236,11 +259,37 @@ pub fn plan(
         .collect();
     let mut blocked: Vec<String> = Vec::new();
     let mut block = |path: &RepoPath, why: String| blocked.push(format!("{path}: {why}"));
+    // Every temporary name of the diff belongs to this write, and resume
+    // removes it: each must be free on disk and name no F or T path, for
+    // every diff path, written or not (code review CR-01). In a resume the
+    // files left at these names were already removed, so an entry still
+    // there is not a file and is left alone (CR-04).
+    let mut taken = BTreeSet::new();
+    for (path, tmp) in &diff {
+        let (dir, tmp_name) = split(tmp);
+        let taken_on_disk = disk.listing(dir)?.is_some_and(|entries| {
+            entries
+                .keys()
+                .any(|name| name == tmp_name || (rules.case_insensitive && fold_eq(name, tmp_name)))
+        });
+        let taken_by_path = names.iter().any(|name| {
+            let (name_dir, base) = split(name);
+            name_dir == dir
+                && (base == tmp_name || (rules.case_insensitive && fold_eq(base, tmp_name)))
+        });
+        if taken_on_disk || taken_by_path {
+            block(path, format!("its temporary name `{tmp}` is taken"));
+            taken.insert(path.clone());
+        }
+    }
     let mut writes = Vec::new();
     for (path, tmp) in &diff {
         let Some(file) = target.get(path) else {
             continue;
         };
+        if taken.contains(path) {
+            continue;
+        }
         let p = path.as_str();
         if disk.holds(p, file, alg)? {
             continue; // done
@@ -290,26 +339,15 @@ pub fn plan(
         if !clear {
             continue;
         }
-        // Its temporary name must be free, and name no F or T path.
-        let (dir, tmp_name) = split(tmp);
-        let taken_on_disk = disk.listing(dir)?.is_some_and(|entries| {
-            entries
-                .keys()
-                .any(|name| name == tmp_name || (rules.case_insensitive && fold_eq(name, tmp_name)))
-        });
-        let taken_by_path = names.iter().any(|name| {
-            let (name_dir, base) = split(name);
-            name_dir == dir
-                && (base == tmp_name || (rules.case_insensitive && fold_eq(base, tmp_name)))
-        });
-        if (taken_on_disk && !resume) || taken_by_path {
-            block(path, format!("its temporary name `{tmp}` is taken"));
-            continue;
-        }
         writes.push((path.clone(), tmp.clone(), *file));
     }
 
-    plan.remove = to_remove;
+    // A removal whose temporary name is taken is left too, so that nothing
+    // of this write ever needs that name.
+    plan.remove = to_remove
+        .into_iter()
+        .filter(|p| !taken.contains(p))
+        .collect();
     plan.blocked = blocked;
     // Hazards, from what each directory a written path passes through holds.
     let mut existing = BTreeMap::new();
@@ -341,20 +379,48 @@ pub fn plan(
     Ok(plan)
 }
 
-/// Removes the temporary names of the F→T diff that exist, syncing each
-/// directory one was removed from.
+/// Removes the files at the temporary names of the F→T diff, syncing each
+/// directory one was removed from. A name that is an F or T path, or holds
+/// anything but a file, is left alone: the plan then skips its path (code
+/// review CR-01, CR-04).
 pub fn remove_temporaries(fs: &impl Fs, root: &Path, from: &Tree, target: &Tree) -> io::Result<()> {
     let mut touched = BTreeSet::new();
+    let mut listings: BTreeMap<String, Option<BTreeMap<String, Kind>>> = BTreeMap::new();
     for (_, tmp) in diff(from, target) {
+        let tracked = RepoPath::new(tmp.clone())
+            .is_ok_and(|path| from.contains_key(&path) || target.contains_key(&path));
+        if tracked {
+            continue;
+        }
+        let (dir, name) = split(&tmp);
+        if !listings.contains_key(dir) {
+            let listed = match fs.scan(&on_disk(root, dir)) {
+                Ok(entries) => Some(
+                    entries
+                        .into_iter()
+                        .map(|entry| (listing_key(&entry.name), entry.kind))
+                        .collect(),
+                ),
+                Err(error)
+                    if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) =>
+                {
+                    None
+                }
+                Err(error) => return Err(error),
+            };
+            listings.insert(dir.to_owned(), listed);
+        }
+        let is_file = listings[dir]
+            .as_ref()
+            .is_some_and(|entries| matches!(entries.get(name), Some(Kind::File { .. })));
+        if !is_file {
+            continue;
+        }
         match fs.remove_file(&on_disk(root, &tmp)) {
             Ok(()) => {
-                touched.insert(split(&tmp).0.to_owned());
+                touched.insert(dir.to_owned());
             }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    ErrorKind::NotFound | ErrorKind::NotADirectory | ErrorKind::IsADirectory
-                ) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
     }
@@ -364,18 +430,51 @@ pub fn remove_temporaries(fs: &impl Fs, root: &Path, from: &Tree, target: &Tree)
     Ok(())
 }
 
+/// What is at `path` now, compared with F's entry: `Ok(true)` when it still
+/// holds F's bytes (or is absent, where F has none). Checked just before a
+/// path is removed or replaced, so an edit saved since the plan is kept
+/// (code review CR-03); the mode is not re-read.
+fn unchanged(fs: &impl Fs, path: &Path, from: Option<&File>, alg: HashAlg) -> io::Result<bool> {
+    match (fs.read(path), from) {
+        (Ok(content), Some(file)) => Ok(object_id(alg, &blob(&content)) == file.blob),
+        (Ok(_), None) => Ok(false),
+        (Err(error), None) if error.kind() == ErrorKind::NotFound => Ok(true),
+        (Err(error), _)
+            if matches!(
+                error.kind(),
+                ErrorKind::NotFound | ErrorKind::IsADirectory | ErrorKind::PermissionDenied
+            ) =>
+        {
+            Ok(false)
+        }
+        (Err(error), _) => Err(error),
+    }
+}
+
 /// Applies `plan`: steps 1 to 5 of "Materialise". `content` gives each
-/// blob's bytes. The caller then drops the record and syncs `.praps`.
+/// blob's bytes. Returns a note for each path left because it changed after
+/// the plan. The caller then drops the record and syncs `.praps`.
 pub fn apply(
     fs: &impl Fs,
     root: &Path,
+    from: &Tree,
+    alg: HashAlg,
     plan: &Plan,
     content: impl Fn(&HashRef) -> io::Result<Vec<u8>>,
-) -> io::Result<()> {
+) -> io::Result<Vec<String>> {
+    let mut notes = Vec::new();
+    let changed = |path: &RepoPath| format!("{path}: it changed during the write and was kept");
     // 1. Remove the files to remove, then sync each parent touched.
     let mut parents = BTreeSet::new();
     for path in &plan.remove {
-        match fs.remove_file(&on_disk(root, path.as_str())) {
+        let at = on_disk(root, path.as_str());
+        if !unchanged(fs, &at, from.get(path), alg)? {
+            if fs.read(&at).is_ok() {
+                notes.push(changed(path));
+            }
+            continue;
+        }
+        match fs.remove_file(&at) {
             Ok(()) => {}
             Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => return Err(error),
@@ -430,12 +529,19 @@ pub fn apply(
         fs.write(&tmp_path, &content(&file.blob)?)?;
         fs.set_executable(&tmp_path, file.mode == Mode::Executable)?;
         fs.sync_file(&tmp_path)?;
-        fs.rename(&tmp_path, &on_disk(root, path.as_str()))?;
+        let at = on_disk(root, path.as_str());
+        if !unchanged(fs, &at, from.get(path), alg)? {
+            notes.push(changed(path));
+            fs.remove_file(&tmp_path)?;
+            touched.insert(split(path.as_str()).0);
+            continue;
+        }
+        fs.rename(&tmp_path, &at)?;
         touched.insert(split(path.as_str()).0);
     }
     // 5. Sync every directory a file was renamed into.
     for dir in touched {
         fs.sync_dir(&on_disk(root, dir))?;
     }
-    Ok(())
+    Ok(notes)
 }

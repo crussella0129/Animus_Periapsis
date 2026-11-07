@@ -602,3 +602,174 @@ fn record_round_trips() {
     extra.extend_from_slice(b"more\n");
     assert!(Record::decode(&extra).is_err());
 }
+
+// ------------------------------------------------ code review fixes (Test)
+
+/// Every temporary name of the diff is checked, not only those of paths to
+/// write: resume removes them all (code review CR-01).
+#[test]
+fn removal_temporary_names_are_checked() {
+    let (mut ws, fs) = fresh(100);
+    put(&fs, ".gitignore", b".praps-tmp-*\n");
+    put(&fs, "b", b"2");
+    let target = checkpoint(&mut ws);
+    put(&fs, "a", b"1");
+    put(&fs, "b", b"1");
+    checkpoint(&mut ws);
+    // The diff is `a` (0, to remove), then `b` (1, to write).
+    put(&fs, ".praps-tmp-0", b"ignored, mine");
+    match ws.restore_view(&target) {
+        Err(Error::Blocked(entries)) => {
+            assert!(
+                entries.iter().any(|e| e.contains(".praps-tmp-0")),
+                "{entries:?}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(files_on_disk(&*fs)[".praps-tmp-0"].0, b"ignored, mine");
+}
+
+/// Resume never removes a tracked file at a temporary name.
+#[test]
+fn resume_keeps_a_tracked_file_at_a_temporary_name() {
+    let (mut ws, fs) = fresh(101);
+    put(&fs, ".praps-tmp-0", b"tracked");
+    put(&fs, "a", b"1");
+    checkpoint(&mut ws);
+    let (old_op, _) = head(&ws);
+    put(&fs, "a", b"2");
+    checkpoint(&mut ws);
+    let (now, _) = head(&ws);
+    // An interrupted write back to `old_op`'s view: its op, committed over
+    // the head without writing a file, and the record naming it.
+    let view = ws.store().ops().unwrap()[&old_op].view;
+    let mut store = store::Store::open(
+        Rc::clone(&fs),
+        &Path::new(ROOT).join(".praps/store"),
+        hash::HashAlg::DEFAULT,
+        1,
+    )
+    .unwrap();
+    let restore_op = store
+        .commit_op(&codec::Operation {
+            parents: [now].into(),
+            view,
+        })
+        .unwrap();
+    record::write(
+        &*fs,
+        &praps(),
+        &Record {
+            from: now,
+            target: restore_op,
+        },
+    )
+    .unwrap();
+    let ws = Workspace::open(Rc::clone(&fs), Path::new(ROOT), 101).unwrap();
+    assert_eq!(files_on_disk(&*fs)[".praps-tmp-0"].0, b"tracked");
+    // `a` (diff index 0) has `.praps-tmp-0` as its temporary name: skipped.
+    assert!(
+        ws.notes().iter().any(|n| n.contains("a:")),
+        "{:?}",
+        ws.notes()
+    );
+}
+
+/// Names with control characters are found on disk (code review CR-02).
+#[test]
+fn control_characters_in_names_are_seen() {
+    let (mut ws, fs) = fresh(102);
+    put(&fs, ".gitignore", b"x*\n");
+    put(&fs, "c", b"c");
+    let target = checkpoint(&mut ws);
+    put(&fs, "a\tb", b"tabbed");
+    checkpoint(&mut ws);
+    ws.restore_view(&target).unwrap();
+    assert!(!files_on_disk(&*fs).contains_key("a\tb"), "removed");
+    // A tracked name with a tab, where an ignored file of that name stands.
+    let (mut ws, fs) = fresh(103);
+    put(&fs, "x\ty", b"tracked");
+    let target = checkpoint(&mut ws);
+    delete(&fs, "x\ty");
+    put(&fs, ".gitignore", b"x*\n");
+    checkpoint(&mut ws);
+    put(&fs, "x\ty", b"ignored, mine");
+    assert!(matches!(ws.restore_view(&target), Err(Error::Blocked(_))));
+    assert_eq!(files_on_disk(&*fs)["x\ty"].0, b"ignored, mine");
+}
+
+/// An edit saved between the plan and the write is kept, and noted (code
+/// review CR-03): for a path to remove and for a path to write.
+#[test]
+fn edits_during_the_write_are_kept() {
+    let (mut ws, fs) = fresh(104);
+    put(&fs, "a", b"1");
+    put(&fs, "b", b"1");
+    let target = checkpoint(&mut ws);
+    put(&fs, "a", b"2");
+    put(&fs, "b", b"2");
+    put(&fs, "c", b"2");
+    checkpoint(&mut ws);
+    let hook_fs = Rc::clone(&fs);
+    let done = Rc::new(std::cell::Cell::new((false, false)));
+    let flags = Rc::clone(&done);
+    fs.set_hook(Some(Box::new(move |_| {
+        let last = hook_fs.trace().last().cloned().unwrap_or_default();
+        let (c_done, a_done) = flags.get();
+        // After the op is written, before step 1 re-checks `c`.
+        if !c_done && last.starts_with("create_new repo/.praps/store/ops/") {
+            flags.set((true, a_done));
+            hook_fs
+                .overwrite(&Path::new(ROOT).join("c"), b"saved by the user")
+                .unwrap();
+        }
+        // After `a`'s temporary file is synced, before it replaces `a`.
+        if !a_done && last == "sync_file repo/.praps-tmp-0" {
+            flags.set((flags.get().0, true));
+            hook_fs
+                .overwrite(&Path::new(ROOT).join("a"), b"saved too")
+                .unwrap();
+        }
+    })));
+    ws.restore_view(&target).unwrap();
+    fs.set_hook(None);
+    assert_eq!(done.get(), (true, true));
+    let on_disk = files_on_disk(&*fs);
+    assert_eq!(on_disk["a"].0, b"saved too");
+    assert_eq!(on_disk["b"].0, b"1");
+    assert_eq!(on_disk["c"].0, b"saved by the user");
+    assert!(!on_disk.contains_key(".praps-tmp-0"));
+    let notes = ws.notes().join("\n");
+    assert!(
+        notes.contains("a: it changed") && notes.contains("c: it changed"),
+        "{notes}"
+    );
+    // The next snapshot keeps both edits.
+    ws.snapshot().unwrap();
+    let (_, _, tree) = ws.working_copy().unwrap();
+    assert!(tree.contains_key(&path("c")));
+}
+
+/// A directory at a temporary name does not stop a resume: its path is
+/// left and noted, and the rest is finished (code review CR-04).
+#[test]
+fn resume_skips_a_directory_at_a_temporary_name() {
+    // The diff of the swap setup's restore is a, a/x, keep, n1, n2, n3:
+    // `keep`'s temporary name is `.praps-tmp-2`.
+    let (fs, _) = crash_at(105, "rename repo/.praps-tmp-0");
+    fs.create_dir(&Path::new(ROOT).join(".praps-tmp-2"))
+        .unwrap();
+    make_durable(&fs);
+    let ws = Workspace::open(&fs, Path::new(ROOT), 105).unwrap();
+    assert!(
+        ws.notes().iter().any(|n| n.contains("keep")),
+        "{:?}",
+        ws.notes()
+    );
+    let on_disk = files_on_disk(&fs);
+    assert_eq!(on_disk["a"].0, b"file");
+    assert_eq!(on_disk["keep"].0, b"2", "left as F had it");
+    assert!(fs.snapshot().contains_key("repo/.praps-tmp-2"));
+    assert!(!fs.snapshot().contains_key("repo/.praps/working-copy"));
+}

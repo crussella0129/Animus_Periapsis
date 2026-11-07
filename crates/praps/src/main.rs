@@ -88,7 +88,7 @@ fn short(bytes: &[u8]) -> String {
 }
 
 fn log(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
-    match open(dir, err).and_then(|mut ws| ws.log()) {
+    match with_workspace(dir, err, |ws| ws.log()) {
         Ok(entries) => {
             for entry in entries {
                 let files = if entry.files == 1 { "file" } else { "files" };
@@ -107,7 +107,7 @@ fn log(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
 }
 
 fn undo(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
-    match open(dir, err).and_then(|mut ws| ws.undo()) {
+    match with_workspace(dir, err, |ws| ws.undo()) {
         Ok((restored, _)) => {
             let _ = writeln!(
                 out,
@@ -121,7 +121,7 @@ fn undo(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
 }
 
 fn restore(op: &str, dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
-    match open(dir, err).and_then(|mut ws| ws.restore(op)) {
+    match with_workspace(dir, err, |ws| ws.restore(op)) {
         Ok((restored, _)) => {
             let _ = writeln!(
                 out,
@@ -157,18 +157,24 @@ fn init(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
     }
 }
 
-/// Opens the repository at `dir`, printing each note that resuming an
-/// interrupted write left (`note: …`) on `err`.
-fn open(dir: &Path, err: &mut impl Write) -> Result<Workspace<RealFs>, workspace::Error> {
-    let workspace = Workspace::open(RealFs, dir, os_seed())?;
+/// Opens the repository at `dir` and runs `command` on it, then prints on
+/// `err` each note the workspace left (`note: …`): what resuming an
+/// interrupted write, or the write itself, left as it was.
+fn with_workspace<T>(
+    dir: &Path,
+    err: &mut impl Write,
+    command: impl FnOnce(&mut Workspace<RealFs>) -> Result<T, workspace::Error>,
+) -> Result<T, workspace::Error> {
+    let mut workspace = Workspace::open(RealFs, dir, os_seed())?;
+    let result = command(&mut workspace);
     for note in workspace.notes() {
         let _ = writeln!(err, "note: {note}");
     }
-    Ok(workspace)
+    result
 }
 
 fn new(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
-    let result = open(dir, err).and_then(|mut ws| ws.new_change());
+    let result = with_workspace(dir, err, |ws| ws.new_change());
     match result {
         Ok(change_id) => {
             let hex: String = change_id.iter().map(|b| format!("{b:02x}")).collect();
@@ -180,7 +186,7 @@ fn new(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
 }
 
 fn status(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
-    let result = open(dir, err).and_then(|mut ws| ws.status());
+    let result = with_workspace(dir, err, |ws| ws.status());
     match result {
         Ok(status) => {
             for (path, change) in &status.changes {

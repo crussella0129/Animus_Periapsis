@@ -19,7 +19,10 @@
 //!
 //! Every edit syncs its files and the directories it changes, so a user's
 //! work cannot revert at a later crash; a crash inside an edit is checked
-//! for liveness only.
+//! for liveness only. An ignored file stands beside the working copy
+//! throughout, and after every crash inside `undo` or `restore` the user
+//! edits a file that write changes before the next command: both must come
+//! through unchanged (code review CR-06).
 
 mod common;
 
@@ -114,6 +117,9 @@ fn put(fs: &impl Fs, path: &str, content: &[u8]) -> io::Result<()> {
 /// The two rounds of durable edits.
 fn edit(fs: &impl Fs, round: usize) -> io::Result<()> {
     if round == 0 {
+        // An ignored file that no write may touch (code review CR-06).
+        put(fs, ".gitignore", b"*.ign\n")?;
+        put(fs, "scratch.ign", b"mine")?;
         put(fs, "a", b"alpha")?;
         put(fs, "run", b"#!1")?;
         fs.set_executable(&under("run"), true)?;
@@ -267,6 +273,16 @@ fn check(recovered: &SimFs, log: &Log, seed: u64) -> Violations {
         v.durability += u64::from(log.init_acked);
     }
     let copy = recovered.recover();
+    // After a crash inside `undo` or `restore`, the user edits a file the
+    // write changes, before the next command: resume must keep it (code
+    // review CR-06). `run` exists in F and T, and at every point between.
+    let mut user_edit = None;
+    if matches!(log.phase, Phase::Write { .. }) {
+        let run = Path::new(ROOT).join("run");
+        if copy.overwrite(&run, b"edited after the crash").is_ok() && copy.sync_file(&run).is_ok() {
+            user_edit = model(&copy).get("run").cloned();
+        }
+    }
     let opened = if log.init_acked {
         Workspace::open(&copy, root, seed)
     } else {
@@ -296,15 +312,31 @@ fn check(recovered: &SimFs, log: &Log, seed: u64) -> Violations {
             })
         }
     };
-    if let Some(expected) = expected
-        && model(&copy) != expected
-    {
-        v.working_copy += 1;
+    if let Some(mut expected) = expected {
+        if let Some(edited) = user_edit {
+            expected.insert("run".to_owned(), edited);
+        }
+        if model(&copy) != expected {
+            v.working_copy += 1;
+        }
     }
     if copy.snapshot().contains_key("repo/.praps/working-copy") {
         v.working_copy += 1;
     }
-    let live = ws.snapshot().is_ok() && recorded(&ws) == Some(model(&copy));
+    // The snapshot records every file but the ignored ones. A crash inside
+    // the first edit may leave `.gitignore` torn to a prefix of `*.ign\n`,
+    // read as Git reads it: `*` ignores everything, `*.ign` (with or without
+    // its newline) the ignored file, and the other prefixes nothing here.
+    let mut tracked = model(&copy);
+    let rule = tracked.get(".gitignore").map(|(content, _)| {
+        String::from_utf8_lossy(content.strip_suffix(b"\n").unwrap_or(content)).into_owned()
+    });
+    match rule.as_deref() {
+        Some("*") => tracked.clear(),
+        Some("*.ign") => tracked.retain(|path, _| !path.ends_with(".ign")),
+        _ => {}
+    }
+    let live = ws.snapshot().is_ok() && recorded(&ws) == Some(tracked);
     v.liveness += u64::from(!live);
     v
 }

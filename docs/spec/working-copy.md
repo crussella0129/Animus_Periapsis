@@ -203,7 +203,9 @@ in flight. One that does not decode is a `Corrupt` error.
 "Matches F" means the file's bytes equal F's version and, where the
 filesystem has an executable bit, so does its mode. Each path in F or T, or
 present on disk, falls into one class:
-- **to remove:** tracked by F, not by T, and still matching F;
+- **to remove:** tracked by F, not by T, still matching F, and reached
+  through real directories only (a directory replaced by a symbolic link is
+  never followed, and neither is an emptied directory removed through one);
 - **to write:** in T with an entry different from F's, and either matching F
   or absent where F has none;
 - **done:** already equal to T's entry, or absent where T has none, as after
@@ -226,8 +228,9 @@ A *blocking* entry is any of the following that is not F-owned:
 - an entry at a path to write;
 - an entry where a path to write needs a directory;
 - a directory where a path to write needs a file;
-- an entry, or any F or T path, equal to a temporary name this run needs.
-  On a case-insensitive filesystem, "equal" ignores case.
+- an entry, or any F or T path, equal to the temporary name of any path of
+  the diff, written or not, since resume removes them all. On a
+  case-insensitive filesystem, "equal" ignores case.
 
 Blocking entries are refused like hazards, before anything is written.
 
@@ -272,6 +275,13 @@ With nothing blocking, materialise does the following, in order:
 6. remove the record;
 7. sync `.praps`.
 
+Just before a path is removed (step 1) or renamed over (step 4), it is read
+again. If it no longer holds F's bytes (or, for a path F did not have, is no
+longer absent), it was edited during the write: it is kept, the temporary
+file is removed, and a note names it. This shrinks the window in which an
+edit saved during the write could be lost to the gap between that read and
+the syscall that follows; the mode is not read again.
+
 Setting the bit before the rename means T's bytes never appear with F's
 mode. Where files have no executable bit, setting it does nothing, and the
 mode is kept as described in [The executable bit](#the-executable-bit).
@@ -280,9 +290,10 @@ mode is kept as described in [The executable bit](#the-executable-bit).
 
 Every command that opens the working copy (every one but `init`) first looks
 for a record:
-- **The target op is the current single head.** Resume removes the diff's
-  temporary names that exist, then materialises F → T again with the same
-  rules. A path that still blocks, or has since become a hazard (a case
+- **The target op is the current single head.** Resume removes the files
+  at the diff's temporary names (never an F or T path, and never anything
+  but a file), then materialises F → T again with the same rules. A
+  temporary name still taken leaves its path as it is, with a note. A path that still blocks, or has since become a hazard (a case
   variant created after the crash, say), does not fail the command. Resume
   finishes every other path, drops the record, and adds a note naming the
   paths it left as they are.
