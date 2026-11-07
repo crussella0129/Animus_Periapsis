@@ -214,4 +214,4 @@
 - **Completed:** 2026-11-07T21:33:51Z
 - **Files modified:** crates/xtask/src/policy.rs, crates/sim/clippy.toml, crates/store/clippy.toml, crates/praps/clippy.toml, crates/workspace/clippy.toml
 - **Evidence:** fs-boundary requires std::hash::RandomState in every boundary clippy.toml (policy_requires_the_random_state_ban); deps walks members' normal and target-specific dependencies, with package renames and inherited workspace aliases, and Cargo.lock edges in name, name-version and sourced forms, rejecting any route from a boundary crate other than sim to getrandom, rand, uuid or fastrand (policy_rejects_transitive_randomness: registry, renamed, alias, target, fastrand and sourced entries fail; dev-only proptest, build-only and through-sim pass). The real workspace passes cargo policy. Clippy probe: a hash_map::RandomState use in store is rejected as disallowed std::hash::RandomState. xtask tests 70 passed; clippy clean.
-- **Commit:** PENDING
+- **Commit:** `072c9fd9a935945b2d115d02cd2fcab7ce454e98`
