@@ -278,4 +278,4 @@
 - **Completed:** 2026-11-07T22:54:29Z
 - **Files modified:** README.md, docs/prior-art.md, docs/work/tasks.md
 - **Evidence:** README lists praps log, praps undo and praps restore OP, says what undo and restore keep and refuse, and updates the workspace and praps crate rows. docs/prior-art.md credits jj's operation log (op undo, op restore) and stale-working-copy recovery, and Microsoft's Naming Files, Paths, and Namespaces as a specification source; cargo policy credits passes. Backlog T-018 (log linear in the op log) records work found and not done; T-011, T-012, T-015, T-016 and T-017 stay. Book check 0 violations.
-- **Commit:** PENDING
+- **Commit:** `63569fbcc7b501bb93aeb9836ba8f7db04bcecbe`
