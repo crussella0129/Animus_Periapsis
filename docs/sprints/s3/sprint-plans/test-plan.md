@@ -25,7 +25,7 @@
 - **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md)
 - `policy_requires_the_random_state_ban`: a boundary config without `std::hash::RandomState` fails `fs-boundary`.
 - `policy_rejects_transitive_randomness`:
-  - fails: `store` → registry `x` → `rand`, the same through a renamed dependency, and through a `[target.'cfg(windows)'.dependencies]` entry;
+  - fails: `store` → registry `x` → `rand`; the same through a renamed dependency, through an inherited `[workspace.dependencies]` alias, and through a `[target.'cfg(windows)'.dependencies]` entry; `store` → `fastrand`; a `"name version"` lock entry;
   - passes: a member with `proptest` as a dev-dependency only, `store` → `sim` → `getrandom`, and the real workspace.
 
 ### T-003 unit tests
@@ -64,14 +64,17 @@
   - `resume_finishes_an_interrupted_materialise`;
   - `resume_drops_a_record_whose_op_never_landed`;
   - `resume_drops_a_record_whose_target_is_not_the_head` (with a note);
-  - `resume_finishes_what_it_can_and_notes_the_rest`;
+  - `resume_finishes_what_it_can_and_notes_the_rest` (a blocking entry, and a case-variant hazard created after the crash);
+  - `resume_after_removals_finishes_a_directory_to_file_swap` (a crash between steps 1 and 2);
+  - `resume_with_a_target_that_is_not_the_head_removes_temporaries`;
+  - `materialise_without_an_executable_bit_compares_bytes_only`;
   - `corrupt_record_is_an_error`;
   - `init_never_resumes`.
 - `prefix_names_are_tracked`: a user file named `.praps-tmp-x` is tracked like any other.
 
 ### T-007 unit tests
 - **Intent:** [INT-0009](../../../intents/INT-0009-reversible-by-default.md)
-- `log_lists_ops_newest_first`, `undo_returns_to_the_parent_view`, `undo_twice_toggles`, `undo_on_the_root_op_fails` (snapshot only), `undo_and_restore_snapshot_first`, `restore_by_unique_prefix`, `restore_unknown_or_ambiguous_prefix_fails`.
+- `log_lists_ops_newest_first` (and snapshots first), `undo_returns_to_the_parent_view`, `undo_twice_toggles`, `undo_on_the_root_op_fails` (snapshot only), `undo_and_restore_snapshot_first`, `restore_by_unique_prefix`, `restore_unknown_or_ambiguous_prefix_fails`.
 
 ### T-008 unit tests
 - **Intent:** [INT-0009](../../../intents/INT-0009-reversible-by-default.md)
@@ -91,6 +94,7 @@
 - **Intents:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0007](../../../intents/INT-0007-crash-safe-storage.md), [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md)
 - `materialise_matrix_finds_no_violations`: the exact oracle for crashes inside commands (T, F, or the last acknowledged state); liveness only for crashes inside the durable edit steps.
 - `materialise_matrix_is_reproducible`.
+- `resume_survives_a_second_crash`: every syscall of each recovering `open`, for 10 seeds per mode, then the same oracle.
 - `materialise_catches_no_record`: both modes.
 - The store and Snapshot matrices, re-run: digests unchanged and equal across systems.
 

@@ -137,17 +137,18 @@
   - **WHEN** materialising from tree F to tree T, **THEN** each path **SHALL** first be classified. "Matches F" means bytes, and also mode where the filesystem has an executable bit, equal F's version:
     - **to remove:** tracked by F and not by T, and still matching F;
     - **to write:** in T, with T's entry different from F's, and either matching F or absent where F has none;
+    - **done:** already equal to T's entry, or absent where T has none (as after a partial run); nothing to do, and never noted;
     - **kept:** every other path, a user edit, left as it is.
 
     The F→T diff is the sorted list of paths whose entry differs between F and T. The temporary name for the `n`th path of that diff is `.praps-tmp-<n>` in its directory, a pure function of F and T.
-  - **WHEN** the classification is done, **THEN** materialise **SHALL** refuse, like a hazard and before anything is written, any blocking entry. An F-owned entry is a path to remove, or a directory holding only paths to remove. A blocking entry is any of the following that is not F-owned:
+  - **WHEN** the classification is done, **THEN** materialise **SHALL** refuse, like a hazard and before anything is written, any blocking entry. An F-owned entry is a path to remove, a directory holding only paths to remove, or an empty directory where F had files and T has none. A blocking entry is any of the following that is not F-owned:
     - an entry at a path to write;
     - an entry where a path to write needs a directory;
     - a directory where a path to write needs a file;
     - an entry, or any F or T path, equal (after case folding where the filesystem is case-insensitive) to a temporary name this run needs.
   - **WHEN** there is nothing blocking, **THEN** materialise **SHALL**, in this order:
-    1. remove the paths to remove;
-    2. remove the directories this materialise emptied (an empty directory holding no T path, where F had files under it), deepest first, syncing each and its parent;
+    1. remove the paths to remove, then sync each parent directory touched;
+    2. remove the emptied directories (an empty directory holding no T path, where F had files under it), deepest first: sync the directory, remove it, sync its parent;
     3. create missing directories, shallowest first, syncing each parent;
     4. write each path to write through its temporary name: write, set the executable bit, `sync_file`, rename;
     5. sync every touched directory;
@@ -156,9 +157,9 @@
   - **WHEN** a record must be written, **THEN** `.praps/working-copy` (holding the from op and the target op) **SHALL** be written through a temporary name, synced and renamed, and `.praps` synced, before the target op is committed. The target op's id **SHALL** be computed from its envelope first.
   - **WHEN** `open` (and so every command but `init`) runs and a record exists, **THEN**:
     - if the target op is the current single head: resume **SHALL** remove the diff's temporary names that exist, then materialise F → T again with the same rules;
-    - if a path still blocks: resume **SHALL** finish every other path, drop the record, and add a note naming the paths left as they are;
+    - if a path still blocks, or is now a hazard (for example, a case variant created after the crash): resume **SHALL** finish every other path, drop the record, and add a note naming the paths left as they are, rather than fail;
     - if the target op is absent: resume **SHALL** drop the record and touch no file;
-    - if the target op is present but not the head: resume **SHALL** drop the record, touch no file, and add a note.
+    - if the target op is present but not the head: resume **SHALL** remove the diff's temporary names that exist, drop the record, touch no other file, and add a note.
 
     Notes are returned by `Workspace::notes()`, and `praps` prints them on stderr as `note: …`. A record that does not decode **SHALL** be a `Corrupt` error. `init` and `init_with_store` **SHALL** never resume.
   - **WHEN** the `variants` feature selects `NoRecord`, **THEN** materialise **SHALL** run without writing the record. The `deps` rule **SHALL** treat `store/variants` and `workspace/variants` as test-only, allowed only through `[dev-dependencies]`.
@@ -207,7 +208,7 @@
     - each pre-state **SHALL** be recovered exactly by `restore` of its snapshot op.
 
     That is 0 collapsed (AC-2).
-  - **WHEN** each op of a corpus covering every op type (init, snapshot, new, undo, restore) is restored, and separately when `undo` runs right after each op type other than `init` (undo right after `init` is the expected failure of `undo_on_the_root_op_fails`), **THEN** the new head's view **SHALL** be the expected view object. The tracked working copy **SHALL** equal that view's working-copy tree byte for byte, with modes (AC-3). The corpus includes file↔directory swaps and executable files whose content changes.
+  - **WHEN** each op of a corpus covering every op type (init, snapshot, new, undo, restore) is restored, and separately when `undo` runs right after each op type other than `init` (undo right after `init` is the expected failure of `undo_on_the_root_op_fails`), **THEN** the new head's view **SHALL** be the expected view object. The tracked working copy **SHALL** equal that view's working-copy tree byte for byte, with modes where the filesystem has an executable bit (AC-3). The corpus includes file↔directory swaps and executable files whose content changes.
   - **WHEN** the ops are listed after any command sequence, **THEN** every earlier op **SHALL** still be present (AC-1).
   - **WHEN** a case corpus runs on a `SimFs` with case-insensitive rules, **THEN** every hazard **SHALL** be refused with 0 files changed, and every allowed tree **SHALL** materialise. The corpus has at least 12 cases: files, directories (file `a` against directory `A/`), non-ASCII, `σ`/`ς`, `s`/`ſ`, an untracked variant on disk, and a case-only rename (refused, the known limit). With case-sensitive rules, the same trees **SHALL** materialise.
   - **WHEN** a Windows-name corpus (at least 34 names) runs with Windows rules, **THEN** every hazard **SHALL** be refused, 100%. The names cover every reserved base with extensions, case variants and trailing spaces before the extension; every forbidden character; a trailing dot and a trailing space; and a tracked, unchanged hazardous name, which is not refused. Without those rules, the same trees **SHALL** materialise.
@@ -221,6 +222,7 @@
     - closure and durability **SHALL** hold.
 
     The scenario runs init, durable edits, snapshot, new, durable edits (including an executable file whose content changes and a file↔directory swap), `undo` and `restore`. Each edit syncs its file and every directory it changes. Every cell **SHALL** reproduce, with the same outcome.
+  - **WHEN** a cell's recovery resumes a record, **THEN** a second pass **SHALL** crash at every syscall of that recovering `open` (for 10 seeds per mode), recover, `open` again, and apply the same oracle with 0 violations.
   - **WHEN** the scenario runs with `NoRecord`, **THEN** it **SHALL** report working-copy violations in both modes.
   - **WHEN** the edit corpus (≥ 500 sequences on `SimFs`, ≥ 20 on real NTFS and ext4) also runs `undo` and `restore` of a random earlier op, **THEN** the following **SHALL** hold, with 0 lost edits:
     - the independent model predicts its own op list (count, and for each op the files with contents, modes and `.gitignore` rules, and the parent);

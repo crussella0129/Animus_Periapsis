@@ -98,7 +98,10 @@ git worktrees.
   repeated `init` still writes nothing. A write uses deterministic temporary
   names, `.praps-tmp-<n>`, which exist only while the record names them. No
   name is silently ignored: a user's file with that prefix is tracked like any
-  other (Sprint 3 plan critique, C-012, C-013).
+  other (Sprint 3 plan critique, C-012, C-013). While a record exists, its
+  diff's temporary names belong to `praps`: a user file created at one of them
+  during the interrupted write may be replaced or removed by resume. Every
+  way resume drops a record also removes those names (round 3, C-004).
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §4 Phase 1 and R5 §C.1).
@@ -111,3 +114,4 @@ git worktrees.
 - 2026-11-07: revised while `active` (Sprint 2 Loop): Consequences record the linear-scan requirement (CR-04). AC-1 and AC-2 are met by the Sprint 2 test report; AC-3 to AC-6 remain, so the chapter stays `active`.
 - 2026-11-07: revised while `active` (Sprint 3 plan critique, round 1): Consequences record that every command except `init` resumes an interrupted write, and that temporary names are deterministic and never ignored.
 - 2026-11-07: revised while `active` (Sprint 3 plan critique, round 2): every command that opens the working copy resumes, not only those that write it.
+- 2026-11-07: revised while `active` (Sprint 3 plan critique, round 3): temporary names belong to `praps` while a record exists, and every way resume drops a record removes them.
