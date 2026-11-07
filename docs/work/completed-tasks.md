@@ -206,4 +206,4 @@
 - **Completed:** 2026-11-07T21:29:15Z
 - **Files modified:** docs/sprints/s3/sprint-tests/ci-sprint2.md, docs/intents/INT-0001-periapsis-charter.md, docs/intents/INT-0002-typed-acceptance-criteria.md, docs/intents/INT-0003-engineering-baseline.md, docs/intents/INT-0004-windows-and-linux.md, docs/intents/INT-0006-format-v1.md, docs/work/tasks.md
 - **Evidence:** ci-sprint2.md records runs 42403413644, 42403409376 and 42404724911 from gh run view: every job success, 332 tests per cargo ci leg on ubuntu-26.04 and windows-2025-vs2026 with rustc 1.99.1, cargo deny ok. No sign-off was given; they carry forward as backlog T-017.
-- **Commit:** PENDING
+- **Commit:** `f14f2f3bfac38d0580fe7e965be0aedc128113e4`
