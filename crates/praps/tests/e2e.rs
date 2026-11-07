@@ -179,3 +179,66 @@ fn praps_status_reports_non_utf8_names_and_directories() {
     assert_eq!(ok(&["fsck"], &root), ["clean"]);
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// Undo and restore through the binary on the real filesystem: files come
+/// back exactly, every op stays listed, and the store stays clean (INT-0009
+/// AC-1 to AC-3; Sprint 3 test plan, E2E).
+#[test]
+fn praps_history_end_to_end() {
+    let dir = claim("history");
+    let root = dir.join("project");
+    ok(&["init", "project"], &dir);
+    write(&root, "README.md", b"# project\n");
+    write(&root, "src/main.rs", b"fn main() {}\n");
+    write(&root, ".gitignore", b"*.log\n");
+    write(&root, "build.log", b"ignored");
+    assert_eq!(
+        ok(&["status"], &root),
+        ["A .gitignore", "A README.md", "A src/main.rs"]
+    );
+    let read = |path: &str| fs::read(root.join(path)).ok();
+
+    ok(&["new"], &root);
+    write(&root, "README.md", b"# project\n\nMore.\n");
+    fs::remove_file(root.join("src/main.rs")).unwrap();
+    write(&root, "docs/guide.md", b"guide");
+    assert_eq!(
+        ok(&["status"], &root),
+        ["M README.md", "A docs/guide.md", "D src/main.rs"]
+    );
+
+    // Undo: back to the files before `new`.
+    let undone = ok(&["undo"], &root);
+    assert!(undone[0].starts_with("undid the last op"), "{undone:?}");
+    assert_eq!(read("README.md").unwrap(), b"# project\n");
+    assert_eq!(read("src/main.rs").unwrap(), b"fn main() {}\n");
+    assert_eq!(read("docs/guide.md"), None);
+    assert!(!root.join("docs").exists());
+    assert_eq!(
+        read("build.log").unwrap(),
+        b"ignored",
+        "ignored files are untouched"
+    );
+
+    // Restore the snapshot undo took: the edits are back.
+    let log = ok(&["log"], &root);
+    let edits = log[1].split(' ').next().unwrap();
+    ok(&["restore", edits], &root);
+    assert_eq!(read("README.md").unwrap(), b"# project\n\nMore.\n");
+    assert_eq!(read("src/main.rs"), None);
+    assert_eq!(read("docs/guide.md").unwrap(), b"guide");
+    assert_eq!(
+        ok(&["status"], &root),
+        ["M README.md", "A docs/guide.md", "D src/main.rs"]
+    );
+
+    // Every op is still listed: none was removed, and `restore` added one.
+    let after = ok(&["log"], &root);
+    assert_eq!(after.len(), log.len() + 1, "{after:?}");
+    for line in &log {
+        assert!(after.contains(line), "{line} was removed");
+    }
+    assert!(!root.join(".praps/working-copy").exists());
+    assert_eq!(ok(&["fsck"], &root), ["clean"]);
+    let _ = fs::remove_dir_all(&dir);
+}

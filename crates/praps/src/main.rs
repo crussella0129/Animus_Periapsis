@@ -2,18 +2,23 @@
 //! `praps`, the Periapsis command.
 //!
 //! ```text
-//! praps init [DIR]     make DIR (default: .) a repository
-//! praps new [DIR]      start a new working-copy change
-//! praps status [DIR]   snapshot the working copy and list its changes
-//! praps fsck [DIR]     check the store of the repository or store in DIR
+//! praps init [DIR]          make DIR (default: .) a repository
+//! praps new [DIR]           start a new working-copy change
+//! praps status [DIR]        snapshot the working copy and list its changes
+//! praps log [DIR]           list every op, newest first
+//! praps undo [DIR]          undo the last op, writing the working copy back
+//! praps restore OP [DIR]    return to the state op OP (an id or prefix) left
+//! praps fsck [DIR]          check the store of the repository or store in DIR
 //! ```
 //!
-//! `init`, `new` and `status` open the working copy and snapshot it first
-//! (INT-0014). `fsck` only reads (INT-0007 AC-4), and `init` on an existing
-//! repository writes nothing, so neither snapshots. Exit codes follow the
-//! project's convention: 0 success (for `fsck`, clean), 1 a repository
-//! error (not a repository, several op heads, corruption), 2 a usage error.
-//! The commands take no flags.
+//! Every command but `init` and `fsck` opens the working copy: it finishes
+//! an interrupted write (printing a `note:` on stderr for anything it left),
+//! then snapshots it (INT-0014, INT-0009). `fsck` only reads (INT-0007 AC-4),
+//! and `init` on an existing repository writes nothing. Exit codes follow
+//! the project's convention: 0 success (for `fsck`, clean), 1 a repository
+//! error (not a repository, several op heads, corruption, nothing to undo,
+//! an unknown or ambiguous op, a hazard or an entry in the way), 2 a usage
+//! error. The commands take no flags.
 
 use std::ffi::OsString;
 use std::io::{self, Write};
@@ -25,7 +30,10 @@ use sim::{Fs, RealFs, os_seed};
 use store::Store;
 use workspace::{PRAPS_DIR, STORE_DIR, Workspace};
 
-const USAGE: &str = "usage: praps init|new|status|fsck [DIR]   (no flags)";
+const USAGE: &str =
+    "usage: praps init|new|status|log|undo|fsck [DIR] | praps restore OP [DIR]   (no flags)";
+/// How many hex digits of an op id or change ID `praps` prints.
+const SHOWN: usize = 12;
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -46,6 +54,17 @@ fn cli(args: &[OsString], out: &mut impl Write, err: &mut impl Write) -> u8 {
     {
         return usage(err);
     }
+    if args.first().and_then(|command| command.to_str()) == Some("restore") {
+        let (op, dir) = match args {
+            [_, op] => (op, Path::new(".")),
+            [_, op, dir] => (op, Path::new(dir)),
+            _ => return usage(err),
+        };
+        let Some(op) = op.to_str() else {
+            return usage(err);
+        };
+        return restore(op, dir, out, err);
+    }
     let (command, dir) = match args {
         [command] => (command, Path::new(".")),
         [command, dir] => (command, Path::new(dir)),
@@ -55,8 +74,63 @@ fn cli(args: &[OsString], out: &mut impl Write, err: &mut impl Write) -> u8 {
         Some("init") => init(dir, out, err),
         Some("new") => new(dir, out, err),
         Some("status") => status(dir, out, err),
+        Some("log") => log(dir, out, err),
+        Some("undo") => undo(dir, out, err),
         Some("fsck") => fsck(dir, out, err),
         _ => usage(err),
+    }
+}
+
+/// The first [`SHOWN`] hex digits of `bytes`.
+fn short(bytes: &[u8]) -> String {
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    hex[..SHOWN.min(hex.len())].to_owned()
+}
+
+fn log(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
+    match open(dir, err).and_then(|mut ws| ws.log()) {
+        Ok(entries) => {
+            for entry in entries {
+                let files = if entry.files == 1 { "file" } else { "files" };
+                let _ = writeln!(
+                    out,
+                    "{} change {} {} {files}",
+                    short(entry.id.digest()),
+                    short(&entry.change_id),
+                    entry.files
+                );
+            }
+            0
+        }
+        Err(error) => fail("log", dir, error, err),
+    }
+}
+
+fn undo(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
+    match open(dir, err).and_then(|mut ws| ws.undo()) {
+        Ok((restored, _)) => {
+            let _ = writeln!(
+                out,
+                "undid the last op: the working copy is back to op {}",
+                short(restored.digest())
+            );
+            0
+        }
+        Err(error) => fail("undo", dir, error, err),
+    }
+}
+
+fn restore(op: &str, dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
+    match open(dir, err).and_then(|mut ws| ws.restore(op)) {
+        Ok((restored, _)) => {
+            let _ = writeln!(
+                out,
+                "restored the working copy to op {}",
+                short(restored.digest())
+            );
+            0
+        }
+        Err(error) => fail("restore", dir, error, err),
     }
 }
 

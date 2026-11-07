@@ -399,6 +399,12 @@ fn praps_rejects_flags_and_extra_arguments() {
         &["status", "a", "b"][..],
         &["init", "a", "b"][..],
         &["snapshot"][..],
+        &["log", "-n", "3"][..],
+        &["log", "a", "b"][..],
+        &["undo", "--force"][..],
+        &["undo", "a", "b"][..],
+        &["restore", "-f", "abc"][..],
+        &["restore", "abc", "--force"][..],
     ] {
         let output = praps(args, &dir);
         assert_eq!(code(&output), 2, "{args:?}: {output:?}");
@@ -434,5 +440,184 @@ fn praps_fsck_reports_a_broken_repository_store() {
         err.contains(".praps/store is not") || err.contains(".praps\\store is not"),
         "{err}"
     );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+// ------------------------------------------- log, undo, restore (Sprint 3 T-008)
+
+/// The 12-hex op prefixes `praps log` prints, newest first.
+fn logged_ops(root: &Path) -> Vec<String> {
+    let output = praps(&["log"], root);
+    assert_eq!(code(&output), 0, "{output:?}");
+    lines(&output)
+        .iter()
+        .map(|line| line.split(' ').next().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn praps_log_lists_ops_newest_first() {
+    let dir = claim("log");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    write(&root, "a", b"1");
+    write(&root, "b", b"1");
+    assert_eq!(code(&praps(&["new", "repo"], &dir)), 0);
+    let output = praps(&["log", "repo"], &dir);
+    assert_eq!(code(&output), 0, "{output:?}");
+    let lines = lines(&output);
+    // init, the snapshot `new` took, `new` itself.
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    for line in &lines {
+        let parts: Vec<&str> = line.split(' ').collect();
+        assert_eq!(parts.len(), 5, "{line}");
+        assert!(parts[0].len() == 12 && parts[0].bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_eq!(parts[1], "change");
+        assert_eq!(parts[2].len(), 12);
+    }
+    assert!(lines[0].ends_with(" 2 files"), "{lines:?}");
+    assert!(
+        lines[2].ends_with(" 0 files"),
+        "the root op is last: {lines:?}"
+    );
+    // The newest is the head.
+    let store = Store::open(RealFs, &root.join(".praps/store"), HashAlg::DEFAULT, 1).unwrap();
+    let head = *store.heads().unwrap().first().unwrap();
+    assert!(head.to_string().contains(&lines[0][..12]));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn praps_undo_restores_files() {
+    let dir = claim("undo");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    write(&root, "a", b"1");
+    assert_eq!(code(&praps(&["new", "repo"], &dir)), 0);
+    write(&root, "a", b"2");
+    write(&root, "sub/b", b"new");
+    let output = praps(&["undo", "repo"], &dir);
+    assert_eq!(code(&output), 0, "{output:?}");
+    assert!(
+        stdout(&output).starts_with("undid the last op"),
+        "{output:?}"
+    );
+    assert_eq!(fs::read(root.join("a")).unwrap(), b"1");
+    assert!(
+        !root.join("sub").exists(),
+        "the emptied directory is removed"
+    );
+    // Undo again: back to the edits.
+    assert_eq!(code(&praps(&["undo"], &root)), 0);
+    assert_eq!(fs::read(root.join("a")).unwrap(), b"2");
+    assert_eq!(fs::read(root.join("sub/b")).unwrap(), b"new");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn praps_undo_with_nothing_to_undo_fails() {
+    let dir = claim("undo-root");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    let output = praps(&["undo", "repo"], &dir);
+    assert_eq!(code(&output), 1, "{output:?}");
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("nothing to undo"));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn praps_restore_by_prefix() {
+    let dir = claim("restore");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    write(&root, "a", b"1");
+    assert_eq!(code(&praps(&["status"], &root)), 0);
+    let first = logged_ops(&root)[0].clone();
+    write(&root, "a", b"2");
+    assert_eq!(code(&praps(&["status"], &root)), 0);
+    let output = praps(&["restore", &first, "repo"], &dir);
+    assert_eq!(code(&output), 0, "{output:?}");
+    assert_eq!(
+        stdout(&output).trim(),
+        format!("restored the working copy to op {first}")
+    );
+    assert_eq!(fs::read(root.join("a")).unwrap(), b"1");
+    // Without DIR, the current directory; with the `blake3:` form.
+    // Newest first: the restore op, the snapshot of `a` = 2, the first.
+    let second = logged_ops(&root)[1].clone();
+    assert_eq!(
+        code(&praps(&["restore", &format!("blake3:{second}")], &root)),
+        0
+    );
+    assert_eq!(fs::read(root.join("a")).unwrap(), b"2");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn praps_restore_unknown_or_ambiguous_fails() {
+    let dir = claim("restore-bad");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    for i in 0..20u8 {
+        write(&root, "a", &[b'a' + i]);
+        assert_eq!(code(&praps(&["status"], &root)), 0);
+    }
+    let ops = logged_ops(&root);
+    let shared = "0123456789abcdef"
+        .chars()
+        .map(String::from)
+        .find(|p| ops.iter().filter(|op| op.starts_with(p.as_str())).count() >= 2)
+        .unwrap();
+    let output = praps(&["restore", &shared], &root);
+    assert_eq!(code(&output), 1, "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("matches"),
+        "{output:?}"
+    );
+    let output = praps(&["restore", "nothing"], &root);
+    assert_eq!(code(&output), 1, "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no op matches"));
+    assert_eq!(logged_ops(&root).len(), ops.len(), "no op was added");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn praps_restore_without_op_is_a_usage_error() {
+    let dir = claim("restore-usage");
+    for args in [&["restore"][..], &["restore", "a", "b", "c"][..]] {
+        let output = praps(args, &dir);
+        assert_eq!(code(&output), 2, "{args:?}: {output:?}");
+        assert!(output.stdout.is_empty());
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A record left by an interrupted write whose target is no longer the head:
+/// the next command drops it and says so on stderr.
+#[test]
+fn praps_prints_notes() {
+    let dir = claim("notes");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    write(&root, "a", b"1");
+    assert_eq!(code(&praps(&["status"], &root)), 0);
+    let store = Store::open(RealFs, &root.join(".praps/store"), HashAlg::DEFAULT, 1).unwrap();
+    let head = *store.heads().unwrap().first().unwrap();
+    let root_op = *store.ops().unwrap()[&head].parents.first().unwrap();
+    workspace::record::write(
+        &RealFs,
+        &root.join(".praps"),
+        &workspace::record::Record {
+            from: head,
+            target: root_op,
+        },
+    )
+    .unwrap();
+    let output = praps(&["status"], &root);
+    assert_eq!(code(&output), 0, "{output:?}");
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(err.starts_with("note: "), "{err}");
+    assert!(!root.join(".praps/working-copy").exists());
+    assert_eq!(fs::read(root.join("a")).unwrap(), b"1");
     let _ = fs::remove_dir_all(&dir);
 }

@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-008 (sprint 3) [intent: INT-0009]: praps log, praps undo and praps restore OP — touches: crates/praps/
 - [ ] T-009 (sprint 3) [intent: INT-0009, INT-0004, INT-0005, INT-0007, INT-0014]: Reversibility and hazard corpora, the Materialise crash scenario, and the extended edit corpus — touches: crates/workspace/tests/
 - [ ] T-010 (sprint 3) [intent: INT-0009, INT-0003]: README, credits and backlog — touches: README.md, docs/SUMMARY.md, docs/prior-art.md, docs/work/tasks.md
 - [ ] T-011 (backlog) [intent: INT-0007, INT-0005]: Writers in separate processes (INT-0007 AC-5, at least four, under crash injection), together with a simulated process crash in which a later process sees the crashed one's unsynced state before the system crash resolves it — touches: crates/sim/, crates/store/
