@@ -738,3 +738,99 @@ fn always_ignored_names_ignore_case() {
     ws.snapshot().unwrap();
     assert_eq!(paths(&ws.working_copy().unwrap().2), ["kept"]);
 }
+
+// -------------------------------------------- test-critique regressions
+
+/// A snapshot replaces only its own changeset among the view's heads: any
+/// other head is kept (test critique C-003).
+#[test]
+fn snapshot_keeps_other_heads() {
+    let ws = fresh(30);
+    let fs = fs_of(&ws);
+    let (wc, ..) = ws.working_copy().unwrap();
+    let mut store = Store::open(
+        Rc::clone(&fs),
+        Path::new("repo/.praps/store"),
+        HashAlg::DEFAULT,
+        30,
+    )
+    .unwrap();
+    let head = *store.heads().unwrap().first().unwrap();
+    let other = Changeset {
+        parents: Vec::new(),
+        change_id: [9; 16],
+        changes: BTreeMap::new(),
+        description: b"another head".to_vec(),
+    };
+    let other = store.put_object(&other.to_envelope()).unwrap();
+    let view = View {
+        heads: [wc, other].into(),
+        workspaces: [("default".to_owned(), wc)].into(),
+    };
+    let view = store.put_object(&view.to_envelope()).unwrap();
+    store
+        .commit_op(&Operation {
+            parents: [head].into(),
+            view,
+        })
+        .unwrap();
+    let mut ws = Workspace::init_with_store(store, Path::new(ROOT), 30)
+        .unwrap()
+        .0;
+    put(&fs, "f", b"x");
+    let op = ws.snapshot().unwrap().op.unwrap();
+    let op = ws.store().ops().unwrap()[&op].clone();
+    let view = View::from_envelope(&ws.store().get_object(&op.view).unwrap()).unwrap();
+    let (new, ..) = ws.working_copy().unwrap();
+    assert_eq!(view.heads, [new, other].into());
+}
+
+/// A directory whose name has no UTF-8 form is reported and left alone: its
+/// contents are neither tracked nor touched, and its siblings are still
+/// snapshotted (INT-0004 AC-7; test critique C-005).
+#[test]
+fn raw_named_directories_are_reported_and_left_alone() {
+    let mut ws = fresh(31);
+    let fs = fs_of(&ws);
+    put(&fs, "sibling", b"s");
+    for raw in [
+        RawName::Bytes(vec![0xfe, b'd']),
+        RawName::Bytes(vec![b'd', 0x80]),
+        RawName::Wide(vec![0xdc00, 0xd800]),
+    ] {
+        fs.make_raw_dir(Path::new(ROOT), raw).unwrap();
+    }
+    let before = fs.snapshot();
+    let reported = ws.snapshot().unwrap().reported;
+    assert_eq!(
+        reported
+            .iter()
+            .map(|r| (r.path.as_str(), r.reason))
+            .collect::<Vec<_>>(),
+        [
+            (r"\u{dc00}\u{d800}", Reason::NotUtf8),
+            (r"\xfed", Reason::NotUtf8),
+            (r"d\x80", Reason::NotUtf8),
+        ]
+    );
+    assert_eq!(paths(&ws.working_copy().unwrap().2), ["sibling"]);
+    let after = fs.snapshot();
+    for (key, node) in &before {
+        if !key.starts_with("repo/.praps") {
+            assert_eq!(after.get(key), Some(node), "{key} changed");
+        }
+    }
+}
+
+/// A carriage return ends a `.gitignore` line without hiding an escaped
+/// trailing space before it (test critique C-008).
+#[test]
+fn ignore_strips_cr_before_an_escaped_space() {
+    let mut ws = fresh(32);
+    let fs = fs_of(&ws);
+    put(&fs, ".gitignore", b"x\\ \r\n");
+    put(&fs, "x ", b"ignored");
+    put(&fs, "x", b"kept");
+    ws.snapshot().unwrap();
+    assert_eq!(paths(&ws.working_copy().unwrap().2), [".gitignore", "x"]);
+}

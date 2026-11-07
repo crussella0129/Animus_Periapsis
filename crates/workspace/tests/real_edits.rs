@@ -7,7 +7,7 @@ mod common;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use common::{ROOT, edit_sequence};
+use common::{Model, ROOT, edit_sequence};
 use sim::{Fs, RealFs, Rng};
 use workspace::Workspace;
 
@@ -101,7 +101,7 @@ fn real_edit_corpus_loses_nothing() {
         RealFs.create_dir(&dir).unwrap();
         let fs = Under(dir);
         let mut ws = Workspace::init(fs, Path::new(ROOT), seed).unwrap().0;
-        checked += edit_sequence(&mut ws, seed, STEPS, &set_exec);
+        checked += edit_sequence(&mut ws, Model::default(), seed, STEPS, &set_exec);
     }
     println!("real edit corpus: {SEQUENCES} sequences, {checked} snapshots, 0 lost edits");
     assert_eq!(checked, SEQUENCES as usize * STEPS);

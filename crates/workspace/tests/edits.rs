@@ -6,7 +6,9 @@ mod common;
 use std::path::Path;
 use std::rc::Rc;
 
-use common::{ROOT, edit_sequence};
+use std::collections::BTreeSet;
+
+use common::{Model, ROOT, edit_sequence, put, recorded_tree};
 use sim::{Mode, SimFs};
 use workspace::Workspace;
 
@@ -18,16 +20,37 @@ fn edit_corpus_loses_nothing() {
     let mut checked = 0;
     for seed in 0..SEQUENCES {
         let fs = Rc::new(SimFs::new(seed, Mode::Strict));
-        // Half the sequences run on a filesystem with no executable bit, as
-        // on Windows.
-        fs.set_has_executable_bit(seed % 2 == 0);
         let mut ws = Workspace::init(Rc::clone(&fs), Path::new(ROOT), seed)
             .unwrap()
             .0;
-        checked += edit_sequence(&mut ws, seed, STEPS, &|fs: &Rc<SimFs>, name, executable| {
-            fs.set_executable(&Path::new(ROOT).join(name), executable)
+        let mut model = Model::default();
+        // Half the sequences run on a filesystem with no executable bit, as
+        // on Windows. They start from a checkout made where there is one, with
+        // executable files tracked, so the "keep the recorded mode" rule is
+        // exercised (test critique C-002).
+        if seed % 2 == 1 {
+            put(&*fs, "a", b"#!");
+            put(&*fs, "d2/z", b"#!");
+            put(&*fs, "c.txt", b"plain");
+            fs.set_executable(&Path::new(ROOT).join("a"), true).unwrap();
+            fs.set_executable(&Path::new(ROOT).join("d2/z"), true)
                 .unwrap();
-        });
+            ws.snapshot().unwrap();
+            let expected = model.snapshot(&*fs, &BTreeSet::new());
+            assert_eq!(recorded_tree(&ws), expected);
+            assert_eq!(expected["a"].1, codec::Mode::Executable);
+            fs.set_has_executable_bit(false);
+        }
+        checked += edit_sequence(
+            &mut ws,
+            model,
+            seed,
+            STEPS,
+            &|fs: &Rc<SimFs>, name, executable| {
+                fs.set_executable(&Path::new(ROOT).join(name), executable)
+                    .unwrap();
+            },
+        );
     }
     println!("edit corpus: {SEQUENCES} sequences, {checked} snapshots, 0 lost edits");
     assert_eq!(checked, SEQUENCES as usize * STEPS);

@@ -410,3 +410,21 @@ fn praps_rejects_flags_and_extra_arguments() {
     );
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// When `DIR/.praps/store` cannot be opened, `fsck DIR` reports that, not a
+/// bare-store error about `DIR` (code review CR-09; test critique C-004).
+#[test]
+fn praps_fsck_reports_a_broken_repository_store() {
+    let dir = claim("fsck-broken");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    fs::remove_dir_all(root.join(".praps/store/ops")).unwrap();
+    let output = praps(&["fsck", "repo"], &dir);
+    assert_eq!(code(&output), 1, "{output:?}");
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(err.contains(".praps") && err.contains("store"), "{err}");
+    assert!(err.contains("is not a Periapsis store"), "{err}");
+    let named = format!("{} is not", root.display());
+    assert!(!err.contains(&named), "the bare-store fallback ran: {err}");
+    let _ = fs::remove_dir_all(&dir);
+}

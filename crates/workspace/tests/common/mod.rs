@@ -65,19 +65,30 @@ pub fn writes(trace: &[String]) -> Vec<&String> {
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use codec::{Mode, RepoPath};
+use codec::Mode;
 use hash::HashAlg;
 use sim::{Kind, Rng};
 use workspace::Workspace;
-use workspace::tree::Tree;
 
 /// The ignore rules an edit sequence may switch on, with an oracle written
-/// apart from the workspace's matcher.
-pub const RULES: [&str; 2] = ["*.tmp", "d1/"];
+/// apart from the workspace's matcher. Two live in the top `.gitignore`;
+/// two (written `d2:…`) live in `d2/.gitignore`: a nested whitelist that
+/// re-includes `d2/h.tmp` against the top `*.tmp`, and a nested directory
+/// rule that excludes `d2/e/`. A file holding no active rule is deleted.
+pub const RULES: [&str; 4] = ["*.tmp", "d1/", "d2:!h.tmp", "d2:e/"];
 
-/// Whether `path` is ignored under the active `rules` (a subset of
-/// [`RULES`]), by their plain meaning.
+/// Whether `path` is ignored under the active `rules`, by Git's meaning:
+/// the deeper `d2/.gitignore` decides first, an excluded directory cannot be
+/// re-included, then the top file.
 pub fn oracle_ignored(path: &str, rules: &BTreeSet<&str>) -> bool {
+    if path.starts_with("d2/") {
+        if rules.contains("d2:e/") && path.starts_with("d2/e/") {
+            return true;
+        }
+        if rules.contains("d2:!h.tmp") && path == "d2/h.tmp" {
+            return false;
+        }
+    }
     (rules.contains("*.tmp") && path.rsplit('/').next().unwrap().ends_with(".tmp"))
         || (rules.contains("d1/") && path.starts_with("d1/"))
 }
@@ -114,38 +125,52 @@ pub fn files_on_disk(fs: &impl Fs) -> BTreeMap<String, (Vec<u8>, bool)> {
     files
 }
 
-/// What the working-copy change must hold after a snapshot: every regular
-/// file that is not ignored or was tracked before, with its content, and
-/// its mode under the filesystem's executable-bit rule as the spec states it
-/// (`docs/spec/working-copy.md`): from the bit where there is one, else the
-/// mode the working-copy change, or else its parent, last recorded.
-pub fn expected_tree(
-    fs: &impl Fs,
-    tracked_before: &Tree,
-    parent: &Tree,
-    rules: &BTreeSet<&str>,
-) -> BTreeMap<String, (Vec<u8>, Mode)> {
-    let mut expected = BTreeMap::new();
-    for (path, (content, executable)) in files_on_disk(fs) {
-        let repo_path = RepoPath::new(path.clone()).unwrap();
-        let before = tracked_before.get(&repo_path);
-        if oracle_ignored(&path, rules) && before.is_none() {
-            continue;
-        }
-        let mode = if fs.has_executable_bit() {
-            if executable {
-                Mode::Executable
-            } else {
-                Mode::Regular
+/// The oracle's own record of what the repository tracks, kept apart from
+/// the workspace: the working-copy change's paths and modes, and its
+/// parent's. It never reads the implementation's state.
+#[derive(Clone, Debug, Default)]
+pub struct Model {
+    pub tracked: BTreeMap<String, Mode>,
+    pub parent: BTreeMap<String, Mode>,
+}
+
+impl Model {
+    /// What a snapshot must record, by the spec (`docs/spec/working-copy.md`):
+    /// every regular file not ignored or tracked before, with its content;
+    /// its mode from the bit where there is one, else the mode the
+    /// working-copy change, or else its parent, last recorded.
+    pub fn snapshot(
+        &mut self,
+        fs: &impl Fs,
+        rules: &BTreeSet<&str>,
+    ) -> BTreeMap<String, (Vec<u8>, Mode)> {
+        let mut expected = BTreeMap::new();
+        for (path, (content, executable)) in files_on_disk(fs) {
+            let before = self.tracked.get(&path).copied();
+            if oracle_ignored(&path, rules) && before.is_none() {
+                continue;
             }
-        } else {
-            before
-                .or_else(|| parent.get(&repo_path))
-                .map_or(Mode::Regular, |file| file.mode)
-        };
-        expected.insert(path, (content, mode));
+            let mode = if fs.has_executable_bit() {
+                if executable {
+                    Mode::Executable
+                } else {
+                    Mode::Regular
+                }
+            } else {
+                before
+                    .or_else(|| self.parent.get(&path).copied())
+                    .unwrap_or(Mode::Regular)
+            };
+            expected.insert(path, (content, mode));
+        }
+        self.tracked = expected.iter().map(|(p, (_, m))| (p.clone(), *m)).collect();
+        expected
     }
-    expected
+
+    /// `new`: the change just snapshotted becomes the parent.
+    pub fn new_change(&mut self) {
+        self.parent = self.tracked.clone();
+    }
 }
 
 /// The working-copy change's tree with each blob's content.
@@ -164,8 +189,8 @@ pub fn recorded_tree<F: Fs>(ws: &Workspace<F>) -> BTreeMap<String, (Vec<u8>, Mod
 }
 
 /// The paths an edit sequence works on: a few names in a few directories,
-/// some of which the rules ignore.
-const NAMES: [&str; 9] = [
+/// some of which the rules ignore or re-include.
+const NAMES: [&str; 11] = [
     "a",
     "b.tmp",
     "d1/x",
@@ -175,14 +200,44 @@ const NAMES: [&str; 9] = [
     "d1/deep/g",
     "c.txt",
     "d2/h.tmp",
+    "d2/e/k.tmp",
+    "d2/i.tmp",
 ];
 
+/// Writes the two `.gitignore` files for the active rules, deleting one that
+/// holds no rule.
+fn write_rules(fs: &impl Fs, rules: &BTreeSet<&str>) {
+    let on_disk = files_on_disk(fs);
+    for (file, prefix) in [(".gitignore", ""), ("d2/.gitignore", "d2:")] {
+        let lines: String = rules
+            .iter()
+            .filter(|r| {
+                if prefix.is_empty() {
+                    !r.contains(':')
+                } else {
+                    r.starts_with(prefix)
+                }
+            })
+            .map(|r| format!("{}\n", r.trim_start_matches(prefix)))
+            .collect();
+        if lines.is_empty() {
+            if on_disk.contains_key(file) {
+                delete(fs, file);
+            }
+        } else {
+            put(fs, file, lines.as_bytes());
+        }
+    }
+}
+
 /// One random edit sequence of `steps` steps, each followed by a snapshot
-/// (and sometimes a `new`), checked against the oracle after every step.
+/// (and sometimes a `new`), checked after every step against [`Model`],
+/// which starts from `model` and is never fed the workspace's own state.
 /// `set_exec` changes a file's executable bit, where the filesystem has one.
 /// Returns the number of snapshots checked.
 pub fn edit_sequence<F: Fs>(
     ws: &mut Workspace<F>,
+    mut model: Model,
     seed: u64,
     steps: usize,
     set_exec: &dyn Fn(&F, &str, bool),
@@ -194,6 +249,7 @@ pub fn edit_sequence<F: Fs>(
         let fs = ws.store().fs();
         let name = NAMES[rng.below(NAMES.len() as u64) as usize];
         let exists = files_on_disk(fs).contains_key(name);
+        let mut new = false;
         match rng.below(10) {
             0..=3 => put(
                 fs,
@@ -207,18 +263,21 @@ pub fn edit_sequence<F: Fs>(
                 if !rules.remove(rule) {
                     rules.insert(rule);
                 }
-                let text: String = rules.iter().map(|r| format!("{r}\n")).collect();
-                put(fs, ".gitignore", text.as_bytes());
+                write_rules(fs, &rules);
             }
-            8 => {
-                ws.new_change().unwrap();
-            }
+            8 => new = true,
             _ => put(fs, name, b""),
         }
-        let tracked_before = ws.working_copy().unwrap().2;
-        let parent = ws.parent_tree().unwrap();
+        if new {
+            // `new` snapshots, then starts a change that holds the same
+            // tree: the model snapshots, and the tree must not change.
+            let expected = model.snapshot(ws.store().fs(), &rules);
+            ws.new_change().unwrap();
+            model.new_change();
+            assert_eq!(recorded_tree(ws), expected, "seed {seed} step {step}: new");
+        }
         ws.snapshot().unwrap();
-        let expected = expected_tree(ws.store().fs(), &tracked_before, &parent, &rules);
+        let expected = model.snapshot(ws.store().fs(), &rules);
         let recorded = recorded_tree(ws);
         assert_eq!(recorded, expected, "seed {seed} step {step}: lost edit");
         checked += 1;

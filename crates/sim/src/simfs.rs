@@ -362,6 +362,29 @@ impl SimFs {
         Ok(())
     }
 
+    /// Creates an empty directory in `dir` whose name has no UTF-8 form. Not
+    /// a syscall. Like every raw name, no `Path` reaches inside it.
+    pub fn make_raw_dir(&self, dir: &Path, raw: RawName) -> io::Result<()> {
+        let has_utf8_form = match &raw {
+            RawName::Bytes(bytes) => std::str::from_utf8(bytes).is_ok(),
+            RawName::Wide(units) => char::decode_utf16(units.iter().copied()).all(|c| c.is_ok()),
+        };
+        if has_utf8_form {
+            return Err(error(
+                ErrorKind::InvalidInput,
+                "the raw name has a UTF-8 form",
+                dir,
+            ));
+        }
+        let key_name = raw_key(&raw);
+        self.make(dir, key_name.clone(), Entry::Dir)?;
+        let full = key(dir)?;
+        let mut st = self.state.borrow_mut();
+        st.dirs.insert(full.join(&key_name), Dir::default());
+        st.dir_mut(&full, dir)?.raw.insert(key_name, raw);
+        Ok(())
+    }
+
     /// Crash at syscall `at` (counting from 1), or never.
     pub fn set_crash_at(&self, at: Option<u64>) {
         self.state.borrow_mut().crash_at = at;

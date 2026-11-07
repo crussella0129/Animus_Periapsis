@@ -366,6 +366,13 @@ fn snapshot_matrix_is_reproducible() {
         assert_eq!((a.mode, a.seed, a.crash_at), (b.mode, b.seed, b.crash_at));
         assert_eq!(a.state, b.state, "cell {:?}", (a.mode, a.seed, a.crash_at));
         assert_eq!(a.trace, b.trace, "cell {:?}", (a.mode, a.seed, a.crash_at));
+        // The outcome too: the same violations, cell by cell (C-006).
+        assert_eq!(
+            a.violations,
+            b.violations,
+            "cell {:?}",
+            (a.mode, a.seed, a.crash_at)
+        );
         all.extend_from_slice(&a.state.to_bytes());
         all.extend_from_slice(&a.trace.to_bytes());
     }
@@ -382,7 +389,8 @@ fn snapshot_catches_unsynced_objects() {
     let strict: u64 = cells
         .iter()
         .filter(|c| c.mode == Mode::Strict)
-        .map(|c| c.violations.closure + c.violations.durability + c.violations.recency)
+        // Durability or closure, as the EARS clause names them (C-006).
+        .map(|c| c.violations.closure + c.violations.durability)
         .sum();
     assert!(
         strict > 0,

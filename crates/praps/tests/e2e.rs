@@ -121,3 +121,60 @@ fn praps_status_reports_a_non_utf8_name() {
     assert_eq!(ok(&["fsck"], &root), ["clean"]);
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// More names with no UTF-8 form, and a directory with one holding a file:
+/// each reported by its escaped name, its contents never tracked, nothing
+/// touched, siblings snapshotted (INT-0004 AC-7; test critique C-005).
+#[test]
+fn praps_status_reports_non_utf8_names_and_directories() {
+    let dir = claim("raw-more");
+    let root = dir.join("project");
+    ok(&["init", "project"], &dir);
+    #[cfg(unix)]
+    let names: Vec<(std::ffi::OsString, &str)> = {
+        use std::os::unix::ffi::OsStringExt;
+        vec![
+            (std::ffi::OsString::from_vec(vec![0xfe, b'a']), r"\xfea"),
+            (std::ffi::OsString::from_vec(vec![b'a', 0x80]), r"a\x80"),
+            (std::ffi::OsString::from_vec(vec![b'd', 0xc3]), r"d\xc3"),
+        ]
+    };
+    #[cfg(windows)]
+    let names: Vec<(std::ffi::OsString, &str)> = {
+        use std::os::windows::ffi::OsStringExt;
+        vec![
+            (
+                std::ffi::OsString::from_wide(&[0xdc00, u16::from(b'a')]),
+                r"\u{dc00}a",
+            ),
+            (
+                std::ffi::OsString::from_wide(&[u16::from(b'a'), 0xd800, 0xd801]),
+                r"a\u{d800}\u{d801}",
+            ),
+            (
+                std::ffi::OsString::from_wide(&[u16::from(b'd'), 0xdfff]),
+                r"d\u{dfff}",
+            ),
+        ]
+    };
+    // The first two are files; the last is a directory holding a file.
+    fs::write(root.join(&names[0].0), b"one").unwrap();
+    fs::write(root.join(&names[1].0), b"two").unwrap();
+    fs::create_dir(root.join(&names[2].0)).unwrap();
+    fs::write(root.join(&names[2].0).join("inner"), b"inside").unwrap();
+    write(&root, "sibling", b"s");
+    let mut expected: Vec<String> = names
+        .iter()
+        .map(|(_, shown)| format!("skipped {shown} (name is not UTF-8)"))
+        .collect();
+    expected.sort();
+    expected.insert(0, "A sibling".to_owned());
+    assert_eq!(ok(&["status"], &root), expected);
+    assert_eq!(fs::read(root.join(&names[0].0)).unwrap(), b"one");
+    assert_eq!(
+        fs::read(root.join(&names[2].0).join("inner")).unwrap(),
+        b"inside"
+    );
+    assert_eq!(ok(&["fsck"], &root), ["clean"]);
+    let _ = fs::remove_dir_all(&dir);
+}
