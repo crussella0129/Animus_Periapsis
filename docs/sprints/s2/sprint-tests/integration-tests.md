@@ -3,6 +3,8 @@
 These are the results at tested head `c5c6965`, the final run of the Test phase. The run at `d248ccf`, before the [round-1 test critique](critique-round1.md), gave the same matrix, corpus and digest figures. Every run is in [test-matrix-log.md](test-matrix-log.md), under the section named here. The two legs ran at the same time, which made both slower.
 
 ### Canonical runner on the Windows host and in WSL
+
+These are the local halves only. INT-0003 AC-2 to AC-4, INT-0004 AC-1 and INT-0006 AC-3 also need the GitHub matrix, which runs at this sprint's checkpoint and is recorded by backlog T-013; until then those criteria are not met on this evidence (test critique round 2, C-003).
 - **Intents:**
   - [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-1 to AC-4, AC-8
   - [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-1

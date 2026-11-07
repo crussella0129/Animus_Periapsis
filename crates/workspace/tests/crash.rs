@@ -49,9 +49,10 @@ struct Log {
 }
 
 /// The working copy as the scenario's edits leave it, for the model. The
-/// scenario writes no `.gitignore`: a crash may lose or tear one, since its
-/// writes are not synced, which would change what the model must ignore.
-/// Ignore rules are covered by the corpus and edit tests.
+/// scenario writes no `.gitignore`. Ignore matching is a pure read of files
+/// the snapshot never writes, so a crash cannot change its answer; the
+/// Git-recorded corpus and the edit corpora cover it (test critique round
+/// 2, C-004).
 ///
 /// It reads the simulator's snapshot, which is not a syscall, so building
 /// the model moves no crash point.

@@ -171,6 +171,7 @@ fn praps_status_reports_non_utf8_names_and_directories() {
     expected.insert(0, "A sibling".to_owned());
     assert_eq!(ok(&["status"], &root), expected);
     assert_eq!(fs::read(root.join(&names[0].0)).unwrap(), b"one");
+    assert_eq!(fs::read(root.join(&names[1].0)).unwrap(), b"two");
     assert_eq!(
         fs::read(root.join(&names[2].0).join("inner")).unwrap(),
         b"inside"

@@ -424,7 +424,15 @@ fn praps_fsck_reports_a_broken_repository_store() {
     let err = String::from_utf8_lossy(&output.stderr);
     assert!(err.contains(".praps") && err.contains("store"), "{err}");
     assert!(err.contains("is not a Periapsis store"), "{err}");
-    let named = format!("{} is not", root.display());
-    assert!(!err.contains(&named), "the bare-store fallback ran: {err}");
+    // `praps` names the argument as given (`repo`); the bare-store fallback
+    // would report `repo: repo is not …` (test critique round 2, C-001).
+    assert!(
+        !err.contains("repo: repo is not"),
+        "the bare-store fallback ran: {err}"
+    );
+    assert!(
+        err.contains(".praps/store is not") || err.contains(".praps\\store is not"),
+        "{err}"
+    );
     let _ = fs::remove_dir_all(&dir);
 }

@@ -785,9 +785,11 @@ fn snapshot_keeps_other_heads() {
     assert_eq!(view.heads, [new, other].into());
 }
 
-/// A directory whose name has no UTF-8 form is reported and left alone: its
-/// contents are neither tracked nor touched, and its siblings are still
-/// snapshotted (INT-0004 AC-7; test critique C-005).
+/// A directory whose name has no UTF-8 form is reported and not entered,
+/// nothing outside `.praps` changes, and its siblings are still snapshotted
+/// (INT-0004 AC-7; test critique C-005). The simulator's raw directories are
+/// empty; `praps_status_reports_non_utf8_names_and_directories` covers one
+/// holding a file on the real filesystem.
 #[test]
 fn raw_named_directories_are_reported_and_left_alone() {
     let mut ws = fresh(31);
