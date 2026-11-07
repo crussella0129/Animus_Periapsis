@@ -231,3 +231,11 @@
 - **Files modified:** docs/spec/working-copy.md, docs/intents/INT-0009-reversible-by-default.md
 - **Evidence:** working-copy.md gains Writing the working copy: the history commands (log order, undo with H taken before the snapshot, restore by id or unique prefix), the record (format, atomic write before the op, Corrupt on a bad record), path classification (to remove, to write, done, kept), F-owned and blocking entries, deterministic temporary names and their collisions, the hazard rules per component with their scope and the full reserved list, the seven-step materialise order with the executable bit set before the rename, and resume in all three cases with notes on stderr and init never resuming. The INT-0009, INT-0014 and INT-0004 Consequences required by the EARS were written during the plan critiques and stand. INT-0009 moves planned to active. Book check 0 violations; policy passes.
 - **Commit:** `a661a1b505d08db9ae2daa6025f5a3b9403b2da2`
+
+## T-005 (sprint 3)
+- **Description:** The hazard check
+- **Intent:** [INT-0004](../intents/INT-0004-windows-and-linux.md)
+- **Completed:** 2026-11-07T22:03:15Z
+- **Files modified:** crates/workspace/src/hazard.rs, crates/workspace/src/lib.rs, crates/workspace/tests/hazards.rs
+- **Evidence:** workspace::hazard::check is a pure function of F, T, the existing directory listings and NameRules, checking every component of each path T writes (in T, entry different from F). Case-insensitive: fold_eq under to_lowercase or to_uppercase, against T's other names and existing entries per directory; Windows names: refused characters and codes below 32, a trailing dot or space, and the reserved bases with the full list (CON, PRN, AUX, NUL, CONIN$, CONOUT$, COM0-9, LPT0-9, COM and LPT with superscript 1-3). Error::Hazards names every hazard. Tests: case_fold_corpus (15 cases, including file a against directory A/, sigma, long s, Kelvin sign and the conservative sharp s), case_only_rename_is_refused, fold_eq_is_conservative, windows_name_corpus (53 hazardous names as files and directory components, 17 safe ones), unchanged_hazardous_names_are_not_refused. The command-level refusal with only the snapshot written is verified with undo and restore in T-007 (hazards_are_refused_before_any_write). Clippy and policy clean.
+- **Commit:** PENDING

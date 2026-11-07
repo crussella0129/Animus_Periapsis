@@ -14,6 +14,7 @@
 //! comes from an [`Rng`] seeded by the caller, so a run on the simulator is a
 //! function of its seed. `docs/spec/working-copy.md` is the specification.
 
+pub mod hazard;
 mod ignore;
 pub mod tree;
 
@@ -54,6 +55,9 @@ pub enum Error {
     /// A changeset with more than one parent, whose tree needs INT-0012's
     /// merge.
     Merge(HashRef),
+    /// Writing the working copy would hit these hazards (INT-0004 AC-3,
+    /// AC-4). Nothing but the opening snapshot was written.
+    Hazards(Vec<hazard::Hazard>),
 }
 
 impl fmt::Display for Error {
@@ -81,6 +85,20 @@ impl fmt::Display for Error {
                 f,
                 "changeset {id} has several parents; merges are not supported yet"
             ),
+            Error::Hazards(hazards) => {
+                write!(
+                    f,
+                    "the working copy cannot be written on this filesystem; nothing was changed:"
+                )?;
+                for hazard in hazards {
+                    write!(
+                        f,
+                        "
+  {hazard}"
+                    )?;
+                }
+                Ok(())
+            }
         }
     }
 }
