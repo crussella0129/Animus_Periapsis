@@ -34,5 +34,5 @@ before the test records were written.
 | Severity | Where | Limit | Why it stands |
 |----------|-------|-------|---------------|
 | medium | `sim` crash model | A process crash with the system still running (unsynced changes visible to the next process) is not simulated. | The store answers it by design: `open` syncs the layout, and every write re-syncs what it depends on. A matrix mode that continues on un-recovered state is future work for INT-0007 AC-5 (multi-process writers). |
-| low | INT-0007 AC-5 | Writers in separate processes are not tested. | Deferred by the plan; two writers in one process are tested, interleaved at every syscall. |
+| low | INT-0007 AC-5 | Writers in separate processes are not tested. | Deferred by the plan. Two writers in one process are tested: B runs at one of eight syscall boundaries inside A's put of an object, and 70 cells per mode run the race. |
 | low | `RealFs` on Windows | `FlushFileBuffers` on a directory handle is not documented by Microsoft. | Recorded in `docs/spec/storage-durability.md`; INT-0004 AC-5 is an `asserted` criterion for the reviewer. |

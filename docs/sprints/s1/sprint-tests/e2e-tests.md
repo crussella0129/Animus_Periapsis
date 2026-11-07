@@ -1,6 +1,6 @@
 # Sprint 1 End-to-End Test Results
 
-- **Status:** possible, and run, at tested head `133127a` ([test-matrix-log.md](test-matrix-log.md)).
+- **Status:** possible, and run, at tested head `499fb8c` ([test-matrix-log.md](test-matrix-log.md)).
 
 ### praps_fsck_end_to_end
 - **Intents:**
@@ -23,11 +23,11 @@
 - **Run:** a fresh `git clone --branch dev` into the WSL ext4 home directory. Then `rustup toolchain install` from `rust-toolchain.toml`, then a cold `cargo ci`.
 - **Result:**
   - Every step PASS, exit 0 in 64 s.
-  - 236 tests passed.
+  - 240 tests passed.
   - The run left no tracked file changed. The clone was removed afterwards.
 
 ### Not yet possible
 - **Power-loss crashes:** would need hardware fault injection, which isn't planned. The simulator's crash matrix and the documented Windows strategy stand in, and INT-0004 AC-5 is an `asserted` criterion for the reviewer.
 - **Nighthawk runs:** unlocked by the owner approving the Tailscale SSH check (INT-0004 AC-6).
-- **Writers in separate processes:** unlocked by a later sprint on INT-0007 AC-5. Two writers in one process are covered, interleaved at every syscall.
+- **Writers in separate processes:** unlocked by a later sprint on INT-0007 AC-5. Two writers in one process are covered: writer B runs at one of eight syscall boundaries inside writer A's put of an object, chosen by the seed, and 70 cells per mode run the race the re-sync guards.
 - **GitHub Actions on this sprint's head:** runs when `dev` is pushed at the Sprint 1 checkpoint. The next sprint records it, as Sprint 1's T-009 did for Sprint 0 ([ci-sprint0.md](ci-sprint0.md)).

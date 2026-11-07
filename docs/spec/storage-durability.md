@@ -70,9 +70,10 @@ The crash matrix (`crates/store/tests/crash.rs`) runs four scenarios — `init`
 alone, a chain of five ops, a fork and merge, and two writers interleaved at
 the syscall level — with a crash at every syscall, 40 seeds and both modes,
 and checks every recovered state for referential closure, durability of
-acknowledged ops, derived heads, atomicity and stray files. Three known-bad
-stores, as negative controls, must fail it: a pointer file written in place,
-objects not synced, and `init` without directory syncs. The counts of each
+acknowledged ops and objects, derived heads, atomicity, torn files and stray
+files. Four known-bad stores, as negative controls, must fail it: a pointer
+file written in place, objects not synced, `init` without directory syncs, and
+files written in place under their final names. The counts of each
 run are in the sprint's test evidence.
 
 ## Linux
@@ -124,7 +125,8 @@ Evidence:
   FAT, network shares (where a directory flush fails with an error) and
   macOS are not.
 - Concurrent writers in separate processes (INT-0007 AC-5) are not yet
-  tested; two writers in one process are, interleaved at every syscall.
+  tested. Two writers in one process are: the second runs at one of eight
+  syscall boundaries inside the first's put of an object, chosen by the seed.
 - The simulator models a whole-system crash, in which everything not yet
   durable is resolved at once. A process that dies while the system keeps
   running leaves its unsynced changes visible to the next process; the store
