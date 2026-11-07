@@ -16,21 +16,30 @@
 
 pub mod hazard;
 mod ignore;
+pub mod materialise;
+pub mod record;
 pub mod tree;
+#[cfg(feature = "variants")]
+mod variant;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 
-use codec::{CHANGE_ID_LEN, Changeset, Mode, Operation, RepoPath, View, blob, object_id};
+use codec::{
+    CHANGE_ID_LEN, Changeset, Mode, Operation, RepoPath, View, blob, decode_envelope, object_id,
+};
 use hash::{HashAlg, HashRef};
 use sim::{Fs, Kind, Name, Rng};
 use store::Store;
 
 pub use crate::ignore::ALWAYS_IGNORED;
 use crate::ignore::Ignores;
+use crate::record::Record;
 use crate::tree::{File, Tree};
+#[cfg(feature = "variants")]
+pub use crate::variant::Variant;
 
 /// The directory holding the repository's own data.
 pub const PRAPS_DIR: &str = ".praps";
@@ -58,6 +67,9 @@ pub enum Error {
     /// Writing the working copy would hit these hazards (INT-0004 AC-3,
     /// AC-4). Nothing but the opening snapshot was written.
     Hazards(Vec<hazard::Hazard>),
+    /// Entries on disk stand where the write must put files or directories
+    /// (each described). Nothing but the opening snapshot was written.
+    Blocked(Vec<String>),
 }
 
 impl fmt::Display for Error {
@@ -91,11 +103,17 @@ impl fmt::Display for Error {
                     "the working copy cannot be written on this filesystem; nothing was changed:"
                 )?;
                 for hazard in hazards {
-                    write!(
-                        f,
-                        "
-  {hazard}"
-                    )?;
+                    write!(f, "\n  {hazard}")?;
+                }
+                Ok(())
+            }
+            Error::Blocked(entries) => {
+                write!(
+                    f,
+                    "untracked entries are in the way; move them and try again (nothing was changed):"
+                )?;
+                for entry in entries {
+                    write!(f, "\n  {entry}")?;
                 }
                 Ok(())
             }
@@ -353,6 +371,10 @@ pub struct Workspace<F: Fs> {
     store: Store<F>,
     root: PathBuf,
     rng: Rng,
+    /// What resuming an interrupted write left undone, for the user.
+    notes: Vec<String>,
+    #[cfg(feature = "variants")]
+    variant: Variant,
 }
 
 /// The directory holding `root`'s entry: its parent, or `root/..` when the
@@ -412,11 +434,7 @@ impl<F: Fs> Workspace<F> {
     /// On a store that has an op it writes nothing. Tests pass a store built
     /// with a negative-control variant here.
     pub fn init_with_store(store: Store<F>, root: &Path, seed: u64) -> Result<(Self, bool), Error> {
-        let mut workspace = Workspace {
-            store,
-            root: root.to_path_buf(),
-            rng: Rng::new(seed),
-        };
+        let mut workspace = Self::new(store, root, seed);
         let ops = workspace.store.ops()?;
         workspace.refuse_invalid_ops(ops.len())?;
         if !ops.is_empty() {
@@ -456,13 +474,175 @@ impl<F: Fs> Workspace<F> {
                 Error::Io(error)
             }
         })?;
-        let workspace = Workspace {
+        let mut workspace = Self::new(store, root, seed);
+        workspace.resume()?;
+        workspace.load()?;
+        Ok(workspace)
+    }
+
+    fn new(store: Store<F>, root: &Path, seed: u64) -> Self {
+        Workspace {
             store,
             root: root.to_path_buf(),
             rng: Rng::new(seed),
+            notes: Vec::new(),
+            #[cfg(feature = "variants")]
+            variant: Variant::Correct,
+        }
+    }
+
+    /// Selects a broken variant, for the crash scenario's negative control.
+    #[cfg(feature = "variants")]
+    pub fn set_variant(&mut self, variant: Variant) {
+        self.variant = variant;
+    }
+
+    #[cfg(feature = "variants")]
+    fn writes_record(&self) -> bool {
+        self.variant != Variant::NoRecord
+    }
+
+    #[cfg(not(feature = "variants"))]
+    fn writes_record(&self) -> bool {
+        true
+    }
+
+    /// What resuming an interrupted write left undone, one line each.
+    pub fn notes(&self) -> &[String] {
+        &self.notes
+    }
+
+    fn praps_dir(&self) -> PathBuf {
+        self.root.join(PRAPS_DIR)
+    }
+
+    /// The view an op names.
+    fn view_of(&self, op: &Operation) -> Result<View, Error> {
+        View::from_envelope(&self.store.get_object(&op.view)?)
+            .map_err(|error| corrupt(format!("view {}: {error}", op.view)))
+    }
+
+    /// The working-copy tree of a view.
+    fn wc_tree_of(&self, view: &View) -> Result<Tree, Error> {
+        let wc_id = view
+            .workspaces
+            .get(DEFAULT_WORKSPACE)
+            .ok_or_else(|| corrupt("the view has no default workspace"))?;
+        self.tree_of(wc_id)
+    }
+
+    /// A blob's content.
+    fn content(&self, id: &HashRef) -> io::Result<Vec<u8>> {
+        let bytes = self.store.get_object(id)?;
+        decode_envelope(&bytes)
+            .map(|envelope| envelope.body.to_vec())
+            .map_err(|error| io::Error::new(ErrorKind::InvalidData, format!("blob {id}: {error}")))
+    }
+
+    /// Finishes or drops an interrupted write of the working copy
+    /// ("Resume" in the spec).
+    fn resume(&mut self) -> Result<(), Error> {
+        let praps = self.praps_dir();
+        let record = match record::read(self.store.fs(), &praps)? {
+            None => return Ok(()),
+            Some(Ok(record)) => record,
+            Some(Err(why)) => {
+                return Err(corrupt(format!("{PRAPS_DIR}/{}: {why}", record::RECORD)));
+            }
         };
-        workspace.load()?;
-        Ok(workspace)
+        let ops = self.store.ops()?;
+        let Some(target_op) = ops.get(&record.target) else {
+            // The target op never landed, so no file was touched.
+            record::drop_record(self.store.fs(), &praps)?;
+            return Ok(());
+        };
+        let from_op = ops.get(&record.from).ok_or_else(|| {
+            corrupt(format!(
+                "the record names op {}, which is missing",
+                record.from
+            ))
+        })?;
+        let from = self.wc_tree_of(&self.view_of(from_op)?)?;
+        let target = self.wc_tree_of(&self.view_of(target_op)?)?;
+        let fs = self.store.fs();
+        materialise::remove_temporaries(fs, &self.root, &from, &target)?;
+        let heads = store::heads_of(&ops);
+        if heads.len() == 1 && heads.contains(&record.target) {
+            let plan =
+                materialise::plan(fs, &self.root, &from, &target, fs.name_rules(), ALG, true)?;
+            materialise::apply(fs, &self.root, &plan, |id| self.content(id))?;
+            for skipped in &plan.skipped {
+                self.notes.push(format!(
+                    "an interrupted write of the working copy left this as it was: {skipped}"
+                ));
+            }
+        } else {
+            self.notes.push(format!(
+                "an interrupted write of the working copy (to op {}) was abandoned: \
+                 that op is no longer the only head; the working copy was left as it was",
+                record.target
+            ));
+        }
+        record::drop_record(self.store.fs(), &praps)?;
+        Ok(())
+    }
+
+    /// Snapshots, then moves the working copy to the view `view_id` names:
+    /// checks hazards and blocking entries, writes the record, commits an op
+    /// over the head whose view is exactly that view, materialises, and
+    /// drops the record. Returns the new op. `undo` and `restore` choose the
+    /// view ("History commands" in the spec).
+    pub fn restore_view(&mut self, view_id: &HashRef) -> Result<HashRef, Error> {
+        self.snapshot()?;
+        let loaded = self.load()?;
+        let view = View::from_envelope(&self.store.get_object(view_id)?)
+            .map_err(|error| corrupt(format!("view {view_id}: {error}")))?;
+        let target = self.wc_tree_of(&view)?;
+        let fs = self.store.fs();
+        let plan = materialise::plan(
+            fs,
+            &self.root,
+            &loaded.wc_tree,
+            &target,
+            fs.name_rules(),
+            ALG,
+            false,
+        )?;
+        if !plan.hazards.is_empty() {
+            return Err(Error::Hazards(plan.hazards));
+        }
+        if !plan.blocked.is_empty() {
+            return Err(Error::Blocked(plan.blocked));
+        }
+        let op = Operation {
+            parents: [loaded.head].into(),
+            view: *view_id,
+        };
+        let id = object_id(ALG, &op.to_envelope());
+        let praps = self.praps_dir();
+        let journalled = self.writes_record();
+        if journalled {
+            record::write(
+                self.store.fs(),
+                &praps,
+                &Record {
+                    from: loaded.head,
+                    target: id,
+                },
+            )?;
+        }
+        let committed = self.store.commit_op(&op)?;
+        if committed != id {
+            return Err(corrupt(format!(
+                "op {committed} was committed where {id} was expected"
+            )));
+        }
+        let fs = self.store.fs();
+        materialise::apply(fs, &self.root, &plan, |blob| self.content(blob))?;
+        if journalled {
+            record::drop_record(fs, &praps)?;
+        }
+        Ok(committed)
     }
 
     /// The store.

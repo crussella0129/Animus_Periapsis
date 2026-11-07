@@ -52,6 +52,8 @@ pub fn writes(trace: &[String]) -> Vec<&String> {
                 "overwrite ",
                 "rename ",
                 "remove_file ",
+                "remove_dir ",
+                "set_executable ",
                 "sync_file ",
                 "sync_dir ",
             ]

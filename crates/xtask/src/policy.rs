@@ -40,9 +40,10 @@ pub const RULES: [(&str, Rule); 12] = [
 
 const FORBID_UNSAFE: &str = "#![forbid(unsafe_code)]";
 const DISALLOWED: [&str; 2] = ["std::collections::HashMap", "std::collections::HashSet"];
-/// The crate and feature that only dev-dependencies may enable: the store's
-/// negative-control variants (INT-0005 AC-3).
-const TEST_ONLY_FEATURE: (&str, &str) = ("store", "variants");
+/// The crates and features that only dev-dependencies may enable: the
+/// negative-control variants of the store and of the workspace (INT-0005
+/// AC-3).
+const TEST_ONLY_FEATURES: [(&str, &str); 2] = [("store", "variants"), ("workspace", "variants")];
 /// The crates whose filesystem I/O must go through `sim::Fs` (INT-0005), by
 /// directory under `crates/`.
 const FS_BOUNDARY_CRATES: [&str; 4] = ["sim", "store", "praps", "workspace"];
@@ -326,14 +327,17 @@ fn publish(root: &Path, members: &[PathBuf]) -> Vec<String> {
 
 /// Every dependency of a member crate, in every dependency table including
 /// the target-specific ones, is inherited from the workspace table, which is
-/// the one place licences and credits are checked. The store's `variants`
-/// feature (the crash matrix's broken negative controls) is enabled only by
-/// `[dev-dependencies]`, so no production build can select a broken store.
+/// the one place licences and credits are checked. The `variants` features
+/// of the store and the workspace (the crash matrices' broken negative
+/// controls) are enabled only by `[dev-dependencies]`, so no production
+/// build can select a broken store or workspace.
 fn deps(root: &Path, members: &[PathBuf]) -> Vec<String> {
-    let (store, feature) = TEST_ONLY_FEATURE;
-    // The workspace dependency keys that name the store, by key or by
-    // `package`.
-    let mut store_keys = BTreeSet::from([store.to_owned()]);
+    // For each test-only feature's crate, the workspace dependency keys that
+    // name it, by key or by `package`.
+    let mut crate_keys: Vec<(&str, &str, BTreeSet<String>)> = TEST_ONLY_FEATURES
+        .iter()
+        .map(|(name, feature)| (*name, *feature, BTreeSet::from([(*name).to_owned()])))
+        .collect();
     // Likewise the keys that name `getrandom`, so an alias such as
     // `osrand = { package = "getrandom" }` is caught (code review CR-07).
     let (random, random_owner) = OS_RANDOM;
@@ -349,12 +353,14 @@ fn deps(root: &Path, members: &[PathBuf]) -> Vec<String> {
                     if key == random || package == Some(random) {
                         random_keys.insert(key.to_owned());
                     }
-                    if key == store || package == Some(store) {
-                        store_keys.insert(key.to_owned());
-                        if strings(entry, &["features"]).contains(&feature) {
-                            problems.push(format!(
-                                "[workspace.dependencies] `{key}` enables `{feature}` of `{store}` for every member"
-                            ));
+                    for (owner, feature, keys) in &mut crate_keys {
+                        if key == *owner || package == Some(*owner) {
+                            keys.insert(key.to_owned());
+                            if strings(entry, &["features"]).contains(feature) {
+                                problems.push(format!(
+                                    "[workspace.dependencies] `{key}` enables `{feature}` of `{owner}` for every member"
+                                ));
+                            }
                         }
                     }
                 }
@@ -382,26 +388,31 @@ fn deps(root: &Path, members: &[PathBuf]) -> Vec<String> {
                          `{random_owner}` may (INT-0005 AC-1)"
                     ));
                 }
-                if store_keys.contains(name) && !dev && strings(entry, &["features"]).contains(&feature) {
-                    problems.push(format!(
-                        "{dir} enables `{feature}` of `{store}` in [{table}]; only [dev-dependencies] may"
-                    ));
+                for (owner, feature, keys) in &crate_keys {
+                    if keys.contains(name) && !dev && strings(entry, &["features"]).contains(feature) {
+                        problems.push(format!(
+                            "{dir} enables `{feature}` of `{owner}` in [{table}]; only [dev-dependencies] may"
+                        ));
+                    }
                 }
             }
         }
-        // A feature of any member that turns the store's variants on, or,
-        // in the store itself, any feature but `variants` that includes it.
+        // A feature of any member that turns a test-only feature on, or, in
+        // the owning crate itself, any other feature that includes it.
         if let Some(features) = lookup(manifest.as_item(), &["features"]).and_then(Item::as_table_like) {
             for (name, _) in features.iter() {
                 for enabled in strings(manifest.as_item(), &["features", name]) {
-                    let through_dependency = store_keys.iter().any(|key| {
-                        enabled == format!("{key}/{feature}") || enabled == format!("{key}?/{feature}")
-                    });
-                    let own = package == Some(store) && name != feature && enabled == feature;
-                    if through_dependency || own {
-                        problems.push(format!(
-                            "{dir} feature `{name}` enables `{feature}` of `{store}`; only [dev-dependencies] may"
-                        ));
+                    for (owner, feature, keys) in &crate_keys {
+                        let through_dependency = keys.iter().any(|key| {
+                            enabled == format!("{key}/{feature}")
+                                || enabled == format!("{key}?/{feature}")
+                        });
+                        let own = package == Some(*owner) && name != *feature && enabled == *feature;
+                        if through_dependency || own {
+                            problems.push(format!(
+                                "{dir} feature `{name}` enables `{feature}` of `{owner}`; only [dev-dependencies] may"
+                            ));
+                        }
                     }
                 }
             }
@@ -2453,6 +2464,50 @@ mod tests {
             "deps",
             "[workspace.dependencies] `store` enables `variants`",
         );
+
+        // The workspace crate's variants follow the same rule (Sprint 3
+        // T-006).
+        let with_workspace = |name: &str, extra: &str| {
+            let fixture = Fixture::new(name);
+            fixture.write(
+                "Cargo.toml",
+                &replace(
+                    WORKSPACE,
+                    "hash = { path = \"crates/hash\" }\n",
+                    "hash = { path = \"crates/hash\" }\nworkspace = { path = \"crates/workspace\" }\n",
+                ),
+            );
+            fixture.write(
+                "crates/workspace/Cargo.toml",
+                &format!(
+                    "[package]\nname = \"workspace\"\npublish.workspace = true\n\n\
+                     [features]\nvariants = []\n\n{extra}\n[lints]\nworkspace = true\n"
+                ),
+            );
+            fixture.write("crates/workspace/src/lib.rs", "#![forbid(unsafe_code)]\n");
+            fixture.write("crates/workspace/clippy.toml", &boundary_config(""));
+            fixture
+        };
+        with_workspace(
+            "ws-variants-dev",
+            "[dev-dependencies]\nworkspace = { workspace = true, features = [\"variants\"] }\n",
+        )
+        .passes();
+        with_workspace(
+            "ws-variants-normal",
+            "[dependencies]\nworkspace = { workspace = true, features = [\"variants\"] }\n",
+        )
+        .fails_exactly(&["deps"], &["`variants` of `workspace`", "dependencies"]);
+        let fixture = with_workspace("ws-variants-feature", "");
+        fixture.write(
+            "crates/hash/Cargo.toml",
+            &replace(
+                &fixture.read("crates/hash/Cargo.toml"),
+                "[lints]",
+                "[features]\ndefault = [\"workspace/variants\"]\n\n[lints]",
+            ),
+        );
+        fixture.fails_only("deps", "enables `variants` of `workspace`");
     }
 
     #[test]

@@ -83,8 +83,18 @@ fn init(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
     }
 }
 
+/// Opens the repository at `dir`, printing each note that resuming an
+/// interrupted write left (`note: …`) on `err`.
+fn open(dir: &Path, err: &mut impl Write) -> Result<Workspace<RealFs>, workspace::Error> {
+    let workspace = Workspace::open(RealFs, dir, os_seed())?;
+    for note in workspace.notes() {
+        let _ = writeln!(err, "note: {note}");
+    }
+    Ok(workspace)
+}
+
 fn new(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
-    let result = Workspace::open(RealFs, dir, os_seed()).and_then(|mut ws| ws.new_change());
+    let result = open(dir, err).and_then(|mut ws| ws.new_change());
     match result {
         Ok(change_id) => {
             let hex: String = change_id.iter().map(|b| format!("{b:02x}")).collect();
@@ -96,7 +106,7 @@ fn new(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
 }
 
 fn status(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
-    let result = Workspace::open(RealFs, dir, os_seed()).and_then(|mut ws| ws.status());
+    let result = open(dir, err).and_then(|mut ws| ws.status());
     match result {
         Ok(status) => {
             for (path, change) in &status.changes {

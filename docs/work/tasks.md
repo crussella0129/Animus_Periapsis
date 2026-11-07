@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-006 (sprint 3) [intent: INT-0009, INT-0014, INT-0007]: Materialise, the working-copy record and resume — touches: crates/workspace/, crates/praps/src/main.rs, crates/xtask/src/policy.rs
 - [ ] T-007 (sprint 3) [intent: INT-0009]: log, undo and restore in workspace — touches: crates/workspace/
 - [ ] T-008 (sprint 3) [intent: INT-0009]: praps log, praps undo and praps restore OP — touches: crates/praps/
 - [ ] T-009 (sprint 3) [intent: INT-0009, INT-0004, INT-0005, INT-0007, INT-0014]: Reversibility and hazard corpora, the Materialise crash scenario, and the extended edit corpus — touches: crates/workspace/tests/

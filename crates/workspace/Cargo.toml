@@ -1,6 +1,6 @@
 [package]
 name = "workspace"
-description = "The working copy of a Periapsis repository: init, snapshot, new and status"
+description = "The working copy of a Periapsis repository: init, snapshot, new, status, undo and restore"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,9 +15,17 @@ ignore.workspace = true
 sim.workspace = true
 store.workspace = true
 
+[features]
+# The Materialise crash scenario's negative control (`Variant`). Only
+# `[dev-dependencies]` may enable it (`cargo policy`, rule `deps`).
+variants = []
+
 [dev-dependencies]
 # The store's test-only variants, for the crash matrix's negative control.
 store = { workspace = true, features = ["variants"] }
+# The crate itself with its test-only variants, so `cargo test --workspace`
+# builds the Materialise scenario's negative control.
+workspace = { workspace = true, features = ["variants"] }
 
 [lints]
 workspace = true
