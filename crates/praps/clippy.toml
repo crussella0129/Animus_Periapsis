@@ -1,0 +1,44 @@
+# Clippy config for a crate behind the filesystem boundary (INT-0005); the
+# same as crates/sim/clippy.toml.
+# Clippy reads this file instead of the workspace root's, so it repeats the
+# root's hash-collection bans (INT-0005 AC-4; `cargo policy`, rule `clippy`)
+# and adds every std::fs type, function and Path method that reaches the real
+# filesystem (`cargo policy`, rule `fs-boundary`). Only crates/sim/src/real.rs
+# and tests/ files may switch these lints off.
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "randomly seeded; use BTreeMap or a seeded hasher (INT-0005 AC-4)" },
+    { path = "std::collections::HashSet", reason = "randomly seeded; use BTreeSet or a seeded hasher (INT-0005 AC-4)" },
+    { path = "std::fs::File", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::OpenOptions", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::DirBuilder", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+]
+disallowed-methods = [
+    { path = "std::fs::canonicalize", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::copy", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::create_dir", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::create_dir_all", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::exists", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::hard_link", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::metadata", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::read", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::read_dir", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::read_link", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::read_to_string", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::remove_dir", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::remove_dir_all", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::remove_file", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::rename", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::set_permissions", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::symlink_metadata", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::fs::write", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::path::Path::canonicalize", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::path::Path::exists", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::path::Path::is_dir", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::path::Path::is_file", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::path::Path::is_symlink", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::path::Path::metadata", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::path::Path::read_dir", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::path::Path::read_link", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::path::Path::symlink_metadata", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+    { path = "std::path::Path::try_exists", reason = "reaches the real filesystem; use sim::Fs (INT-0005, fs-boundary)" },
+]
