@@ -1,8 +1,8 @@
 # Sprint 3 Test Matrix Log
 
-The output of the two matrix scripts at the tested head `70a2a4d`, run on 2026-11-07, after the [code review](code-review.md) fixes. The two legs ran at the same time, so the durations are long. The Windows leg ran in the clean working checkout. The Linux leg ran in a fresh clone in the WSL ext4 home directory, with its own in-tree target directory, removed afterwards. The scratchpad path is shortened to `<scratchpad>`, and lines of the form `test … ok` are left out. [unit-tests.md](unit-tests.md), [integration-tests.md](integration-tests.md) and [e2e-tests.md](e2e-tests.md) cite its sections by name.
+The output of the two matrix scripts at the tested head `ad22319`, run on 2026-11-07. It holds the [code review](code-review.md) fixes and the tests added for the [round-1 test critique](critique-round1.md). The two legs ran at the same time, so the durations are long. The Windows leg ran in the clean working checkout. The Linux leg ran in a fresh clone in the WSL ext4 home directory, with its own in-tree target directory. The scratchpad path is shortened to `<scratchpad>`, and lines of the form `test ... ok` are left out. [unit-tests.md](unit-tests.md), [integration-tests.md](integration-tests.md) and [e2e-tests.md](e2e-tests.md) cite its sections by name.
 
-In the Windows log, the section `int_snapshot_matrix_windows` was overwritten with NUL bytes by a leg stopped earlier, which still held the file open. That test was run again on its own at the same head; its output replaces the section below. The same overwrite cut the start of the first line of `int_materialise_matrix_windows` (the `NoRecord` Lenient line); what is left of it matches the Linux line.
+An earlier pair of runs at `70a2a4d` is not recorded. A Windows leg believed stopped was still writing into the same log file, so that log mixed two runs. See [integration-tests.md](integration-tests.md).
 
 ## Windows (`s3_windows.sh`)
 
@@ -15,7 +15,7 @@ commit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67
 commit-date: 2026-10-13
 cargo-deny 0.20.2
 PROPTEST_*, PERI_*, CLIPPY_CONF_DIR, RUSTFLAGS, RUSTC*, RUSTUP_TOOLCHAIN, CARGO_BUILD_*, CARGO_TARGET_*, CARGO_PROFILE_* set: none
-head 70a2a4d70065babca41483f78f5c68a258f38c06 on dev; uncommitted paths: 0
+head ad2231956a00a9ac01c9014cfb5434ece706ed78 on dev; uncommitted paths: 0
 
 ==== int_ci_windows
 PASS fmt
@@ -24,8 +24,8 @@ PASS test
 PASS policy
 PASS book
 ci: all 5 steps passed
-cargo ci exit 0 in 1790 s
-tests passed on Windows: 403
+cargo ci exit 0 in 1885 s
+tests passed on Windows: 407
 
 ==== int_crash_matrix_windows
 matrix correct          Lenient: 16420 cells (280 view races, 40 parent races); violations: closure 0 durability 0 heads 0 atomicity 0 torn 0 layout 0 stray 0
@@ -45,15 +45,15 @@ matrix unsynced-refs    Lenient: 14740 cells (200 view races, 40 parent races); 
 matrix unsynced-refs    Strict: 14740 cells (200 view races, 40 parent races); violations: closure 25 durability 0 heads 0 atomicity 0 torn 0 layout 0 stray 0
 matrix write-in-place   Lenient: 14320 cells (0 view races, 0 parent races); violations: closure 0 durability 0 heads 0 atomicity 0 torn 1134 layout 0 stray 0
 matrix write-in-place   Strict: 14320 cells (0 view races, 0 parent races); violations: closure 0 durability 0 heads 0 atomicity 0 torn 1134 layout 0 stray 0
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 521.51s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 519.32s
 
 ==== int_fsck_corpus_windows
 bit flips detected: 40 of 40
 truncations detected: 207 of 207
 fsck on 30408 recovered stores: 0 reports
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 79.54s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 77.50s
 
-==== int_snapshot_matrix_windows (rerun at 70a2a4d; the original section was overwritten)
+==== int_snapshot_matrix_windows
 snapshot matrix unsynced-objects Lenient: 11640 cells; violations: closure 101135 durability 0 recency 9909 liveness 9508
 snapshot matrix unsynced-objects Strict: 11640 cells; violations: closure 100560 durability 0 recency 9939 liveness 9379
 snapshot matrix correct          Lenient: 12680 cells; violations: closure 0 durability 0 recency 0 liveness 0
@@ -63,11 +63,10 @@ snapshot matrix correct          Strict: 12680 cells; violations: closure 0 dura
 snapshot matrix correct          Lenient: 12680 cells; violations: closure 0 durability 0 recency 0 liveness 0
 snapshot matrix correct          Strict: 12680 cells; violations: closure 0 durability 0 recency 0 liveness 0
 snapshot matrix digest over 25360 cells: blake3:c1e39cb10607ff208e0f2774eee8770659aad590dbc8c71abd76522b69013ea3
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 549.04s
-exit 0
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 544.49s
 
 ==== int_materialise_matrix_windows
-ations: closure 0 durability 0 working copy 2800 liveness 0
+materialise matrix NoRecord Lenient: 19840 cells; violations: closure 0 durability 0 working copy 2800 liveness 0
 materialise matrix NoRecord Strict: 19840 cells; violations: closure 0 durability 0 working copy 2820 liveness 0
 materialise matrix NoRecord: 0 cells resumed a record; second pass 0 cells, 0 violations
 materialise matrix Correct Lenient: 20480 cells; violations: closure 0 durability 0 working copy 0 liveness 0
@@ -80,38 +79,41 @@ materialise matrix Correct Lenient: 20480 cells; violations: closure 0 durabilit
 materialise matrix Correct Strict: 20480 cells; violations: closure 0 durability 0 working copy 0 liveness 0
 materialise matrix Correct: 7998 cells resumed a record; second pass 0 cells, 0 violations
 materialise matrix digest over 40960 cells: blake3:6274344b358b15cb24d182a681c592ccad66a82564fd40c5cf45e4fcb666a1ac
+materialise matrix Correct (Windows rules) Lenient: 20480 cells; violations: closure 0 durability 0 working copy 0 liveness 0
+materialise matrix Correct (Windows rules) Strict: 20480 cells; violations: closure 0 durability 0 working copy 0 liveness 0
+materialise matrix Correct (Windows rules): 7998 cells resumed a record; second pass 0 cells, 0 violations
 materialise matrix Correct Lenient: 20480 cells; violations: closure 0 durability 0 working copy 0 liveness 0
 materialise matrix Correct Strict: 20480 cells; violations: closure 0 durability 0 working copy 0 liveness 0
 materialise matrix Correct: 7998 cells resumed a record; second pass 118306 cells, 0 violations
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2418.45s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2120.95s
 
 ==== int_reversibility_and_hazards_windows
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
 200 pairs: 800 runs, 0 collapsed
-test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.76s
-test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.14s
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
 
 ==== int_edit_corpora_windows
 edit corpus: 500 sequences, 6000 snapshots, 470 undos, 496 restores, 16 refusals (0 blocked), 6416 ops checked, 0 lost edits
 long edit corpus: 200 sequences, 8000 snapshots, 662 undos, 656 restores, 31 refusals (10 blocked), 7389 ops checked, 0 lost edits
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 56.73s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 37.52s
 ignore corpus: 47 paths in 18 cases agree with Git
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
 real edit corpus: 20 sequences, 240 snapshots, 25 undos, 15 restores, 3 refusals (0 blocked), 246 ops checked, 0 lost edits
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.36s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.48s
 working-copy changeset: blake3:9ad9ad907eb641bf35322a3db8ed790384b4b1c8bd6f5f4377fe54c2142228c3
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
 
 ==== e2e praps (Windows): init, status, new, log, undo, restore, fsck and a non-UTF-8 name on NTFS
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.82s
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.26s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
 
 ==== e2e praps_fsck_end_to_end (Windows): the praps binary on real NTFS stores
-test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.38s
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.76s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
 
 ==== int_deny_windows
 advisories ok, bans ok, licenses ok, sources ok
@@ -157,7 +159,7 @@ PRETTY_NAME="Ubuntu 26.04.1 LTS"
 PROPTEST_*, PERI_*, CLIPPY_CONF_DIR, RUSTFLAGS, RUSTC*, RUSTUP_TOOLCHAIN, CARGO_BUILD_*, CARGO_TARGET_*, CARGO_PROFILE_* set: none
 
 ==== e2e fresh_clone_ci
-head 70a2a4d70065babca41483f78f5c68a258f38c06; checkout on ext4
+head ad2231956a00a9ac01c9014cfb5434ece706ed78; checkout on ext4
 rustc 1.99.1 (58cf8f9c3 2026-10-13)
 binary: rustc
 commit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67
@@ -168,8 +170,8 @@ PASS test
 PASS policy
 PASS book
 ci: all 5 steps passed
-cold cargo ci exit 0 in 993 s
-tests passed on Linux: 404
+cold cargo ci exit 0 in 1267 s
+tests passed on Linux: 408
 tracked files changed by the run: 0
 
 ==== int_crash_matrix_linux
@@ -190,13 +192,13 @@ matrix unsynced-refs    Lenient: 14740 cells (200 view races, 40 parent races); 
 matrix unsynced-refs    Strict: 14740 cells (200 view races, 40 parent races); violations: closure 25 durability 0 heads 0 atomicity 0 torn 0 layout 0 stray 0
 matrix write-in-place   Lenient: 14320 cells (0 view races, 0 parent races); violations: closure 0 durability 0 heads 0 atomicity 0 torn 1134 layout 0 stray 0
 matrix write-in-place   Strict: 14320 cells (0 view races, 0 parent races); violations: closure 0 durability 0 heads 0 atomicity 0 torn 1134 layout 0 stray 0
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 324.55s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 342.40s
 
 ==== int_fsck_corpus_linux
 bit flips detected: 40 of 40
 truncations detected: 207 of 207
 fsck on 30408 recovered stores: 0 reports
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 49.44s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 54.13s
 
 ==== int_snapshot_matrix_linux
 snapshot matrix unsynced-objects Lenient: 11640 cells; violations: closure 101135 durability 0 recency 9909 liveness 9508
@@ -208,7 +210,7 @@ snapshot matrix correct          Strict: 12680 cells; violations: closure 0 dura
 snapshot matrix correct          Lenient: 12680 cells; violations: closure 0 durability 0 recency 0 liveness 0
 snapshot matrix correct          Strict: 12680 cells; violations: closure 0 durability 0 recency 0 liveness 0
 snapshot matrix digest over 25360 cells: blake3:c1e39cb10607ff208e0f2774eee8770659aad590dbc8c71abd76522b69013ea3
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 322.75s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 347.12s
 
 ==== int_materialise_matrix_linux
 materialise matrix NoRecord Lenient: 19840 cells; violations: closure 0 durability 0 working copy 2800 liveness 0
@@ -224,27 +226,30 @@ materialise matrix Correct Lenient: 20480 cells; violations: closure 0 durabilit
 materialise matrix Correct Strict: 20480 cells; violations: closure 0 durability 0 working copy 0 liveness 0
 materialise matrix Correct: 7998 cells resumed a record; second pass 0 cells, 0 violations
 materialise matrix digest over 40960 cells: blake3:6274344b358b15cb24d182a681c592ccad66a82564fd40c5cf45e4fcb666a1ac
+materialise matrix Correct (Windows rules) Lenient: 20480 cells; violations: closure 0 durability 0 working copy 0 liveness 0
+materialise matrix Correct (Windows rules) Strict: 20480 cells; violations: closure 0 durability 0 working copy 0 liveness 0
+materialise matrix Correct (Windows rules): 7998 cells resumed a record; second pass 0 cells, 0 violations
 materialise matrix Correct Lenient: 20480 cells; violations: closure 0 durability 0 working copy 0 liveness 0
 materialise matrix Correct Strict: 20480 cells; violations: closure 0 durability 0 working copy 0 liveness 0
 materialise matrix Correct: 7998 cells resumed a record; second pass 118306 cells, 0 violations
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1381.81s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1598.78s
 
 ==== int_reversibility_and_hazards_linux
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
 200 pairs: 800 runs, 0 collapsed
-test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.72s
-test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.11s
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 ==== int_edit_corpora_linux
 edit corpus: 500 sequences, 6000 snapshots, 470 undos, 496 restores, 16 refusals (0 blocked), 6416 ops checked, 0 lost edits
 long edit corpus: 200 sequences, 8000 snapshots, 662 undos, 656 restores, 31 refusals (10 blocked), 7389 ops checked, 0 lost edits
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 30.48s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 31.80s
 ignore corpus: 47 paths in 18 cases agree with Git
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
 real edit corpus: 20 sequences, 240 snapshots, 26 undos, 12 restores, 3 refusals (0 blocked), 240 ops checked, 0 lost edits
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.64s
 working-copy changeset: blake3:9ad9ad907eb641bf35322a3db8ed790384b4b1c8bd6f5f4377fe54c2142228c3
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
@@ -253,7 +258,7 @@ test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 ==== e2e praps_fsck_end_to_end (Linux): the praps binary on real ext4 stores
-test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 

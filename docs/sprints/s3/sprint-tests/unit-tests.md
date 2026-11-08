@@ -1,9 +1,11 @@
 # Sprint 3 Unit Test Results
 
-- **Tested head:** `70a2a4d70065babca41483f78f5c68a258f38c06` on `dev`, committed, with a clean working tree, for the full matrix runs. It includes the fixes for the Test-phase [code review](code-review.md). The tests added for the [round-1 test critique](critique-round1.md) are in `0678139`; how they were run is under "Round 1 additions" below.
+- **Tested head:** `ad2231956a00a9ac01c9014cfb5434ece706ed78` on `dev`, committed, with a clean working tree. It includes:
+  - the fixes for the Test-phase [code review](code-review.md) (`70a2a4d`);
+  - the tests added for the [round-1 test critique](critique-round1.md) (`0678139`), listed under "Round 1 additions" below.
 - **Runner:** the `test` step of `cargo ci` (`cargo test --workspace --locked`). It ran in the Windows working checkout and in a fresh WSL ext4 clone. See [test-matrix-log.md](test-matrix-log.md), sections `int_ci_windows` and `e2e fresh_clone_ci`.
-- **Result at `70a2a4d`:** 0 failed and 0 ignored on both systems. 403 passed on Windows and 404 on Linux; Sprint 2 ended with 332.
-  - The extra Linux test is `real_symlinked_directories_are_not_followed` (CR-05), in `real_hazards.rs`. It needs a real symlink on ext4, so it is compiled for Unix only.
+- **Result:** 0 failed and 0 ignored on both systems. 407 passed on Windows and 408 on Linux; Sprint 2 ended with 332. An earlier run at `70a2a4d`, before the round 1 tests, passed 403 and 404.
+  - The extra Linux test is `real_symlinked_directories_are_not_followed` (CR-05), in `real_hazards.rs`. It makes its symlink on ext4 and is compiled for Unix only. Its resume-path sibling, `real_resume_does_not_follow_a_symlinked_directory`, runs on both systems.
   - Some tests run differently on each system:
     - `real_hazards_are_refused_on_ntfs` runs on Windows only;
     - `real_hazard_trees_materialise_on_ext4` runs on Linux only;
@@ -14,7 +16,7 @@
   - The simulator, the store and the workspace use `sim::Rng`, seeded explicitly. Only `praps` uses `sim::os_seed`.
   - `std::hash::RandomState` is now banned in every boundary crate (T-002).
 
-The counts below are from `cargo test --workspace --locked -- --list` at the tested head, on Windows.
+The counts below are from `cargo test --workspace --locked -- --list` at `70a2a4d`, on Windows. The round 1 additions below change four of them.
 
 | Target | Tests |
 |--------|-------|
@@ -59,7 +61,7 @@ Every named test in the [test plan](../sprint-plans/test-plan.md) exists and pas
 
 ## Round 1 additions
 
-The [round-1 test critique](critique-round1.md) asked for these. They are committed in `0678139`. Each was run on Windows (NTFS) and on ext4 in WSL, from a copy of the working tree. `cargo clippy --workspace --all-targets -- -D warnings` was clean.
+The [round-1 test critique](critique-round1.md) asked for these. They are committed in `0678139`. Each passed in both legs at `ad22319`, on NTFS and on ext4, and Clippy was clean.
 
 | Test | Concern | Windows | Linux |
 |---|---|---|---|
@@ -72,4 +74,4 @@ The [round-1 test critique](critique-round1.md) asked for these. They are commit
 
 The tightened `praps_undo_restores_files` checks the op that `undo` prints. It is the parent of H, the head when `undo` started; here H is the `new` op, and `undo`'s own snapshot of the edits is the op after it. `praps_prints_notes` now checks that the note says the write was abandoned, and names the target op.
 
-With these, the `praps` `cli.rs` count is 22, `real_hazards.rs` is 3 on Windows and 4 on Linux, and `materialise_crash.rs` is 5. That gives 409 tests on Windows and 410 on Linux.
+With these, the `praps` `cli.rs` count is 22, `real_hazards.rs` is 3 on Windows and 4 on Linux, and `materialise_crash.rs` is 5. That gives 407 tests on Windows and 408 on Linux at `ad22319`, the counts that `cargo ci` reported in the re-run legs.

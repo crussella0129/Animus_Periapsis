@@ -1,6 +1,6 @@
 # Test Critique — Sprint 3
 
-Round 1. A read-only subagent wrote it from the bundle's `prompts/test-critic.md`, against the result files as first drafted at tested head `70a2a4d`. It is saved as written, apart from formatting. Each concern's response is in the final [critique.md](critique.md).
+Round 1. A read-only subagent wrote it from the bundle's `prompts/test-critic.md`, against the result files as first drafted at tested head `70a2a4d`. It is saved as written, apart from formatting. The responses are at the end. The final round is [critique.md](critique.md).
 
 ## Concerns
 
@@ -86,3 +86,20 @@ Round 1. A read-only subagent wrote it from the bundle's `prompts/test-critic.md
 
 ## Confidence
 block
+
+## Responses
+
+The new tests are in `0678139`. Both full legs were then re-run at `ad22319`, each into a new log; see [integration-tests.md](integration-tests.md) and [test-matrix-log.md](test-matrix-log.md).
+
+| Concern | Response |
+|---------|----------|
+| C-001 | add-test. `praps_restore_refusals_exit_one` exercises two refusals through the binary. First, an ignored file of the user's own stands at a path the target writes (`Blocked`). Second, on Windows only, a case-only rename (`Hazards`). Each must exit 1, with nothing on stdout, the error named on stderr, the files unchanged, no record left, and `log` identical before and after. Passed on both systems. A reserved name cannot be put in a repository on NTFS through `praps`, so the CLI hazard case is the case variant. Reserved names through a write are covered by `windows_names_through_a_write` and `real_hazards_are_refused_on_ntfs`. |
+| C-002 | add-test (re-run). The cause was worse than thought: two runs of the Windows script wrote into the same log at once. One was an earlier run believed stopped; the other was the run at `70a2a4d`. A `materialise_crash` process was found still running after the log already read `==== done`, and it was stopped. Both full legs were then run again at `ad22319`, each into a new log, after checking that no build or test process was left. Only those runs are recorded. The figures from the mixed log matched Linux, but they are not used. |
+| C-003 | defer-with-rationale. `cargo-deny` is not installed in WSL. Installing it from crates.io was not done in this phase. `cargo deny check` reads only `Cargo.lock` and `deny.toml`, so its verdict does not depend on the host. The GitHub workflow runs it on `ubuntu-26.04` at this sprint's checkpoint, and the next sprint records that run, as T-001 did for Sprint 2. [integration-tests.md](integration-tests.md) states the gap in its runner table. |
+| C-004 | add-test. `materialise_matrix_with_windows_rules_finds_no_violations` runs the full scenario on a `SimFs` with no executable bit and with Windows' name rules (case folding and reserved names). That is a crash at every syscall × 40 seeds × 2 modes: 40,960 cells, 7,998 resuming a record, 0 violations. |
+| C-005 | tighten-assertion. The edit-corpus table now gives the blocked count for each corpus. A note says which tests cover hazard refusals and which cover blocking refusals on real filesystems, since the corpora do not. |
+| C-006 | tighten-assertion. `ops_are_never_removed` now fails on any `undo` error but `NothingToUndo`. After every step it requires `log` to list exactly the store's op files, and to keep every op seen before. The result text says what the sequences cover, and which tests cover swaps and executable files. |
+| C-007 | add-test. `real_names_without_utf8_survive_undo` (`real_hazards.rs`) puts a file with no UTF-8 name in a directory that `undo` would empty: byte `0xff` on ext4, an unpaired surrogate on NTFS. The tracked file is removed. The odd file keeps its content, its directory is kept, and no record is left. Passed on both systems. |
+| C-008 | add-test, with a stated limit. `real_resume_does_not_follow_a_symlinked_directory` goes through resume. It leaves a record from F, where `d/x` exists, to T, where it does not. It then replaces `d` with a directory symlink to a directory outside the working copy, holding the same `x`, and calls `Workspace::open`. The outside file survives and the record is dropped. It runs on ext4 and on NTFS: this host could make the directory symlink, and the test prints `SKIPPED` where a host cannot. NTFS junctions are not tested; they are noted in the test report as a gap. |
+| C-009 | tighten-assertion. The `materialise.rs` count is 26 on both systems, and CR-05's test is listed under `real_hazards.rs`. `hazards_are_refused_before_any_write` is placed in `history.rs`. The tests that write, `case_corpus_through_a_write` and `windows_names_through_a_write`, are named, and the pure checks are called pure. The silent `:` skip is stated as silent. The E2E step 4 is corrected: it restores the snapshot that step 2's `status` took. The "53" in the T-005 record is a miscount of 52; the record is left as written, and this correction is in [unit-tests.md](unit-tests.md). |
+| C-010 | tighten-assertion. `praps_undo_restores_files` compares the whole printed line with the parent of H, the head when `undo` started, taken from `log`. `praps_prints_notes` requires the note to say the write was abandoned and to name the target op. |
