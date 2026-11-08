@@ -67,7 +67,9 @@ The [round-1 test critique](critique-round1.md) asked for these. They are commit
 |---|---|---|---|
 | `praps` `praps_restore_refusals_exit_one` | C-001 | passed: the blocking entry, then the case-only rename as a hazard | passed: the blocking entry only |
 | `workspace` `real_names_without_utf8_survive_undo` (`real_hazards.rs`) | C-007 | passed, with an unpaired surrogate | passed, with byte `0xff` |
-| `workspace` `real_resume_does_not_follow_a_symlinked_directory` (`real_hazards.rs`) | C-008 | passed, with a directory symlink (none `SKIPPED`) | passed |
+| `workspace` `real_resume_does_not_follow_a_symlinked_directory` (`real_hazards.rs`) | C-008 | passed. The leg's log captures test output, so it cannot show a skip. A re-run with `--nocapture` at `19ec3d6`, whose crates match `ad22319`, printed no `SKIPPED` line: the directory symlink was made. | passed |
+
+`real_names_without_utf8_survive_undo` shows that the entry is kept and not deleted. That holds whatever the listing keys are, because a directory with any entry left is kept; it does not depend on CR-02's key. It does not show a report. `undo` drops its snapshot's report of skipped names, so only `status` reports them; backlog T-019 makes every command report them (round-2 critique C-003).
 | `workspace` `ops_are_never_removed`, tightened | C-006 | passed | passed |
 | `praps` `praps_undo_restores_files` and `praps_prints_notes`, tightened | C-010 | passed | passed |
 | `workspace` `materialise_matrix_with_windows_rules_finds_no_violations` | C-004 | see [integration-tests.md](integration-tests.md) | same |

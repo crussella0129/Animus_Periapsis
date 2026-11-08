@@ -6,7 +6,7 @@
 - **Work evidence:** [Sprint 3 T-004 build plan](../sprints/s3/sprint-plans/build-plan.md#t-004-specify-writing-the-working-copy-undo-restore-and-log), [Sprint 3 T-006 build plan](../sprints/s3/sprint-plans/build-plan.md#t-006-materialise-the-working-copy-record-and-resume), [Sprint 3 T-007 build plan](../sprints/s3/sprint-plans/build-plan.md#t-007-log-undo-and-restore-in-workspace), [Sprint 3 T-008 build plan](../sprints/s3/sprint-plans/build-plan.md#t-008-praps-log-praps-undo-and-praps-restore-op), [Sprint 3 T-009 build plan](../sprints/s3/sprint-plans/build-plan.md#t-009-reversibility-and-hazard-corpora-the-materialise-crash-scenario-and-the-extended-edit-corpus), [Sprint 3 T-010 build plan](../sprints/s3/sprint-plans/build-plan.md#t-010-readme-credits-and-backlog)
 - **Completion evidence:** none
 - **Code evidence:** none
-- **Test evidence:** none
+- **Test evidence:** [Sprint 3 test report](../sprints/s3/sprint-tests/test-report.md)
 - **Documentation evidence:** [working-copy spec](../spec/working-copy.md#writing-the-working-copy)
 
 ## Intent

@@ -5,8 +5,8 @@
 ### praps_restore_refusals_exit_one
 - **Intents:**
   - [INT-0009](../../../intents/INT-0009-reversible-by-default.md) AC-3
-  - [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-3
   - [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md) AC-1
+  - The Windows case is the case-only rename that backlog T-016 will allow. It shows the current refusal, not [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-3, whose evidence is in the hazard corpora and `real_hazards_are_refused_on_ntfs`.
 - **Run:** the built `praps` binary (`crates/praps/tests/cli.rs`, added for critique C-001).
   - `b` is tracked, then deleted and recorded.
   - It is then ignored, and recreated with the user's own content.
@@ -16,7 +16,7 @@
   - Both restores exit 1 with nothing on stdout.
   - The error goes to stderr: "untracked entries are in the way", naming `b`; and, on Windows, "cannot be written on this filesystem", naming `README`.
   - The files are unchanged, no record is left, and `praps log` is identical before and after.
-  - Passed on Windows and on Linux (section `e2e praps`).
+  - Passed on Windows and on Linux (section `e2e praps_fsck_end_to_end`, which runs `cli.rs`).
 
 ### praps_history_end_to_end
 - **Intents:**

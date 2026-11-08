@@ -6,7 +6,7 @@
 - **Work evidence:** [Sprint 2 T-005 build plan](../sprints/s2/sprint-plans/build-plan.md#t-005-the-workspace-crate-init-snapshot-new-and-status), [Sprint 2 T-006 build plan](../sprints/s2/sprint-plans/build-plan.md#t-006-praps-init-praps-new-and-praps-status), [Sprint 2 T-007 build plan](../sprints/s2/sprint-plans/build-plan.md#t-007-snapshot-crash-scenario-and-edit-corpora), [Sprint 2 T-008 build plan](../sprints/s2/sprint-plans/build-plan.md#t-008-working-copy-spec-readme-credits-and-backlog), [Sprint 3 T-004 build plan](../sprints/s3/sprint-plans/build-plan.md#t-004-specify-writing-the-working-copy-undo-restore-and-log), [Sprint 3 T-006 build plan](../sprints/s3/sprint-plans/build-plan.md#t-006-materialise-the-working-copy-record-and-resume), [Sprint 3 T-009 build plan](../sprints/s3/sprint-plans/build-plan.md#t-009-reversibility-and-hazard-corpora-the-materialise-crash-scenario-and-the-extended-edit-corpus)
 - **Completion evidence:** [Sprint 2 T-005 completion](../work/completed-tasks.md#t-005-sprint-2), [Sprint 2 T-006 completion](../work/completed-tasks.md#t-006-sprint-2), [Sprint 2 T-007 completion](../work/completed-tasks.md#t-007-sprint-2), [Sprint 2 T-008 completion](../work/completed-tasks.md#t-008-sprint-2)
 - **Code evidence:** [crates/workspace](../../crates/workspace/src/lib.rs), [praps](../../crates/praps/src/main.rs)
-- **Test evidence:** [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md)
+- **Test evidence:** [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md), [Sprint 3 test report](../sprints/s3/sprint-tests/test-report.md)
 - **Documentation evidence:** [The working copy](../spec/working-copy.md)
 
 ## Intent

@@ -39,9 +39,9 @@ The scenario is: init, edits, snapshot, new, edits, `undo`, `restore`. It crashe
 | Correct | 20,480 | 0 violations of closure, durability, working copy or liveness, in both modes. 7,998 cells resumed a record. |
 | Correct, second crash (`resume_survives_a_second_crash`) | 118,306 in all | a crash at every syscall of each recovering `open`, for 10 seeds per mode: 0 violations |
 | `NoRecord` (negative control) | 19,840 | caught: 2,800 working-copy violations in Lenient mode and 2,820 in Strict mode |
-| Correct, Windows rules (`materialise_matrix_with_windows_rules_finds_no_violations`, new) | 20,480 | no executable bit, so "matches F" compares bytes only; names fold case and Windows' naming rules apply. 0 violations in both modes; 7,998 cells resumed a record (critique C-004). |
+| Correct, Windows rules (`materialise_matrix_with_windows_rules_finds_no_violations`, new) | 20,480 | 0 violations in both modes; 7,998 cells resumed a record (round-1 critique C-004). What it adds is the no-executable-bit rule under crashes: "matches F" compares bytes only. `SimFs` is given Windows' name rules, but it only reports them, and its lookups stay exact-case. No name in the scenario is a case variant or a reserved name, so the hazard and fold checks run here but never trigger (round-2 critique C-002). Case folding and reserved names are covered without crashes by the hazard corpora. |
 
-**Determinism:** every cell reproduces, with the same state, trace and outcome. The digest over all 40,960 correct cells is `blake3:6274344b358b15cb24d182a681c592ccad66a82564fd40c5cf45e4fcb666a1ac` on both systems.
+**Determinism:** every cell of the Unix-rules variant reproduces, with the same state, trace and outcome. The digest over its 40,960 cells is `blake3:6274344b358b15cb24d182a681c592ccad66a82564fd40c5cf45e4fcb666a1ac` on both systems. The Windows-rules variant has no reproducibility check of its own. It shares the scenario and the simulator, and its counts are identical on both systems.
 
 ### Store and Snapshot crash matrices, re-run
 - **Intents:**
