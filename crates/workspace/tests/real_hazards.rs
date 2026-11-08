@@ -208,3 +208,77 @@ fn real_symlinked_directories_are_not_followed() {
     remove_all(&base);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A name with no UTF-8 form, in a directory `undo` would empty: it is
+/// never removed, and the directory that holds it is kept (INT-0004 AC-7;
+/// test critique C-007). Byte 0xff on ext4, an unpaired surrogate on NTFS.
+#[test]
+fn real_names_without_utf8_survive_undo() {
+    #[cfg(unix)]
+    let odd: std::ffi::OsString = {
+        use std::os::unix::ffi::OsStringExt;
+        std::ffi::OsString::from_vec(b"r\xffw".to_vec())
+    };
+    #[cfg(windows)]
+    let odd: std::ffi::OsString = {
+        use std::os::windows::ffi::OsStringExt;
+        std::ffi::OsString::from_wide(&[u16::from(b'r'), 0xd800, u16::from(b'w')])
+    };
+    let base = claim();
+    let root = base.join("repo");
+    let mut ws = Workspace::init(RealFs, &root, 1).unwrap().0;
+    ws.new_change().unwrap();
+    put(&root, "sub/x", b"tracked");
+    ws.snapshot().unwrap();
+    std::fs::write(root.join("sub").join(&odd), b"not UTF-8").unwrap();
+    ws.undo().unwrap();
+    assert!(!root.join("sub/x").exists(), "the tracked file is removed");
+    assert_eq!(
+        std::fs::read(root.join("sub").join(&odd)).unwrap(),
+        b"not UTF-8",
+        "the entry with no UTF-8 name is kept"
+    );
+    assert!(root.join("sub").is_dir(), "its directory is kept");
+    assert!(!root.join(".praps/working-copy").exists());
+    std::fs::remove_file(root.join("sub").join(&odd)).unwrap();
+    remove_all(&base);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// CR-05 through resume: a crash left a record, and a directory of F was
+/// then replaced by a symbolic link. The resuming `open` removes nothing
+/// through the link (test critique C-008). Skipped, and said so, where the
+/// host cannot make a directory symlink.
+#[test]
+fn real_resume_does_not_follow_a_symlinked_directory() {
+    use workspace::record::{self, Record};
+    let base = claim();
+    let root = base.join("repo");
+    let mut ws = Workspace::init(RealFs, &root, 1).unwrap().0;
+    put(&root, "d/x", b"F's x");
+    ws.snapshot().unwrap();
+    let from = *ws.store().heads().unwrap().first().unwrap();
+    RealFs.remove_file(&root.join("d").join("x")).unwrap();
+    RealFs.remove_dir(&root.join("d")).unwrap();
+    ws.snapshot().unwrap();
+    let target = *ws.store().heads().unwrap().first().unwrap();
+    drop(ws);
+    // The crash: F's files are back on disk, but `d` is now a link to a
+    // directory outside the working copy holding the same `x`.
+    put(&base, "elsewhere/x", b"F's x");
+    #[cfg(unix)]
+    let linked = std::os::unix::fs::symlink(base.join("elsewhere"), root.join("d"));
+    #[cfg(windows)]
+    let linked = std::os::windows::fs::symlink_dir(base.join("elsewhere"), root.join("d"));
+    if let Err(error) = linked {
+        println!("SKIPPED real_resume_does_not_follow_a_symlinked_directory: {error}");
+        let _ = std::fs::remove_dir_all(&base);
+        return;
+    }
+    record::write(&RealFs, &root.join(".praps"), &Record { from, target }).unwrap();
+    let ws = Workspace::open(RealFs, &root, 1).unwrap();
+    assert_eq!(std::fs::read(base.join("elsewhere/x")).unwrap(), b"F's x");
+    assert!(!root.join(".praps/working-copy").exists());
+    drop(ws);
+    let _ = std::fs::remove_dir_all(&base);
+}

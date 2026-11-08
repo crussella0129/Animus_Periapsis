@@ -35,7 +35,7 @@ use std::rc::Rc;
 use codec::Mode as FileMode;
 use common::ROOT;
 use hash::{HashAlg, HashRef};
-use sim::{Fs, Mode, Node, SimFs};
+use sim::{Fs, Mode, NameRules, Node, SimFs};
 use store::Store;
 use workspace::{Variant, Workspace};
 
@@ -46,6 +46,28 @@ const MODES: [Mode; 2] = [Mode::Lenient, Mode::Strict];
 const STORE: &str = "repo/.praps/store";
 
 type Files = BTreeMap<String, (Vec<u8>, FileMode)>;
+
+/// The filesystem semantics a matrix runs under.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Host {
+    /// An executable bit, case-sensitive names, no Windows naming rules.
+    Unix,
+    /// No executable bit, so "matches F" compares bytes only; names fold
+    /// case, and Windows' naming rules apply (test critique C-004).
+    Windows,
+}
+
+fn new_fs(seed: u64, mode: Mode, host: Host) -> SimFs {
+    let fs = SimFs::new(seed, mode);
+    if host == Host::Windows {
+        fs.set_has_executable_bit(false);
+        fs.set_name_rules(NameRules {
+            case_insensitive: true,
+            windows_names: true,
+        });
+    }
+    fs
+}
 
 /// What the run was doing when it stopped.
 #[derive(Clone, Debug, Default)]
@@ -401,21 +423,29 @@ struct Matrix {
 }
 
 fn matrix(variant: Variant, second: bool) -> Matrix {
+    matrix_on(variant, second, Host::Unix)
+}
+
+fn matrix_on(variant: Variant, second: bool, host: Host) -> Matrix {
     let mut out = Matrix {
         cells: Vec::new(),
         resuming: 0,
         second: (0, Violations::default()),
     };
+    let label = match host {
+        Host::Unix => format!("{variant:?}"),
+        Host::Windows => format!("{variant:?} (Windows rules)"),
+    };
     for mode in MODES {
         for seed in 0..SEEDS {
             let syscalls = {
-                let fs = Rc::new(SimFs::new(seed, mode));
+                let fs = Rc::new(new_fs(seed, mode, host));
                 let log = RefCell::new(Log::default());
                 run(&fs, variant, seed, &log).expect("an uncrashed run succeeds");
                 fs.syscalls()
             };
             for crash_at in 1..=syscalls + 1 {
-                let fs = Rc::new(SimFs::new(seed, mode));
+                let fs = Rc::new(new_fs(seed, mode, host));
                 fs.set_crash_at(Some(crash_at));
                 let log = RefCell::new(Log::default());
                 let _ = run(&fs, variant, seed, &log);
@@ -451,12 +481,12 @@ fn matrix(variant: Variant, second: bool) -> Matrix {
     }
     for (mode, (count, v)) in &sums {
         println!(
-            "materialise matrix {variant:?} {mode}: {count} cells; violations: closure {} durability {} working copy {} liveness {}",
+            "materialise matrix {label} {mode}: {count} cells; violations: closure {} durability {} working copy {} liveness {}",
             v.closure, v.durability, v.working_copy, v.liveness
         );
     }
     println!(
-        "materialise matrix {variant:?}: {} cells resumed a record; second pass {} cells, {} violations",
+        "materialise matrix {label}: {} cells resumed a record; second pass {} cells, {} violations",
         out.resuming,
         out.second.0,
         out.second.1.total()
@@ -467,6 +497,23 @@ fn matrix(variant: Variant, second: bool) -> Matrix {
 #[test]
 fn materialise_matrix_finds_no_violations() {
     let m = matrix(Variant::Correct, false);
+    assert!(m.resuming > 0, "no crash left a record to resume");
+    let failing: Vec<_> = m
+        .cells
+        .iter()
+        .filter(|c| c.violations.total() > 0)
+        .take(5)
+        .map(|c| (c.mode, c.seed, c.crash_at, c.violations))
+        .collect();
+    assert!(failing.is_empty(), "first violating cells: {failing:?}");
+}
+
+/// The same scenario on a filesystem with no executable bit and Windows'
+/// name rules: the bytes-only "matches F" rule and the case-folded checks
+/// under a crash at every syscall (test critique C-004).
+#[test]
+fn materialise_matrix_with_windows_rules_finds_no_violations() {
+    let m = matrix_on(Variant::Correct, false, Host::Windows);
     assert!(m.resuming > 0, "no crash left a record to resume");
     let failing: Vec<_> = m
         .cells

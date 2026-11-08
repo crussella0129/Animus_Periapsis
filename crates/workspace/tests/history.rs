@@ -469,9 +469,10 @@ fn ops_are_never_removed() {
                 1 => {
                     ws.new_change().unwrap();
                 }
-                2 => {
-                    let _ = ws.undo();
-                }
+                2 => match ws.undo() {
+                    Ok(_) | Err(Error::NothingToUndo) => {}
+                    Err(error) => panic!("seed {seed} step {step}: undo: {error}"),
+                },
                 3 => {
                     let ops = ws.log().unwrap();
                     let id = ops[rng.below(ops.len() as u64) as usize].id;
@@ -481,8 +482,17 @@ fn ops_are_never_removed() {
                     ws.status().unwrap();
                 }
             }
-            let now: std::collections::BTreeSet<HashRef> =
+            // Checked through `log`, what a user sees, and against the
+            // store's own op files (test critique C-006).
+            let now: std::collections::BTreeSet<HashRef> = ws
+                .log()
+                .unwrap()
+                .into_iter()
+                .map(|entry| entry.id)
+                .collect();
+            let stored: std::collections::BTreeSet<HashRef> =
                 ws.store().ops().unwrap().into_keys().collect();
+            assert_eq!(now, stored, "seed {seed} step {step}: log is not every op");
             assert!(
                 now.is_superset(&known),
                 "seed {seed} step {step}: an op was removed"

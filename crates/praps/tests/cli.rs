@@ -498,9 +498,17 @@ fn praps_undo_restores_files() {
     write(&root, "sub/b", b"new");
     let output = praps(&["undo", "repo"], &dir);
     assert_eq!(code(&output), 0, "{output:?}");
-    assert!(
-        stdout(&output).starts_with("undid the last op"),
-        "{output:?}"
+    // The op printed is the parent of H, the head when `undo` started (the
+    // `new` op): the log reads undo, undo's snapshot of the edits, H, then
+    // H's parent (test critique C-010).
+    let ops = logged_ops(&root);
+    assert_eq!(
+        stdout(&output).trim_end(),
+        format!(
+            "undid the last op: the working copy is back to op {}",
+            ops[3]
+        ),
+        "{ops:?}"
     );
     assert_eq!(fs::read(root.join("a")).unwrap(), b"1");
     assert!(
@@ -592,6 +600,69 @@ fn praps_restore_without_op_is_a_usage_error() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A restore refused before any write exits 1 with the error on stderr,
+/// writes nothing and adds no op (T-008; test critique C-001). An ignored
+/// file stands at a path the target would write; on Windows, a case-only
+/// rename is refused as a hazard too.
+#[test]
+fn praps_restore_refusals_exit_one() {
+    let dir = claim("refusals");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    write(&root, "b", b"tracked");
+    assert_eq!(code(&praps(&["status"], &root)), 0);
+    let with_b = logged_ops(&root)[0].clone();
+    // `b` must be untracked before it is ignored: a tracked file stays
+    // tracked, as in Git.
+    fs::remove_file(root.join("b")).unwrap();
+    assert_eq!(code(&praps(&["status"], &root)), 0);
+    write(&root, ".gitignore", b"b\n");
+    write(&root, "b", b"mine");
+    assert_eq!(code(&praps(&["status"], &root)), 0);
+    let before = logged_ops(&root);
+
+    let output = praps(&["restore", &with_b], &root);
+    assert_eq!(code(&output), 1, "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(err.contains("untracked entries are in the way"), "{err}");
+    assert!(err.contains("\n  b"), "{err}");
+    assert_eq!(fs::read(root.join("b")).unwrap(), b"mine");
+    assert_eq!(fs::read(root.join(".gitignore")).unwrap(), b"b\n");
+    assert!(!root.join(".praps/working-copy").exists());
+    assert_eq!(logged_ops(&root), before, "no op was added");
+
+    if cfg!(windows) {
+        fs::remove_file(root.join("b")).unwrap();
+        fs::remove_file(root.join(".gitignore")).unwrap();
+        write(&root, "README", b"upper");
+        assert_eq!(code(&praps(&["status"], &root)), 0);
+        let upper = logged_ops(&root)[0].clone();
+        fs::remove_file(root.join("README")).unwrap();
+        write(&root, "readme", b"lower");
+        assert_eq!(code(&praps(&["status"], &root)), 0);
+        let before = logged_ops(&root);
+        let output = praps(&["restore", &upper], &root);
+        assert_eq!(code(&output), 1, "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        let err = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            err.contains("cannot be written on this filesystem"),
+            "{err}"
+        );
+        assert!(err.contains("README"), "{err}");
+        let names: Vec<String> = fs::read_dir(&root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|n| n != ".praps")
+            .collect();
+        assert_eq!(names, ["readme"]);
+        assert_eq!(fs::read(root.join("readme")).unwrap(), b"lower");
+        assert_eq!(logged_ops(&root), before, "no op was added");
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A record left by an interrupted write whose target is no longer the head:
 /// the next command drops it and says so on stderr.
 #[test]
@@ -617,6 +688,8 @@ fn praps_prints_notes() {
     assert_eq!(code(&output), 0, "{output:?}");
     let err = String::from_utf8_lossy(&output.stderr);
     assert!(err.starts_with("note: "), "{err}");
+    assert!(err.contains("was abandoned"), "{err}");
+    assert!(err.contains(&root_op.to_string()), "{err}");
     assert!(!root.join(".praps/working-copy").exists());
     assert_eq!(fs::read(root.join("a")).unwrap(), b"1");
     let _ = fs::remove_dir_all(&dir);
