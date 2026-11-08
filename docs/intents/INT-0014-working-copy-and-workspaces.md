@@ -102,6 +102,11 @@ git worktrees.
   diff's temporary names belong to `praps`: a user file created at one of them
   during the interrupted write may be replaced or removed by resume. Every
   way resume drops a record also removes those names (round 3, C-004).
+- A write re-reads each path just before removing or replacing it, and keeps
+  a path the user changed, with a note (Sprint 3 code review, CR-03). AC-1
+  still has a small gap: an edit saved between that read and the next
+  syscall can be lost, and the mode is not re-read. Closing the gap would
+  need an atomic compare-and-replace. The spec states the window.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §4 Phase 1 and R5 §C.1).

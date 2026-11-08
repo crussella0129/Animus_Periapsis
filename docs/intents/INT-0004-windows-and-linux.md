@@ -86,6 +86,13 @@ watchers.
   case-only rename (`README` to `readme`) is refused as a collision: a known
   limit until backlog T-016, so that no write ever depends on case-insensitive
   lookups (Sprint 3 plan critique, rounds 1 and 2).
+- AC-7 holds for writes as well: a working-copy write keys directory listings
+  by UTF-8 name, and gives a name with no UTF-8 form a key no repository path
+  can equal, so such an entry is never overwritten or removed, and a
+  directory holding it is kept (Sprint 3 code review, CR-02). It is
+  reported only by `status`, though: `undo`, `restore` and `new` drop their
+  snapshot's report, a gap that backlog T-019 closes (Sprint 3 test
+  critique, round 2, C-003).
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; research gap II §7 plus the owner's test-machine inventory).
