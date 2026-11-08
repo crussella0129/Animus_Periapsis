@@ -7,7 +7,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use sim::{DirEntry, Fs, Kind, Mode, Name, Node, RealFs, Rng, SimFs, is_crash};
+use sim::{DirEntry, Fs, Kind, Mode, Name, NameRules, Node, RealFs, Rng, SimFs, is_crash};
 
 /// Seeds tried where an outcome must be seen "across seeds".
 const SEEDS: u64 = 200;
@@ -75,6 +75,56 @@ fn contract(fs: &impl Fs, base: &Path) {
     );
     fs.sync_dir(&dir).unwrap();
     scan_contract(fs, base);
+    removal_and_mode_contract(fs, base);
+}
+
+/// `remove_dir` and `set_executable` (Sprint 3 T-003).
+fn removal_and_mode_contract(fs: &impl Fs, base: &Path) {
+    let dir = base.join("r");
+    fs.create_dir(&dir).unwrap();
+    let (empty, file) = (dir.join("e"), dir.join("f"));
+    fs.create_dir(&empty).unwrap();
+    fs.create_new(&file).unwrap();
+    fs.sync_file(&file).unwrap();
+    fs.sync_dir(&dir).unwrap();
+    fs.sync_dir(&empty).unwrap();
+
+    fs.remove_dir(&empty).unwrap();
+    assert_eq!(fs.list(&dir).unwrap(), ["f"]);
+    assert_eq!(
+        fs.remove_dir(&empty).unwrap_err().kind(),
+        ErrorKind::NotFound
+    );
+    assert_eq!(
+        fs.remove_dir(&dir).unwrap_err().kind(),
+        ErrorKind::DirectoryNotEmpty
+    );
+    assert!(fs.remove_dir(&file).is_err(), "a file is not a directory");
+    fs.sync_dir(&dir).unwrap();
+
+    let bit = fs.has_executable_bit();
+    let kind_of_f = || {
+        fs.scan(&dir)
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.name == Name::Utf8("f".to_owned()))
+            .map(|entry| entry.kind)
+    };
+    fs.set_executable(&file, true).unwrap();
+    assert_eq!(kind_of_f(), Some(Kind::File { executable: bit }));
+    fs.set_executable(&file, false).unwrap();
+    assert_eq!(kind_of_f(), Some(FILE));
+    fs.sync_file(&file).unwrap();
+    assert_eq!(
+        fs.set_executable(&dir.join("missing"), true)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::NotFound
+    );
+    assert!(
+        fs.set_executable(&dir, true).is_err(),
+        "a directory is not a file"
+    );
 }
 
 fn utf8(name: &str, kind: Kind) -> DirEntry {
@@ -138,6 +188,27 @@ fn sim_fs_meets_the_contract() {
     for mode in [Mode::Lenient, Mode::Strict] {
         contract(&SimFs::new(7, mode), Path::new(""));
     }
+}
+
+#[test]
+fn name_rules_report_the_platform() {
+    let windows = cfg!(windows);
+    assert_eq!(
+        RealFs.name_rules(),
+        NameRules {
+            case_insensitive: windows,
+            windows_names: windows,
+        }
+    );
+    let fs = SimFs::new(0, Mode::Strict);
+    assert_eq!(fs.name_rules(), NameRules::default());
+    let rules = NameRules {
+        case_insensitive: true,
+        windows_names: true,
+    };
+    fs.set_name_rules(rules);
+    assert_eq!(fs.name_rules(), rules);
+    assert_eq!(fs.syscalls(), 0, "not a syscall");
 }
 
 #[test]
@@ -482,14 +553,17 @@ fn stale_removals_spare_a_reused_name() {
     }
 }
 
-/// Every kind of syscall, once each, with every effect visible in a snapshot:
-/// create_dir, create_new, write, overwrite, sync_file, rename, sync_dir,
-/// read, list, scan, remove_file.
+/// Every kind of syscall, with every effect visible in a snapshot: the 13
+/// kinds create_dir, create_new, write, overwrite, set_executable, sync_file,
+/// rename, sync_dir, read, list, scan, remove_file and remove_dir (with a
+/// second create_dir for the directory to remove).
 fn every_kind(fs: &SimFs) -> std::io::Result<()> {
+    fs.create_dir(Path::new("e"))?;
     fs.create_dir(Path::new("d"))?;
     fs.create_new(Path::new("d/a"))?;
     fs.write(Path::new("d/a"), b"one")?;
     fs.overwrite(Path::new("d/a"), b"two")?;
+    fs.set_executable(Path::new("d/a"), true)?;
     fs.sync_file(Path::new("d/a"))?;
     fs.rename(Path::new("d/a"), Path::new("d/b"))?;
     fs.sync_dir(Path::new("d"))?;
@@ -497,10 +571,153 @@ fn every_kind(fs: &SimFs) -> std::io::Result<()> {
     fs.list(Path::new("d"))?;
     fs.scan(Path::new("d"))?;
     fs.remove_file(Path::new("d/b"))?;
+    fs.remove_dir(Path::new("e"))?;
     Ok(())
 }
 
-const EVERY_KIND_SYSCALLS: u64 = 11;
+const EVERY_KIND_SYSCALLS: u64 = 14;
+
+#[test]
+fn every_kind_runs_are_deterministic() {
+    for mode in [Mode::Lenient, Mode::Strict] {
+        for seed in 0..50 {
+            for k in 1..=EVERY_KIND_SYSCALLS + 1 {
+                let run = || {
+                    let fs = SimFs::new(seed, mode);
+                    fs.set_crash_at(Some(k));
+                    let _ = every_kind(&fs);
+                    fs
+                };
+                let (a, b) = (run(), run());
+                assert_eq!(a.trace(), b.trace());
+                assert_eq!(a.recover().snapshot(), b.recover().snapshot());
+            }
+        }
+    }
+}
+
+/// An unsynced `remove_dir` is kept or reverted by the seed; a reverted one
+/// leaves the directory empty. Once its parent is synced it is kept.
+#[test]
+fn unsynced_remove_dir_may_revert() {
+    let run = |sync_parent: bool| {
+        move |seed| {
+            let fs = SimFs::new(seed, Mode::Strict);
+            fs.create_dir(Path::new("e")).unwrap();
+            fs.sync_dir(Path::new("")).unwrap();
+            fs.remove_dir(Path::new("e")).unwrap();
+            if sync_parent {
+                fs.sync_dir(Path::new("")).unwrap();
+            }
+            fs
+        }
+    };
+    let shape = |node: Option<&Node>| match node {
+        Some(Node::Dir) => "reverted",
+        None => "kept",
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        outcomes(run(false), "e", shape),
+        BTreeSet::from(["reverted", "kept"])
+    );
+    assert_eq!(outcomes(run(true), "e", shape), BTreeSet::from(["kept"]));
+    // A reverted removal holds nothing.
+    for seed in 0..SEEDS {
+        let snap = run(false)(seed).recover().snapshot();
+        assert!(snap.keys().all(|path| path == "e"), "{snap:?}");
+    }
+}
+
+/// `remove_dir` needs the directory empty with its own entry changes synced.
+#[test]
+fn remove_dir_refuses_an_unsynced_directory() {
+    let fs = SimFs::new(0, Mode::Strict);
+    fs.create_dir(Path::new("e")).unwrap();
+    fs.create_new(Path::new("e/f")).unwrap();
+    fs.remove_file(Path::new("e/f")).unwrap();
+    assert_eq!(
+        fs.remove_dir(Path::new("e")).unwrap_err().kind(),
+        ErrorKind::ResourceBusy
+    );
+    assert!(fs.snapshot().contains_key("e"), "nothing changed");
+    fs.sync_dir(Path::new("e")).unwrap();
+    fs.remove_dir(Path::new("e")).unwrap();
+}
+
+#[test]
+fn create_dir_is_refused_while_its_removal_is_pending() {
+    for mode in [Mode::Lenient, Mode::Strict] {
+        let fs = SimFs::new(0, mode);
+        fs.create_dir(Path::new("e")).unwrap();
+        fs.sync_dir(Path::new("")).unwrap();
+        fs.remove_dir(Path::new("e")).unwrap();
+        assert_eq!(
+            fs.create_dir(Path::new("e")).unwrap_err().kind(),
+            ErrorKind::ResourceBusy
+        );
+        fs.sync_dir(Path::new("")).unwrap();
+        fs.create_dir(Path::new("e")).unwrap();
+    }
+}
+
+/// An unsynced executable-bit change is kept or reverted by the seed, and
+/// kept once the file is synced.
+#[test]
+fn unsynced_mode_change_may_revert() {
+    let run = |sync: bool| {
+        move |seed| {
+            let fs = SimFs::new(seed, Mode::Strict);
+            let f = Path::new("f");
+            fs.create_new(f).unwrap();
+            fs.write(f, b"x").unwrap();
+            fs.sync_file(f).unwrap();
+            fs.sync_dir(Path::new("")).unwrap();
+            fs.set_executable(f, true).unwrap();
+            if sync {
+                fs.sync_file(f).unwrap();
+            }
+            fs
+        }
+    };
+    let shape = |node: Option<&Node>| match node {
+        Some(Node::Executable(c)) if c == b"x" => "kept",
+        Some(Node::File(c)) if c == b"x" => "reverted",
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        outcomes(run(false), "f", shape),
+        BTreeSet::from(["kept", "reverted"])
+    );
+    assert_eq!(outcomes(run(true), "f", shape), BTreeSet::from(["kept"]));
+}
+
+/// Without an executable bit, `set_executable` succeeds and changes nothing.
+#[test]
+fn set_executable_without_the_bit_changes_nothing() {
+    let fs = SimFs::new(0, Mode::Strict);
+    fs.set_has_executable_bit(false);
+    fs.create_new(Path::new("f")).unwrap();
+    fs.set_executable(Path::new("f"), true).unwrap();
+    assert_eq!(fs.snapshot().get("f"), Some(&Node::File(Vec::new())));
+}
+
+/// The helper is not a syscall, and is durable at once.
+#[test]
+fn make_executable_is_not_a_syscall() {
+    for seed in 0..SEEDS {
+        let fs = SimFs::new(seed, Mode::Strict);
+        fs.create_new(Path::new("f")).unwrap();
+        fs.sync_dir(Path::new("")).unwrap();
+        let before = fs.syscalls();
+        fs.make_executable(Path::new("f"), true).unwrap();
+        assert_eq!(fs.syscalls(), before);
+        assert_eq!(
+            fs.recover().snapshot().get("f"),
+            Some(&Node::Executable(Vec::new()))
+        );
+    }
+}
 
 /// What a snapshot holds: every visible path and its node.
 type Snapshot = BTreeMap<String, Node>;

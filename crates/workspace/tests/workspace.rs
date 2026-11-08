@@ -327,7 +327,7 @@ fn status_lists_added_modified_deleted_after_new() {
     put(&fs, "drop", b"d");
     ws.new_change().unwrap();
     put(&fs, "edit", b"2");
-    fs.set_executable(&Path::new(ROOT).join("run"), true)
+    fs.make_executable(&Path::new(ROOT).join("run"), true)
         .unwrap();
     delete(&fs, "drop");
     put(&fs, "added", b"a");
@@ -392,14 +392,14 @@ fn executable_bit_is_recorded() {
     let mut ws = fresh(12);
     let fs = fs_of(&ws);
     put(&fs, "run", b"#!");
-    fs.set_executable(&Path::new(ROOT).join("run"), true)
+    fs.make_executable(&Path::new(ROOT).join("run"), true)
         .unwrap();
     ws.snapshot().unwrap();
     assert_eq!(
         ws.working_copy().unwrap().2[&path("run")].mode,
         Mode::Executable
     );
-    fs.set_executable(&Path::new(ROOT).join("run"), false)
+    fs.make_executable(&Path::new(ROOT).join("run"), false)
         .unwrap();
     ws.snapshot().unwrap();
     assert_eq!(
@@ -416,7 +416,7 @@ fn no_executable_bit_keeps_the_recorded_mode() {
     let mut ws = fresh(13);
     let fs = fs_of(&ws);
     put(&fs, "run", b"#!");
-    fs.set_executable(&Path::new(ROOT).join("run"), true)
+    fs.make_executable(&Path::new(ROOT).join("run"), true)
         .unwrap();
     ws.snapshot().unwrap();
     ws.new_change().unwrap();
@@ -616,7 +616,7 @@ fn no_executable_bit_restores_the_parents_mode() {
     let mut ws = fresh(20);
     let fs = fs_of(&ws);
     put(&fs, "run", b"#!");
-    fs.set_executable(&Path::new(ROOT).join("run"), true)
+    fs.make_executable(&Path::new(ROOT).join("run"), true)
         .unwrap();
     ws.new_change().unwrap();
     fs.set_has_executable_bit(false);

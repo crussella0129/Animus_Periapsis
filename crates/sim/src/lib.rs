@@ -13,7 +13,7 @@ mod real;
 mod rng;
 mod simfs;
 
-pub use fs::{Crash, Fs, is_crash};
+pub use fs::{Crash, Fs, NameRules, is_crash};
 pub use name::{DirEntry, Kind, Name, RawName};
 pub use real::{RealFs, os_seed};
 pub use rng::Rng;

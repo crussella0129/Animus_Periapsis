@@ -14,10 +14,12 @@ use workspace::Workspace;
 
 const SEQUENCES: u64 = 500;
 const STEPS: usize = 12;
+const LONG_SEQUENCES: u64 = 200;
+const LONG_STEPS: usize = 40;
 
 #[test]
 fn edit_corpus_loses_nothing() {
-    let mut checked = 0;
+    let mut counts = common::Counts::default();
     for seed in 0..SEQUENCES {
         let fs = Rc::new(SimFs::new(seed, Mode::Strict));
         let mut ws = Workspace::init(Rc::clone(&fs), Path::new(ROOT), seed)
@@ -32,8 +34,9 @@ fn edit_corpus_loses_nothing() {
             put(&*fs, "a", b"#!");
             put(&*fs, "d2/z", b"#!");
             put(&*fs, "c.txt", b"plain");
-            fs.set_executable(&Path::new(ROOT).join("a"), true).unwrap();
-            fs.set_executable(&Path::new(ROOT).join("d2/z"), true)
+            fs.make_executable(&Path::new(ROOT).join("a"), true)
+                .unwrap();
+            fs.make_executable(&Path::new(ROOT).join("d2/z"), true)
                 .unwrap();
             ws.snapshot().unwrap();
             let expected = model.snapshot(&*fs, &BTreeSet::new());
@@ -41,17 +44,45 @@ fn edit_corpus_loses_nothing() {
             assert_eq!(expected["a"].1, codec::Mode::Executable);
             fs.set_has_executable_bit(false);
         }
-        checked += edit_sequence(
+        counts += edit_sequence(
             &mut ws,
             model,
             seed,
             STEPS,
             &|fs: &Rc<SimFs>, name, executable| {
-                fs.set_executable(&Path::new(ROOT).join(name), executable)
+                fs.make_executable(&Path::new(ROOT).join(name), executable)
                     .unwrap();
             },
         );
     }
-    println!("edit corpus: {SEQUENCES} sequences, {checked} snapshots, 0 lost edits");
-    assert_eq!(checked, SEQUENCES as usize * STEPS);
+    println!("edit corpus: {SEQUENCES} sequences, {counts}");
+    assert_eq!(counts.snapshots, SEQUENCES as usize * STEPS);
+    assert!(counts.undos > 0 && counts.restores > 0, "{counts}");
+}
+
+/// Longer sequences, so that ignored files come to stand where an earlier
+/// op tracked a file: `undo` and `restore` must then be refused, and the
+/// model must predict it (Sprint 3 T-009).
+#[test]
+fn long_edit_sequences_reach_refusals() {
+    let mut counts = common::Counts::default();
+    for seed in 0..LONG_SEQUENCES {
+        let seed = 10_000 + seed;
+        let fs = Rc::new(SimFs::new(seed, Mode::Strict));
+        let mut ws = Workspace::init(Rc::clone(&fs), Path::new(ROOT), seed)
+            .unwrap()
+            .0;
+        counts += edit_sequence(
+            &mut ws,
+            Model::default(),
+            seed,
+            LONG_STEPS,
+            &|fs: &Rc<SimFs>, name, executable| {
+                fs.make_executable(&Path::new(ROOT).join(name), executable)
+                    .unwrap();
+            },
+        );
+    }
+    println!("long edit corpus: {LONG_SEQUENCES} sequences, {counts}");
+    assert!(counts.blocked > 0, "{counts}");
 }

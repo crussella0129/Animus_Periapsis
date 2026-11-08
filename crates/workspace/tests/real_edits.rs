@@ -71,6 +71,15 @@ impl Fs for Under {
     fn has_executable_bit(&self) -> bool {
         RealFs.has_executable_bit()
     }
+    fn remove_dir(&self, path: &Path) -> std::io::Result<()> {
+        RealFs.remove_dir(&self.0.join(path))
+    }
+    fn set_executable(&self, path: &Path, executable: bool) -> std::io::Result<()> {
+        RealFs.set_executable(&self.0.join(path), executable)
+    }
+    fn name_rules(&self) -> sim::NameRules {
+        RealFs.name_rules()
+    }
 }
 
 #[cfg(unix)]
@@ -95,15 +104,16 @@ fn set_exec(_: &Under, _: &str, _: bool) {
 #[test]
 fn real_edit_corpus_loses_nothing() {
     let base = claim();
-    let mut checked = 0;
+    let mut counts = common::Counts::default();
     for seed in 0..SEQUENCES {
         let dir = base.join(format!("s{seed}"));
         RealFs.create_dir(&dir).unwrap();
         let fs = Under(dir);
         let mut ws = Workspace::init(fs, Path::new(ROOT), seed).unwrap().0;
-        checked += edit_sequence(&mut ws, Model::default(), seed, STEPS, &set_exec);
+        counts += edit_sequence(&mut ws, Model::default(), seed, STEPS, &set_exec);
     }
-    println!("real edit corpus: {SEQUENCES} sequences, {checked} snapshots, 0 lost edits");
-    assert_eq!(checked, SEQUENCES as usize * STEPS);
+    println!("real edit corpus: {SEQUENCES} sequences, {counts}");
+    assert_eq!(counts.snapshots, SEQUENCES as usize * STEPS);
+    assert!(counts.undos > 0 && counts.restores > 0, "{counts}");
     let _ = std::fs::remove_dir_all(&base);
 }

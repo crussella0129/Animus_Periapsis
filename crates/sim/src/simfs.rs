@@ -19,6 +19,13 @@
 //!   `sync_file` also makes its own entry durable, together with every entry
 //!   change of its directory made before it (the journal commits in order),
 //!   and `create_dir` is durable at once. [`Mode::Strict`] assumes only what POSIX promises.
+//! - **The executable bit** is inode metadata, pending like data until
+//!   [`Fs::sync_file`]; at a crash a pending change is kept or reverted by
+//!   the seed. The seed is drawn only when a change is pending.
+//! - **Removing a directory** ([`Fs::remove_dir`]) needs it empty, with its
+//!   own entry changes all synced, so a removal that a crash reverts leaves an
+//!   empty directory. While the removal is pending, the name cannot be made a
+//!   directory again.
 //!
 //! A run with crash point *k* lets syscalls 1 to *k* − 1 take effect; syscall
 //! *k* takes no effect and fails, as does every later one. [`SimFs::recover`]
@@ -26,18 +33,18 @@
 //!
 //! Test helpers that are not syscalls add what the [`Fs`] methods cannot
 //! make: executable bits, symbolic links, other special entries, and names
-//! with no UTF-8 form ([`SimFs::set_executable`], [`SimFs::make_symlink`],
+//! with no UTF-8 form ([`SimFs::make_executable`], [`SimFs::make_symlink`],
 //! [`SimFs::make_other`], [`SimFs::make_raw`]). Each takes effect at once and
 //! is durable, and none is counted or traced. A raw name is held as its
 //! bytes or code units, the same on every host, under a key no `Path` the
 //! simulator accepts can name.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, ErrorKind};
 use std::path::{Component, Path, PathBuf};
 
-use crate::fs::{Crash, Fs};
+use crate::fs::{Crash, Fs, NameRules};
 use crate::name::{DirEntry, Kind, Name, RawName};
 use crate::rng::Rng;
 
@@ -144,8 +151,10 @@ struct Dir {
 struct Inode {
     current: Vec<u8>,
     durable: Vec<u8>,
-    /// The owner-execute bit (metadata; durable at once).
+    /// The owner-execute bit as a reader sees it now.
     executable: bool,
+    /// The bit as of the last `sync_file`.
+    durable_executable: bool,
     /// Whether an `overwrite` truncated the file since its last sync, so a
     /// crash may lose bytes that were durable.
     truncated: bool,
@@ -164,6 +173,11 @@ struct State {
     next_inode: u64,
     /// Whether files carry an executable bit ([`Fs::has_executable_bit`]).
     executable_bit: bool,
+    /// What [`Fs::name_rules`] reports.
+    name_rules: NameRules,
+    /// Directories removed while the removal is pending in their parent: a
+    /// crash that reverts it brings each back empty.
+    removed: BTreeSet<PathBuf>,
 }
 
 /// A hook run at a syscall boundary, given the number the next syscall will
@@ -278,6 +292,8 @@ impl SimFs {
                 inodes: BTreeMap::new(),
                 next_inode: 0,
                 executable_bit: true,
+                name_rules: NameRules::default(),
+                removed: BTreeSet::new(),
             }),
             hook: RefCell::new(None),
         }
@@ -289,11 +305,20 @@ impl SimFs {
         self.state.borrow_mut().executable_bit = has;
     }
 
-    /// Sets a file's executable bit. Not a syscall.
-    pub fn set_executable(&self, path: &Path, executable: bool) -> io::Result<()> {
+    /// What [`Fs::name_rules`] reports; neither rule unless set otherwise,
+    /// the same on every host.
+    pub fn set_name_rules(&self, rules: NameRules) {
+        self.state.borrow_mut().name_rules = rules;
+    }
+
+    /// Sets a file's executable bit, durably at once. Not a syscall: the
+    /// syscall is [`Fs::set_executable`].
+    pub fn make_executable(&self, path: &Path, executable: bool) -> io::Result<()> {
         let mut st = self.state.borrow_mut();
         let id = st.file(path)?;
-        st.inode(id).executable = executable;
+        let inode = st.inode(id);
+        inode.executable = executable;
+        inode.durable_executable = executable;
         Ok(())
     }
 
@@ -494,23 +519,33 @@ impl SimFs {
         let mut inodes = BTreeMap::new();
         let mut stack = vec![PathBuf::new()];
         while let Some(path) = stack.pop() {
-            let entries = resolved
-                .get(&path)
-                .cloned()
-                .expect("a durable directory entry names a directory that exists");
+            let entries = match resolved.get(&path) {
+                Some(entries) => entries.clone(),
+                // A removal the crash reverted: the directory was empty.
+                None if st.removed.contains(&path) => BTreeMap::new(),
+                None => panic!("a durable directory entry names a directory that exists"),
+            };
             for (name, entry) in &entries {
                 match entry {
                     Entry::Dir => stack.push(path.join(name)),
                     Entry::File(id) => {
                         if !inodes.contains_key(id) {
-                            let content = settle(&st.inodes[id], &mut rng);
+                            let inode = &st.inodes[id];
+                            let content = settle(inode, &mut rng);
+                            let executable =
+                                if inode.executable == inode.durable_executable || rng.coin() {
+                                    inode.executable
+                                } else {
+                                    inode.durable_executable
+                                };
                             inodes.insert(
                                 *id,
                                 Inode {
                                     current: content.clone(),
                                     durable: content,
                                     truncated: false,
-                                    executable: st.inodes[id].executable,
+                                    executable,
+                                    durable_executable: executable,
                                 },
                             );
                         }
@@ -518,12 +553,17 @@ impl SimFs {
                     Entry::Symlink | Entry::Other => {}
                 }
             }
-            let raw = st.dirs[&path]
-                .raw
-                .iter()
-                .filter(|(key, _)| entries.contains_key(*key))
-                .map(|(key, raw)| (key.clone(), raw.clone()))
-                .collect();
+            let raw = st
+                .dirs
+                .get(&path)
+                .map(|dir| {
+                    dir.raw
+                        .iter()
+                        .filter(|(key, _)| entries.contains_key(*key))
+                        .map(|(key, raw)| (key.clone(), raw.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
             dirs.insert(
                 path,
                 Dir {
@@ -547,6 +587,8 @@ impl SimFs {
                 inodes,
                 next_inode: st.next_inode,
                 executable_bit: st.executable_bit,
+                name_rules: st.name_rules,
+                removed: BTreeSet::new(),
             }),
             hook: RefCell::new(None),
         }
@@ -622,6 +664,16 @@ impl Fs for SimFs {
         if dir.entries.contains_key(&name) {
             return Err(error(ErrorKind::AlreadyExists, "already exists", path));
         }
+        let removal_pending = dir.pending.iter().any(|op| {
+            matches!(op, DirOp::Remove { name: removed, entry: Entry::Dir } if *removed == name)
+        });
+        if removal_pending {
+            return Err(error(
+                ErrorKind::ResourceBusy,
+                "the directory's removal is not yet durable; sync its parent first",
+                path,
+            ));
+        }
         dir.entries.insert(name.clone(), Entry::Dir);
         if lenient {
             dir.durable.insert(name, Entry::Dir);
@@ -631,6 +683,7 @@ impl Fs for SimFs {
                 entry: Entry::Dir,
             });
         }
+        st.removed.remove(&full);
         st.dirs.insert(full, Dir::default());
         Ok(())
     }
@@ -677,6 +730,7 @@ impl Fs for SimFs {
         let id = st.file(path)?;
         let inode = st.inode(id);
         inode.durable = inode.current.clone();
+        inode.durable_executable = inode.executable;
         inode.truncated = false;
         if st.mode == Mode::Lenient {
             // A journaling filesystem commits a directory's entry changes in
@@ -806,5 +860,55 @@ impl Fs for SimFs {
 
     fn has_executable_bit(&self) -> bool {
         self.state.borrow().executable_bit
+    }
+
+    fn remove_dir(&self, path: &Path) -> io::Result<()> {
+        self.syscall("remove_dir", path)?;
+        let (parent, name) = split(path)?;
+        let full = key(path)?;
+        let mut st = self.state.borrow_mut();
+        match st.dir(&parent, path)?.entries.get(&name) {
+            Some(Entry::Dir) => {}
+            Some(_) => return Err(error(ErrorKind::NotADirectory, "not a directory", path)),
+            None => return Err(error(ErrorKind::NotFound, "no such directory", path)),
+        }
+        let target = st.dir(&full, path)?;
+        if !target.entries.is_empty() {
+            return Err(error(
+                ErrorKind::DirectoryNotEmpty,
+                "directory not empty",
+                path,
+            ));
+        }
+        if !target.pending.is_empty() || !target.durable.is_empty() {
+            return Err(error(
+                ErrorKind::ResourceBusy,
+                "the directory's own entry changes are not yet durable; sync it first",
+                path,
+            ));
+        }
+        let dir = st.dir_mut(&parent, path)?;
+        dir.entries.remove(&name);
+        dir.pending.push(DirOp::Remove {
+            name,
+            entry: Entry::Dir,
+        });
+        st.dirs.remove(&full);
+        st.removed.insert(full);
+        Ok(())
+    }
+
+    fn set_executable(&self, path: &Path, executable: bool) -> io::Result<()> {
+        self.syscall("set_executable", path)?;
+        let mut st = self.state.borrow_mut();
+        let id = st.file(path)?;
+        if st.executable_bit {
+            st.inode(id).executable = executable;
+        }
+        Ok(())
+    }
+
+    fn name_rules(&self) -> NameRules {
+        self.state.borrow().name_rules
     }
 }

@@ -575,6 +575,7 @@ dependencies = [
  "ignore",
  "sim",
  "store",
+ "workspace",
 ]
 
 [[package]]

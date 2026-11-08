@@ -3,10 +3,10 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0004
 - **State:** active
-- **Work evidence:** [T-005 build plan](../sprints/s0/sprint-plans/build-plan.md#t-005-golden-corpus-and-spec-consistency), [T-007 build plan](../sprints/s0/sprint-plans/build-plan.md#t-007-canonical-suite-runner-and-ci-workflow), [Sprint 1 T-002 build plan](../sprints/s1/sprint-plans/build-plan.md#t-002-filesystem-and-randomness-traits-in-the-sim-crate), [Sprint 1 T-007 build plan](../sprints/s1/sprint-plans/build-plan.md#t-007-windows-durability-strategy-and-real-filesystem-evidence), [T-010 backlog](../work/tasks.md), [Sprint 2 T-002 build plan](../sprints/s2/sprint-plans/build-plan.md#t-002-specify-and-implement-the-provisional-changeset-and-view-kinds-and-repository-paths), [Sprint 2 T-004 build plan](../sprints/s2/sprint-plans/build-plan.md#t-004-a-scan-syscall-an-executable-bit-capability-and-operating-system-randomness-in-sim), [Sprint 2 T-005 build plan](../sprints/s2/sprint-plans/build-plan.md#t-005-the-workspace-crate-init-snapshot-new-and-status), [Sprint 2 T-001 build plan](../sprints/s2/sprint-plans/build-plan.md#t-001-record-sprint-1s-github-actions-runs-and-owner-sign-offs), [T-013 backlog](../work/tasks.md)
+- **Work evidence:** [T-015 backlog](../work/tasks.md), [T-016 backlog](../work/tasks.md), [T-005 build plan](../sprints/s0/sprint-plans/build-plan.md#t-005-golden-corpus-and-spec-consistency), [T-007 build plan](../sprints/s0/sprint-plans/build-plan.md#t-007-canonical-suite-runner-and-ci-workflow), [Sprint 1 T-002 build plan](../sprints/s1/sprint-plans/build-plan.md#t-002-filesystem-and-randomness-traits-in-the-sim-crate), [Sprint 1 T-007 build plan](../sprints/s1/sprint-plans/build-plan.md#t-007-windows-durability-strategy-and-real-filesystem-evidence), [T-010 backlog](../work/tasks.md), [Sprint 2 T-002 build plan](../sprints/s2/sprint-plans/build-plan.md#t-002-specify-and-implement-the-provisional-changeset-and-view-kinds-and-repository-paths), [Sprint 2 T-004 build plan](../sprints/s2/sprint-plans/build-plan.md#t-004-a-scan-syscall-an-executable-bit-capability-and-operating-system-randomness-in-sim), [Sprint 2 T-005 build plan](../sprints/s2/sprint-plans/build-plan.md#t-005-the-workspace-crate-init-snapshot-new-and-status), [Sprint 2 T-001 build plan](../sprints/s2/sprint-plans/build-plan.md#t-001-record-sprint-1s-github-actions-runs-and-owner-sign-offs), [T-013 backlog](../work/tasks.md), [Sprint 3 T-001 build plan](../sprints/s3/sprint-plans/build-plan.md#t-001-record-sprint-2s-github-actions-runs-and-owner-sign-offs), [Sprint 3 T-003 build plan](../sprints/s3/sprint-plans/build-plan.md#t-003-remove_dir-set_executable-and-name_rules-in-sim), [Sprint 3 T-004 build plan](../sprints/s3/sprint-plans/build-plan.md#t-004-specify-writing-the-working-copy-undo-restore-and-log), [Sprint 3 T-005 build plan](../sprints/s3/sprint-plans/build-plan.md#t-005-the-hazard-check), [Sprint 3 T-009 build plan](../sprints/s3/sprint-plans/build-plan.md#t-009-reversibility-and-hazard-corpora-the-materialise-crash-scenario-and-the-extended-edit-corpus), [T-017 backlog](../work/tasks.md)
 - **Completion evidence:** [T-005 completion](../work/completed-tasks.md#t-005-sprint-0), [T-007 completion](../work/completed-tasks.md#t-007-sprint-0), [Sprint 1 T-002 completion](../work/completed-tasks.md#t-002-sprint-1), [Sprint 1 T-007 completion](../work/completed-tasks.md#t-007-sprint-1), [Sprint 2 T-004 completion](../work/completed-tasks.md#t-004-sprint-2), [Sprint 2 T-005 completion](../work/completed-tasks.md#t-005-sprint-2)
 - **Code evidence:** [.gitattributes](../../.gitattributes), [golden rule](../../crates/xtask/src/attributes.rs), [CI workflow](../../.github/workflows/ci.yml), [real.rs](../../crates/sim/src/real.rs), [name.rs](../../crates/sim/src/name.rs)
-- **Test evidence:** [Sprint 0 test report](../sprints/s0/sprint-tests/test-report.md), [Sprint 1 test report](../sprints/s1/sprint-tests/test-report.md), [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md)
+- **Test evidence:** [Sprint 0 test report](../sprints/s0/sprint-tests/test-report.md), [Sprint 1 test report](../sprints/s1/sprint-tests/test-report.md), [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md), [Sprint 2 CI record](../sprints/s3/sprint-tests/ci-sprint2.md), [Sprint 3 test report](../sprints/s3/sprint-tests/test-report.md)
 - **Documentation evidence:** [Storage durability](../spec/storage-durability.md), [The working copy](../spec/working-copy.md)
 
 ## Intent
@@ -74,9 +74,31 @@ watchers.
   Paths stay relative or absolute at the `Fs` boundary; `RealFs` converts them,
   taking `..` lexically.
 
+- The case and name rules a write follows come from the platform, not from a
+  probe of each directory: Windows is taken as case-insensitive with Windows
+  names, Unix as neither. This is conservative on case-sensitive NTFS
+  directories (a collision may be reported that would not happen) and wrong
+  on Windows directories mounted into Linux (WSL drvfs), where a collision
+  could overwrite; probe-based detection is backlog T-015. Hazards are
+  checked only for the paths a write creates or rewrites, so a tracked file
+  with a Windows-hazardous name (possible through verbatim paths) does not
+  block `undo` while it is unchanged. On a case-insensitive filesystem a
+  case-only rename (`README` to `readme`) is refused as a collision: a known
+  limit until backlog T-016, so that no write ever depends on case-insensitive
+  lookups (Sprint 3 plan critique, rounds 1 and 2).
+- AC-7 holds for writes as well: a working-copy write keys directory listings
+  by UTF-8 name, and gives a name with no UTF-8 form a key no repository path
+  can equal, so such an entry is never overwritten or removed, and a
+  directory holding it is kept (Sprint 3 code review, CR-02). It is
+  reported only by `status`, though: `undo`, `restore` and `new` drop their
+  snapshot's report, a gap that backlog T-019 closes (Sprint 3 test
+  critique, round 2, C-003).
+
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; research gap II §7 plus the owner's test-machine inventory).
 - 2026-10-31: `proposed` → `planned` (Sprint 0 build plan T-005, T-007: golden bytes and the canonical runner on Windows and WSL, including a fresh Windows clone with `core.autocrlf=true`).
 - 2026-10-31: `planned` → `active` (Sprint 0 build, T-005 starts: golden bytes kept binary on every platform).
 - 2026-11-01: revised while `active`, on owner direction: Periapsis must work with any toolchain, and some write file names that have no UTF-8 form. The Intent and the new AC-7 say such a name is reported by an escaped form and left alone, never tracked under another name, overwritten or deleted; stored paths stay UTF-8.
 - 2026-11-07: revised while `active` (Sprint 2 Loop): Consequences record that `RealFs` passes verbatim paths on Windows (code review CR-02). AC-2 and AC-7 are met by the Sprint 2 test report for snapshotting; AC-3, AC-4 (writing a working copy), AC-5 (sign-off) and AC-6 (Nighthawk) remain, so the chapter stays `active`.
+- 2026-11-07: revised while `active` (Sprint 3 plan critique, round 1): Consequences record that write rules come from the platform with their limits (T-015), that hazards apply only to the paths written, and that a case-only rename is not a collision.
+- 2026-11-07: revised while `active` (Sprint 3 plan critique, round 2): a case-only rename on a case-insensitive filesystem is refused as a known limit (T-016), replacing the round-1 exemption.

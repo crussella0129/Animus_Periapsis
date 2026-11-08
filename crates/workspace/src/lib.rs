@@ -14,22 +14,32 @@
 //! comes from an [`Rng`] seeded by the caller, so a run on the simulator is a
 //! function of its seed. `docs/spec/working-copy.md` is the specification.
 
+pub mod hazard;
 mod ignore;
+pub mod materialise;
+pub mod record;
 pub mod tree;
+#[cfg(feature = "variants")]
+mod variant;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 
-use codec::{CHANGE_ID_LEN, Changeset, Mode, Operation, RepoPath, View, blob, object_id};
+use codec::{
+    CHANGE_ID_LEN, Changeset, Mode, Operation, RepoPath, View, blob, decode_envelope, object_id,
+};
 use hash::{HashAlg, HashRef};
 use sim::{Fs, Kind, Name, Rng};
 use store::Store;
 
 pub use crate::ignore::ALWAYS_IGNORED;
 use crate::ignore::Ignores;
+use crate::record::Record;
 use crate::tree::{File, Tree};
+#[cfg(feature = "variants")]
+pub use crate::variant::Variant;
 
 /// The directory holding the repository's own data.
 pub const PRAPS_DIR: &str = ".praps";
@@ -54,6 +64,19 @@ pub enum Error {
     /// A changeset with more than one parent, whose tree needs INT-0012's
     /// merge.
     Merge(HashRef),
+    /// Writing the working copy would hit these hazards (INT-0004 AC-3,
+    /// AC-4). Nothing but the opening snapshot was written.
+    Hazards(Vec<hazard::Hazard>),
+    /// Entries on disk stand where the write must put files or directories
+    /// (each described). Nothing but the opening snapshot was written.
+    Blocked(Vec<String>),
+    /// `undo` found no earlier op to return to: the op head when it started
+    /// was the root op.
+    NothingToUndo,
+    /// `restore` was given an op id or prefix that names no op.
+    UnknownOp(String),
+    /// `restore` was given a prefix that names several ops.
+    AmbiguousOp(String, Vec<HashRef>),
 }
 
 impl fmt::Display for Error {
@@ -81,6 +104,35 @@ impl fmt::Display for Error {
                 f,
                 "changeset {id} has several parents; merges are not supported yet"
             ),
+            Error::Hazards(hazards) => {
+                write!(
+                    f,
+                    "the working copy cannot be written on this filesystem; no file was changed:"
+                )?;
+                for hazard in hazards {
+                    write!(f, "\n  {hazard}")?;
+                }
+                Ok(())
+            }
+            Error::Blocked(entries) => {
+                write!(
+                    f,
+                    "untracked entries are in the way; move them and try again (no file was changed):"
+                )?;
+                for entry in entries {
+                    write!(f, "\n  {entry}")?;
+                }
+                Ok(())
+            }
+            Error::NothingToUndo => f.write_str("nothing to undo: the last op is the root op"),
+            Error::UnknownOp(spec) => write!(f, "no op matches `{spec}`"),
+            Error::AmbiguousOp(spec, candidates) => {
+                write!(f, "`{spec}` matches {} ops:", candidates.len())?;
+                for candidate in candidates {
+                    write!(f, "\n  {candidate}")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -335,6 +387,10 @@ pub struct Workspace<F: Fs> {
     store: Store<F>,
     root: PathBuf,
     rng: Rng,
+    /// What resuming an interrupted write left undone, for the user.
+    notes: Vec<String>,
+    #[cfg(feature = "variants")]
+    variant: Variant,
 }
 
 /// The directory holding `root`'s entry: its parent, or `root/..` when the
@@ -394,11 +450,7 @@ impl<F: Fs> Workspace<F> {
     /// On a store that has an op it writes nothing. Tests pass a store built
     /// with a negative-control variant here.
     pub fn init_with_store(store: Store<F>, root: &Path, seed: u64) -> Result<(Self, bool), Error> {
-        let mut workspace = Workspace {
-            store,
-            root: root.to_path_buf(),
-            rng: Rng::new(seed),
-        };
+        let mut workspace = Self::new(store, root, seed);
         let ops = workspace.store.ops()?;
         workspace.refuse_invalid_ops(ops.len())?;
         if !ops.is_empty() {
@@ -438,13 +490,179 @@ impl<F: Fs> Workspace<F> {
                 Error::Io(error)
             }
         })?;
-        let workspace = Workspace {
+        let mut workspace = Self::new(store, root, seed);
+        workspace.resume()?;
+        workspace.load()?;
+        Ok(workspace)
+    }
+
+    fn new(store: Store<F>, root: &Path, seed: u64) -> Self {
+        Workspace {
             store,
             root: root.to_path_buf(),
             rng: Rng::new(seed),
+            notes: Vec::new(),
+            #[cfg(feature = "variants")]
+            variant: Variant::Correct,
+        }
+    }
+
+    /// Selects a broken variant, for the crash scenario's negative control.
+    #[cfg(feature = "variants")]
+    pub fn set_variant(&mut self, variant: Variant) {
+        self.variant = variant;
+    }
+
+    #[cfg(feature = "variants")]
+    fn writes_record(&self) -> bool {
+        self.variant != Variant::NoRecord
+    }
+
+    #[cfg(not(feature = "variants"))]
+    fn writes_record(&self) -> bool {
+        true
+    }
+
+    /// What resuming an interrupted write left undone, one line each.
+    pub fn notes(&self) -> &[String] {
+        &self.notes
+    }
+
+    fn praps_dir(&self) -> PathBuf {
+        self.root.join(PRAPS_DIR)
+    }
+
+    /// The view an op names.
+    fn view_of(&self, op: &Operation) -> Result<View, Error> {
+        View::from_envelope(&self.store.get_object(&op.view)?)
+            .map_err(|error| corrupt(format!("view {}: {error}", op.view)))
+    }
+
+    /// The working-copy tree of a view.
+    fn wc_tree_of(&self, view: &View) -> Result<Tree, Error> {
+        let wc_id = view
+            .workspaces
+            .get(DEFAULT_WORKSPACE)
+            .ok_or_else(|| corrupt("the view has no default workspace"))?;
+        self.tree_of(wc_id)
+    }
+
+    /// A blob's content.
+    fn content(&self, id: &HashRef) -> io::Result<Vec<u8>> {
+        let bytes = self.store.get_object(id)?;
+        decode_envelope(&bytes)
+            .map(|envelope| envelope.body.to_vec())
+            .map_err(|error| io::Error::new(ErrorKind::InvalidData, format!("blob {id}: {error}")))
+    }
+
+    /// Finishes or drops an interrupted write of the working copy
+    /// ("Resume" in the spec).
+    fn resume(&mut self) -> Result<(), Error> {
+        let praps = self.praps_dir();
+        let record = match record::read(self.store.fs(), &praps)? {
+            None => return Ok(()),
+            Some(Ok(record)) => record,
+            Some(Err(why)) => {
+                return Err(corrupt(format!("{PRAPS_DIR}/{}: {why}", record::RECORD)));
+            }
         };
-        workspace.load()?;
-        Ok(workspace)
+        let ops = self.store.ops()?;
+        let Some(target_op) = ops.get(&record.target) else {
+            // The target op never landed, so no file was touched.
+            record::drop_record(self.store.fs(), &praps)?;
+            return Ok(());
+        };
+        let from_op = ops.get(&record.from).ok_or_else(|| {
+            corrupt(format!(
+                "the record names op {}, which is missing",
+                record.from
+            ))
+        })?;
+        let from = self.wc_tree_of(&self.view_of(from_op)?)?;
+        let target = self.wc_tree_of(&self.view_of(target_op)?)?;
+        let fs = self.store.fs();
+        materialise::remove_temporaries(fs, &self.root, &from, &target)?;
+        let heads = store::heads_of(&ops);
+        if heads.len() == 1 && heads.contains(&record.target) {
+            let plan =
+                materialise::plan(fs, &self.root, &from, &target, fs.name_rules(), ALG, true)?;
+            let kept =
+                materialise::apply(fs, &self.root, &from, ALG, &plan, |id| self.content(id))?;
+            for skipped in plan.skipped.iter().chain(&kept) {
+                self.notes.push(format!(
+                    "an interrupted write of the working copy left this as it was: {skipped}"
+                ));
+            }
+        } else {
+            self.notes.push(format!(
+                "an interrupted write of the working copy (to op {}) was abandoned: \
+                 that op is no longer the only head; the working copy was left as it was",
+                record.target
+            ));
+        }
+        record::drop_record(self.store.fs(), &praps)?;
+        Ok(())
+    }
+
+    /// Snapshots, then moves the working copy to the view `view_id` names:
+    /// checks hazards and blocking entries, writes the record, commits an op
+    /// over the head whose view is exactly that view, materialises, and
+    /// drops the record. Returns the new op. `undo` and `restore` choose the
+    /// view ("History commands" in the spec).
+    pub fn restore_view(&mut self, view_id: &HashRef) -> Result<HashRef, Error> {
+        self.snapshot()?;
+        let loaded = self.load()?;
+        let view = View::from_envelope(&self.store.get_object(view_id)?)
+            .map_err(|error| corrupt(format!("view {view_id}: {error}")))?;
+        let target = self.wc_tree_of(&view)?;
+        let fs = self.store.fs();
+        let plan = materialise::plan(
+            fs,
+            &self.root,
+            &loaded.wc_tree,
+            &target,
+            fs.name_rules(),
+            ALG,
+            false,
+        )?;
+        if !plan.hazards.is_empty() {
+            return Err(Error::Hazards(plan.hazards));
+        }
+        if !plan.blocked.is_empty() {
+            return Err(Error::Blocked(plan.blocked));
+        }
+        let op = Operation {
+            parents: [loaded.head].into(),
+            view: *view_id,
+        };
+        let id = object_id(ALG, &op.to_envelope());
+        let praps = self.praps_dir();
+        let journalled = self.writes_record();
+        if journalled {
+            record::write(
+                self.store.fs(),
+                &praps,
+                &Record {
+                    from: loaded.head,
+                    target: id,
+                },
+            )?;
+        }
+        let committed = self.store.commit_op(&op)?;
+        if committed != id {
+            return Err(corrupt(format!(
+                "op {committed} was committed where {id} was expected"
+            )));
+        }
+        let fs = self.store.fs();
+        let kept = materialise::apply(fs, &self.root, &loaded.wc_tree, ALG, &plan, |blob| {
+            self.content(blob)
+        })?;
+        self.notes.extend(kept);
+        if journalled {
+            record::drop_record(fs, &praps)?;
+        }
+        Ok(committed)
     }
 
     /// The store.
@@ -680,4 +898,124 @@ impl<F: Fs> Workspace<F> {
     pub fn parent_tree(&self) -> Result<Tree, Error> {
         Ok(self.load()?.parent_tree)
     }
+
+    /// Snapshots, then lists every op, newest first: children before
+    /// parents, ties broken by id ("History commands" in the spec).
+    pub fn log(&mut self) -> Result<Vec<LogEntry>, Error> {
+        self.snapshot()?;
+        let ops = self.store.ops()?;
+        self.refuse_invalid_ops(ops.len())?;
+        let mut children: BTreeMap<&HashRef, usize> = ops.keys().map(|id| (id, 0)).collect();
+        for op in ops.values() {
+            for parent in &op.parents {
+                if let Some(count) = children.get_mut(parent) {
+                    *count += 1;
+                }
+            }
+        }
+        let mut ready: BTreeSet<&HashRef> = children
+            .iter()
+            .filter(|(_, count)| **count == 0)
+            .map(|(id, _)| *id)
+            .collect();
+        let mut entries = Vec::with_capacity(ops.len());
+        while let Some(id) = ready.pop_first() {
+            let op = &ops[id];
+            for parent in &op.parents {
+                if let Some(count) = children.get_mut(parent) {
+                    *count -= 1;
+                    if *count == 0 {
+                        ready.insert(parent);
+                    }
+                }
+            }
+            let view = self.view_of(op)?;
+            let working_copy = *view
+                .workspaces
+                .get(DEFAULT_WORKSPACE)
+                .ok_or_else(|| corrupt(format!("view {}: no default workspace", op.view)))?;
+            entries.push(LogEntry {
+                id: *id,
+                parents: op.parents.clone(),
+                working_copy,
+                change_id: self.changeset(&working_copy)?.change_id,
+                files: self.tree_of(&working_copy)?.len(),
+            });
+        }
+        Ok(entries)
+    }
+
+    /// Undoes the last op: takes H, the single head now, snapshots, and
+    /// moves to the view of H's parent with [`Workspace::restore_view`].
+    /// Returns H's parent and the new op. With no parent it fails with
+    /// [`Error::NothingToUndo`], having written only the snapshot.
+    pub fn undo(&mut self) -> Result<(HashRef, HashRef), Error> {
+        let h = self.load()?.head;
+        self.snapshot()?;
+        let ops = self.store.ops()?;
+        let op = ops
+            .get(&h)
+            .ok_or_else(|| corrupt(format!("op {h} disappeared")))?;
+        let Some(parent) = op.parents.first().copied() else {
+            return Err(Error::NothingToUndo);
+        };
+        let view = ops
+            .get(&parent)
+            .ok_or_else(|| corrupt(format!("op {h} names a missing parent {parent}")))?
+            .view;
+        let new = self.restore_view(&view)?;
+        Ok((parent, new))
+    }
+
+    /// Snapshots, then moves to the view of the op `spec` names: an op id
+    /// in text form, or a unique prefix of its hex digest, with or without
+    /// the algorithm name. Returns that op and the new op.
+    pub fn restore(&mut self, spec: &str) -> Result<(HashRef, HashRef), Error> {
+        self.snapshot()?;
+        let ops = self.store.ops()?;
+        let target = resolve(&ops, spec)?;
+        let new = self.restore_view(&ops[&target].view)?;
+        Ok((target, new))
+    }
+}
+
+/// The op `spec` names among `ops`.
+fn resolve(ops: &BTreeMap<HashRef, Operation>, spec: &str) -> Result<HashRef, Error> {
+    let unknown = || Error::UnknownOp(spec.to_owned());
+    let hex = match spec.split_once(':') {
+        Some((alg, hex)) if alg == ALG.name() => hex,
+        Some(_) => return Err(unknown()),
+        None => spec,
+    };
+    if hex.is_empty() || !hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+        return Err(unknown());
+    }
+    let matches: Vec<HashRef> = ops
+        .keys()
+        .filter(|id| {
+            let digest: String = id.digest().iter().map(|b| format!("{b:02x}")).collect();
+            digest.starts_with(hex)
+        })
+        .copied()
+        .collect();
+    match matches.as_slice() {
+        [] => Err(unknown()),
+        [one] => Ok(*one),
+        _ => Err(Error::AmbiguousOp(spec.to_owned(), matches)),
+    }
+}
+
+/// One op, as `log` lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LogEntry {
+    /// The op's id.
+    pub id: HashRef,
+    /// Its parent ops.
+    pub parents: BTreeSet<HashRef>,
+    /// The working-copy changeset of its view.
+    pub working_copy: HashRef,
+    /// That changeset's change ID.
+    pub change_id: [u8; CHANGE_ID_LEN],
+    /// How many files its tree holds.
+    pub files: usize,
 }

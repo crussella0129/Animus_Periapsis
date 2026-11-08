@@ -3,10 +3,10 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0014
 - **State:** active
-- **Work evidence:** [Sprint 2 T-005 build plan](../sprints/s2/sprint-plans/build-plan.md#t-005-the-workspace-crate-init-snapshot-new-and-status), [Sprint 2 T-006 build plan](../sprints/s2/sprint-plans/build-plan.md#t-006-praps-init-praps-new-and-praps-status), [Sprint 2 T-007 build plan](../sprints/s2/sprint-plans/build-plan.md#t-007-snapshot-crash-scenario-and-edit-corpora), [Sprint 2 T-008 build plan](../sprints/s2/sprint-plans/build-plan.md#t-008-working-copy-spec-readme-credits-and-backlog)
+- **Work evidence:** [Sprint 2 T-005 build plan](../sprints/s2/sprint-plans/build-plan.md#t-005-the-workspace-crate-init-snapshot-new-and-status), [Sprint 2 T-006 build plan](../sprints/s2/sprint-plans/build-plan.md#t-006-praps-init-praps-new-and-praps-status), [Sprint 2 T-007 build plan](../sprints/s2/sprint-plans/build-plan.md#t-007-snapshot-crash-scenario-and-edit-corpora), [Sprint 2 T-008 build plan](../sprints/s2/sprint-plans/build-plan.md#t-008-working-copy-spec-readme-credits-and-backlog), [Sprint 3 T-004 build plan](../sprints/s3/sprint-plans/build-plan.md#t-004-specify-writing-the-working-copy-undo-restore-and-log), [Sprint 3 T-006 build plan](../sprints/s3/sprint-plans/build-plan.md#t-006-materialise-the-working-copy-record-and-resume), [Sprint 3 T-009 build plan](../sprints/s3/sprint-plans/build-plan.md#t-009-reversibility-and-hazard-corpora-the-materialise-crash-scenario-and-the-extended-edit-corpus)
 - **Completion evidence:** [Sprint 2 T-005 completion](../work/completed-tasks.md#t-005-sprint-2), [Sprint 2 T-006 completion](../work/completed-tasks.md#t-006-sprint-2), [Sprint 2 T-007 completion](../work/completed-tasks.md#t-007-sprint-2), [Sprint 2 T-008 completion](../work/completed-tasks.md#t-008-sprint-2)
 - **Code evidence:** [crates/workspace](../../crates/workspace/src/lib.rs), [praps](../../crates/praps/src/main.rs)
-- **Test evidence:** [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md)
+- **Test evidence:** [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md), [Sprint 3 test report](../sprints/s3/sprint-tests/test-report.md)
 - **Documentation evidence:** [The working copy](../spec/working-copy.md)
 
 ## Intent
@@ -93,6 +93,21 @@ git worktrees.
   review found a quadratic step and a whole-copy content buffer (CR-04). Until
   the stat cache, content is kept only for blobs the store does not have yet.
 
+- Every command that opens the working copy resumes an interrupted write
+  before anything else, through the record in `.praps/`; `init` never resumes, so a
+  repeated `init` still writes nothing. A write uses deterministic temporary
+  names, `.praps-tmp-<n>`, which exist only while the record names them. No
+  name is silently ignored: a user's file with that prefix is tracked like any
+  other (Sprint 3 plan critique, C-012, C-013). While a record exists, its
+  diff's temporary names belong to `praps`: a user file created at one of them
+  during the interrupted write may be replaced or removed by resume. Every
+  way resume drops a record also removes those names (round 3, C-004).
+- A write re-reads each path just before removing or replacing it, and keeps
+  a path the user changed, with a note (Sprint 3 code review, CR-03). AC-1
+  still has a small gap: an edit saved between that read and the next
+  syscall can be lost, and the mode is not re-read. Closing the gap would
+  need an atomic compare-and-replace. The spec states the window.
+
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §4 Phase 1 and R5 §C.1).
 - 2026-11-01: revised while `proposed`, on owner direction: the working copy must hold conflicts in any content. The Intent says snapshots keep each file's bytes exactly unless a normalisation rule is opted in, only a line layer writes and reads conflict markers, and any other conflicted file is written as one of its sides and resolved by choosing a side or changing its bytes; AC-6 checks this.
@@ -102,3 +117,6 @@ git worktrees.
 - 2026-11-07: revised while `planned` (Sprint 2 plan critique, round 2): Consequences say which commands snapshot, and that `fsck` and a repeated `init` do not.
 - 2026-11-07: `planned` → `active` (Sprint 2 build, T-005 starts: the `workspace` crate).
 - 2026-11-07: revised while `active` (Sprint 2 Loop): Consequences record the linear-scan requirement (CR-04). AC-1 and AC-2 are met by the Sprint 2 test report; AC-3 to AC-6 remain, so the chapter stays `active`.
+- 2026-11-07: revised while `active` (Sprint 3 plan critique, round 1): Consequences record that every command except `init` resumes an interrupted write, and that temporary names are deterministic and never ignored.
+- 2026-11-07: revised while `active` (Sprint 3 plan critique, round 2): every command that opens the working copy resumes, not only those that write it.
+- 2026-11-07: revised while `active` (Sprint 3 plan critique, round 3): temporary names belong to `praps` while a record exists, and every way resume drops a record removes them.
