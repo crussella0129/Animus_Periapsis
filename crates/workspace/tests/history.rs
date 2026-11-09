@@ -598,3 +598,41 @@ fn failed_commands_carry_reports() {
     assert!(matches!(ws.restore(&hex(&target)), Err(Error::Blocked(_))));
     carries(&ws, "blocking entry");
 }
+
+/// A snapshot that fails before its scan reports nothing, so a `Workspace`
+/// used for a second command never shows the first command's entries as its
+/// own (code review CR-07; test critique round 2, C-001).
+#[test]
+fn a_failed_snapshot_reports_nothing_stale() {
+    let (mut ws, fs) = fresh(46);
+    fs.make_raw(Path::new(ROOT), sim::RawName::Bytes(vec![0xfe]), b"x")
+        .unwrap();
+    ws.status().unwrap();
+    assert_eq!(ws.reported().len(), 1);
+    // Two ops on the head, written through a second store handle: the next
+    // load stops with several heads, before any scan.
+    let base = head(&ws);
+    let view = view_of(&ws, &base);
+    let mut other = store::Store::open(
+        Rc::clone(&fs),
+        &Path::new(ROOT).join(".praps").join("store"),
+        hash::HashAlg::DEFAULT,
+        47,
+    )
+    .unwrap();
+    let mut second = codec::View::from_envelope(&other.get_object(&view).unwrap()).unwrap();
+    second
+        .workspaces
+        .insert("other".to_owned(), second.workspaces["default"]);
+    let second = other.put_object(&second.to_envelope()).unwrap();
+    for view in [view, second] {
+        other
+            .commit_op(&codec::Operation {
+                parents: [base].into(),
+                view,
+            })
+            .unwrap();
+    }
+    assert!(matches!(ws.status(), Err(Error::SeveralHeads(h)) if h.len() == 2));
+    assert!(ws.reported().is_empty(), "{:?}", ws.reported());
+}
