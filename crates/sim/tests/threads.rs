@@ -52,3 +52,23 @@ fn poisoned_state_is_recovered() {
 
     assert_eq!(fs.list(Path::new("d")).unwrap(), ["a", "c"]);
 }
+
+/// A hook that unwinds goes back in its slot, so the next syscall runs it
+/// again (code review CR-06).
+#[test]
+fn a_hook_that_unwinds_is_put_back() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    let fs = SimFs::new(3, Mode::Strict);
+    let runs = Arc::new(AtomicU32::new(0));
+    let count = Arc::clone(&runs);
+    fs.set_hook(Some(Box::new(move |_| {
+        if count.fetch_add(1, Ordering::SeqCst) == 0 {
+            panic!("a deliberate panic in a hook");
+        }
+    })));
+    let unwound = catch_unwind(AssertUnwindSafe(|| fs.create_dir(Path::new("a"))));
+    assert!(unwound.is_err());
+    fs.create_dir(Path::new("b")).unwrap();
+    assert_eq!(runs.load(Ordering::SeqCst), 2);
+    fs.set_hook(None);
+}

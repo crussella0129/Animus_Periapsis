@@ -1212,6 +1212,19 @@ fn points(root: &Path, members: &[PathBuf]) -> Vec<String> {
         };
         let registry = format!("{krate}/src/points.rs");
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+        // One unit, one building sprint: otherwise the reach table would
+        // show the unit under two sprints (code review CR-04).
+        let mut sprints: BTreeMap<&str, BTreeSet<u32>> = BTreeMap::new();
+        for entry in registered {
+            sprints.entry(&entry.unit).or_default().insert(entry.sprint);
+        }
+        for (unit, found) in &sprints {
+            if found.len() > 1 {
+                problems.push(format!(
+                    "{registry}: unit `{unit}` names sprints {found:?}; a unit has one"
+                ));
+            }
+        }
         for entry in registered {
             *counts.entry(&entry.name).or_default() += 1;
             if !points::well_formed(&entry.name, krate) {
@@ -1339,7 +1352,7 @@ mod tests {
             assert!(problems.is_empty(), "{name}: {problems:?}");
         }
         let used = "fn f(fs: &impl Fs) { fs.point(\"store.a.b\"); }\n";
-        let fails: [(&str, &str, String, &str); 8] = [
+        let fails: [(&str, &str, String, &str); 11] = [
             (
                 "unregistered",
                 "fn f(fs: &impl Fs) { fs.point(\"store.a.b\"); fs.point(\"store.c.d\"); }\n",
@@ -1388,6 +1401,24 @@ mod tests {
                 used,
                 registry_of(&[("store.a.b", "store::a", 2)]),
                 "names sprint 2, outside 1 to 1",
+            ),
+            (
+                "unit-sprints",
+                "fn f(fs: &impl Fs) { fs.point(\"store.a.b\"); fs.point(\"store.a.c\"); }\n",
+                registry_of(&[("store.a.b", "store::a", 1), ("store.a.c", "store::a", 2)]),
+                "unit `store::a` names sprints",
+            ),
+            (
+                "path-call",
+                "fn f(fs: &impl Fs) { fs.point(\"store.a.b\"); Fs::point(fs, \"store.c.d\"); }\n",
+                one.clone(),
+                "`::point(`",
+            ),
+            (
+                "test-code",
+                "fn f(fs: &impl Fs) { fs.point(\"store.a.b\"); }\n#[cfg(test)]\nmod tests {\n    fn g(fs: &impl Fs) { fs.point(\"store.a.b\"); }\n}\n",
+                one.clone(),
+                "in test code",
             ),
         ];
         for (name, lib, registry, expected) in fails {

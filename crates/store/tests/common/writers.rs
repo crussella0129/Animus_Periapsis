@@ -25,7 +25,7 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use codec::{Operation, object_id};
@@ -82,11 +82,15 @@ pub struct Outcome {
     /// Problems `fsck` reports on the recovered store (leftovers are not
     /// problems).
     pub fsck: u64,
-    /// Process 0's op was still not durable when process 2's second op was
-    /// renamed into place.
+    /// Process 0's op was still not durable when process 2's second op's
+    /// rename point ran its action. Actions run after the scheduler's draw
+    /// at that point, so another process may have synced `ops/` first: this
+    /// undercounts, and never overcounts, since a name once durable stays
+    /// durable until a crash (code review CR-01).
     pub undurable_at_rename: bool,
-    /// Two commits overlapped: one op was renamed between another op's
-    /// rename and its directory sync.
+    /// Two commits overlapped: an op was renamed into `ops/` while another
+    /// op's rename there was not yet followed by a sync of `ops/`. Read from
+    /// the trace, in syscall order (code review CR-01).
     pub overlapped: bool,
     pub killed: bool,
     pub state: HashRef,
@@ -286,12 +290,10 @@ fn run(
         .collect())
 }
 
-/// The actions a run watches with: the overlap of commits and process 0's
-/// durability at process 2's rename. Actions run no syscall.
+/// The actions a run watches with: process 0's durability at process 2's
+/// rename, and step counting. Actions run no syscall.
 #[derive(Default)]
 pub struct Watch {
-    open_commits: Arc<AtomicI64>,
-    overlapped: Arc<AtomicBool>,
     undurable: Arc<AtomicBool>,
     /// Steps per process, when counting.
     counting: Option<Arc<Mutex<[u64; PROCESSES]>>>,
@@ -299,16 +301,6 @@ pub struct Watch {
 
 impl Watch {
     fn install(&self, fs: &Arc<SimFs>, log: &Arc<Mutex<Log>>) {
-        let (open, overlapped) = (Arc::clone(&self.open_commits), Arc::clone(&self.overlapped));
-        fs.on_point("store.commit_op.renamed", move || {
-            if open.fetch_add(1, Ordering::SeqCst) > 0 {
-                overlapped.store(true, Ordering::SeqCst);
-            }
-        });
-        let open = Arc::clone(&self.open_commits);
-        fs.on_point("store.commit_op.dir_synced", move || {
-            open.fetch_sub(1, Ordering::SeqCst);
-        });
         let (watch_fs, watch_log, undurable) =
             (Arc::clone(fs), Arc::clone(log), Arc::clone(&self.undurable));
         let op0 = id_of(&first_op(0));
@@ -348,6 +340,25 @@ impl Watch {
             })));
         }
     }
+}
+
+/// Whether an op was renamed into `ops/` while an earlier op's rename there
+/// was not yet followed by a sync of `ops/`, in the trace's syscall order.
+pub fn overlapped(trace: &[String]) -> bool {
+    let renamed = format!("rename {ROOT}/ops/");
+    let synced = format!("sync_dir {ROOT}/ops");
+    let mut pending = false;
+    for line in trace {
+        if line.starts_with(&renamed) && !line.ends_with("(crash)") {
+            if pending {
+                return true;
+            }
+            pending = true;
+        } else if *line == synced {
+            pending = false;
+        }
+    }
+    false
 }
 
 /// The steps (syscall and point boundaries) each process makes in the
@@ -446,7 +457,7 @@ pub fn run_cell(variant: Variant, mode: Mode, seed: u64, kill: Kill, crash_at: u
         violations,
         fsck,
         undurable_at_rename: watch.undurable.load(Ordering::SeqCst),
-        overlapped: watch.overlapped.load(Ordering::SeqCst),
+        overlapped: overlapped(&fs.trace()),
         killed: killed.iter().any(|k| *k) && kill.is_some(),
         state: digest(&recovered),
         trace: HashAlg::Blake3.hash(trace.as_bytes()),

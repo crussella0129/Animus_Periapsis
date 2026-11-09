@@ -558,3 +558,79 @@ fn panic_in_a_process_ends_the_run() {
     assert!(fs.syscalls() < 150);
     assert!(start.elapsed() < Duration::from_secs(30));
 }
+
+/// A setup that could never act as written is refused before any thread
+/// starts (code review CR-02).
+#[test]
+fn invalid_setups_are_refused() {
+    let point = |process, nth| After::Point {
+        process,
+        name: "test.invalid.p",
+        nth,
+    };
+    type Setup = Box<dyn Fn() -> Processes>;
+    let setups: Vec<(&str, Setup)> = vec![
+        (
+            "kill index",
+            Box::new(|| Processes::new(0).kill(2, KillAt::Step(1))),
+        ),
+        (
+            "kill step 0",
+            Box::new(|| Processes::new(0).kill(0, KillAt::Step(0))),
+        ),
+        (
+            "kill arrival 0",
+            Box::new(|| {
+                Processes::new(0).kill(
+                    0,
+                    KillAt::Point {
+                        name: "test.invalid.p",
+                        nth: 0,
+                    },
+                )
+            }),
+        ),
+        (
+            "ordering index",
+            Box::new(move || Processes::new(0).order(point(0, 1), 5, "test.invalid.p", 1)),
+        ),
+        (
+            "ordering arrival 0",
+            Box::new(move || Processes::new(0).order(point(0, 1), 1, "test.invalid.p", 0)),
+        ),
+        (
+            "predecessor index",
+            Box::new(move || Processes::new(0).order(point(9, 1), 1, "test.invalid.p", 1)),
+        ),
+        (
+            "predecessor arrival 0",
+            Box::new(move || Processes::new(0).order(point(0, 0), 1, "test.invalid.p", 1)),
+        ),
+        (
+            "end index",
+            Box::new(|| Processes::new(0).order(After::End(7), 1, "test.invalid.p", 1)),
+        ),
+    ];
+    for (what, setup) in setups {
+        let fs = Arc::new(SimFs::new(0, Mode::Strict));
+        let started = Arc::new(AtomicBool::new(false));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let run: Run<'_, ()> = (0..2)
+                .map(|_| {
+                    let started = Arc::clone(&started);
+                    Box::new(move || started.store(true, Ordering::SeqCst))
+                        as Box<dyn FnOnce() + Send>
+                })
+                .collect();
+            let _ = setup().run(&fs, run);
+        }));
+        assert!(result.is_err(), "{what} was accepted");
+        assert!(!started.load(Ordering::SeqCst), "{what}: a process started");
+    }
+    let twice = std::panic::catch_unwind(|| {
+        Processes::new(0)
+            .kill(0, KillAt::Step(1))
+            .kill(0, KillAt::Step(2))
+    });
+    assert!(twice.is_err(), "a second kill for one process was accepted");
+}

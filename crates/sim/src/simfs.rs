@@ -218,6 +218,22 @@ struct Points {
     running: Vec<(ThreadId, &'static str)>,
 }
 
+/// Puts a hook back in its slot when it returns or unwinds, unless a new
+/// one was set meanwhile.
+struct HookBack<'a> {
+    fs: &'a SimFs,
+    hook: Option<Hook>,
+}
+
+impl Drop for HookBack<'_> {
+    fn drop(&mut self) {
+        let mut slot = self.fs.hook_slot();
+        if slot.is_none() {
+            *slot = self.hook.take();
+        }
+    }
+}
+
 /// Removes a running (thread, name) pair when its actions end, even by
 /// unwinding.
 struct Running<'a> {
@@ -724,14 +740,19 @@ impl SimFs {
             }
             st.count + 1
         };
-        // The hook runs with no lock held, so it may use the filesystem.
+        // The hook runs with no lock held, so it may use the filesystem. It
+        // is out of its slot while it runs, so its own syscalls do not run
+        // it again, and it goes back even if it unwinds (a panic, or a kill
+        // under `Processes`; code review CR-06). Under `Processes`, other
+        // processes' syscalls made while a hook is out run without it, so
+        // a hook used there should make no syscall of its own.
         let hook = self.hook_slot().take();
-        if let Some(mut hook) = hook {
-            hook(next);
-            let mut slot = self.hook_slot();
-            if slot.is_none() {
-                *slot = Some(hook);
-            }
+        if let Some(hook) = hook {
+            let mut back = HookBack {
+                fs: self,
+                hook: Some(hook),
+            };
+            (back.hook.as_mut().expect("just set"))(next);
         }
         let mut st = self.lock();
         if st.crashed {

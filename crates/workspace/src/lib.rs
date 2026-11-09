@@ -807,6 +807,9 @@ impl<F: Fs> Workspace<F> {
     /// old changeset (as head and as the `default` workspace), and an op
     /// whose parent is the single head. Otherwise it writes nothing.
     pub fn snapshot(&mut self) -> Result<Snapshot, Error> {
+        // A snapshot that fails before its scan reports nothing, rather than
+        // leaving an earlier command's entries (code review CR-07).
+        self.reported.clear();
         let loaded = self.load()?;
         let known: BTreeSet<HashRef> = loaded
             .wc_tree

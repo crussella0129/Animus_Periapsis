@@ -79,12 +79,27 @@ fn literal(text: &str) -> Option<(&str, &str)> {
     (text.as_bytes()[end] == b'"').then(|| (&text[..end], &text[end + 1..]))
 }
 
-/// The point names `source` marks, or the calls whose argument is not a
-/// single string literal.
+/// The point names `source` marks, and the calls the rule cannot accept:
+/// - a `.point(` whose argument is not a single string literal;
+/// - `point` called through a path (`Fs::point(…)`, `<F as Fs>::point(…)`),
+///   which the reader would otherwise miss;
+/// - a point marked after the file's first `#[cfg(test)]`: test code in
+///   `src/` may not mark registered points, nor count as their use
+///   (code review CR-03; test modules sit at the end of a file).
 pub fn uses(source: &str) -> (Vec<String>, Vec<String>) {
     let code = strip_comments(source);
     let (mut names, mut bad) = (Vec::new(), Vec::new());
-    let mut rest = code.as_str();
+    if code.contains("::point(") {
+        bad.push("`::point(`: call `point` as a method, `.point(\"…\")`".to_owned());
+    }
+    let (code, tests) = match code.find("#[cfg(test)]") {
+        Some(at) => code.split_at(at),
+        None => (code.as_str(), ""),
+    };
+    if tests.contains(".point(") {
+        bad.push("`.point(` in test code after `#[cfg(test)]` under src/".to_owned());
+    }
+    let mut rest = code;
     while let Some(at) = rest.find(".point(") {
         rest = &rest[at + ".point(".len()..];
         match literal(rest) {

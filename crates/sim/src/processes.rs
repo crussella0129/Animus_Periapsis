@@ -277,10 +277,47 @@ impl Processes {
         self
     }
 
-    /// Kills process `process` at `at`.
+    /// Kills process `process` at `at`. A process has at most one kill.
     pub fn kill(mut self, process: usize, at: KillAt) -> Self {
-        self.kills.insert(process, at);
+        let previous = self.kills.insert(process, at);
+        assert!(
+            previous.is_none(),
+            "process {process} already has a kill: {previous:?}"
+        );
         self
+    }
+
+    /// Refuses a setup that could never act as written: a process index
+    /// outside the run, a zeroth arrival or step (counts start at 1). An
+    /// off-by-one there would otherwise leave a run with no kill or no
+    /// forced race, and a test passing without testing (code review CR-02).
+    fn validate(&self, n: usize) {
+        let process_ok = |p: usize, what: &str| {
+            assert!(p < n, "{what} names process {p}, but the run has {n}");
+        };
+        for (after, process, point, nth) in &self.orderings {
+            process_ok(*process, "an ordering");
+            assert!(*nth >= 1, "an ordering at {point} names arrival 0");
+            match after {
+                After::Point { process, name, nth } => {
+                    process_ok(*process, "an ordering's predecessor");
+                    assert!(
+                        *nth >= 1,
+                        "an ordering's predecessor {name} names arrival 0"
+                    );
+                }
+                After::End(process) => process_ok(*process, "an ordering's predecessor"),
+            }
+        }
+        for (process, at) in &self.kills {
+            process_ok(*process, "a kill");
+            match at {
+                KillAt::Step(k) => assert!(*k >= 1, "a kill at step 0"),
+                KillAt::Point { name, nth } => {
+                    assert!(*nth >= 1, "a kill at {name} names arrival 0");
+                }
+            }
+        }
     }
 
     /// Runs `closures` as processes over `fs` and returns how each ended, in
@@ -291,6 +328,7 @@ impl Processes {
         closures: Vec<Box<dyn FnOnce() -> T + Send + '_>>,
     ) -> Result<Vec<Outcome<T>>, Stopped> {
         let n = closures.len();
+        self.validate(n);
         let mut rng = Rng::new(self.seed);
         let first = if n == 0 {
             None

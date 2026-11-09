@@ -135,6 +135,29 @@ fn writers_overlap_in_some_even_seed() {
     assert!(overlapped, "no even seed overlapped two commits");
 }
 
+/// The overlap check reads syscall order: an op renamed while another's
+/// rename is not yet followed by a sync of `ops/` (code review CR-01).
+#[test]
+fn overlap_is_read_from_the_trace() {
+    let lines = |text: &[&str]| text.iter().map(|l| (*l).to_owned()).collect::<Vec<_>>();
+    assert!(common::writers::overlapped(&lines(&[
+        "rename repo/ops/tmp-a",
+        "rename repo/ops/tmp-b",
+        "sync_dir repo/ops",
+    ])));
+    assert!(!common::writers::overlapped(&lines(&[
+        "rename repo/ops/tmp-a",
+        "sync_dir repo/ops",
+        "rename repo/ops/tmp-b",
+        "sync_dir repo/ops",
+    ])));
+    assert!(!common::writers::overlapped(&lines(&[
+        "rename repo/objects/tmp-a",
+        "rename repo/ops/tmp-b",
+        "sync_dir repo/ops",
+    ])));
+}
+
 #[test]
 fn writers_kills_happen() {
     for mode in modes() {

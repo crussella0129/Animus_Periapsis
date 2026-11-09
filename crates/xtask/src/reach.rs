@@ -156,11 +156,15 @@ pub fn table(
     out.push('\n');
     for (sprint, _, shown, recorded) in &rows {
         out.push_str(&format!("| {shown} (S{sprint}) |"));
-        for (_, unit) in &units {
+        for (unit_sprint, unit) in &units {
             let hits: u64 = recorded
                 .counts
                 .iter()
-                .filter(|(point, _)| points.get(point.as_str()).is_some_and(|e| e.unit == *unit))
+                .filter(|(point, _)| {
+                    points
+                        .get(point.as_str())
+                        .is_some_and(|e| e.unit == *unit && e.sprint == *unit_sprint)
+                })
                 .map(|(_, count)| count)
                 .sum();
             out.push_str(&format!(" {hits} |"));
@@ -432,6 +436,48 @@ mod tests {
             assert!(cell("Materialise (S3)", unit) > 0, "{unit}");
         }
         assert!(cell("Materialise (S3)", "S2 `workspace::snapshot`") > 0);
+    }
+
+    /// `cargo ci`'s `reach` step passes on the table `cargo reach` wrote,
+    /// fails on a stale or missing one, and writes nothing (INT-0005 AC-6).
+    #[test]
+    fn reach_check_fails_on_a_stale_table() {
+        let root = std::env::temp_dir().join(format!("xtask-reach-stale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |path: &std::path::Path, text: &str| {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write(
+            &root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/*\"]\n",
+        );
+        write(
+            &root.join("crates/store/Cargo.toml"),
+            "[package]\nname = \"store\"\n",
+        );
+        write(
+            &root.join("crates/store/src/points.rs"),
+            "pub const POINTS: &[Point] = &[Point { name: \"store.a.x\", unit: \"store::a\", sprint: 1 }];\n",
+        );
+        for (file, shown) in super::SCENARIOS {
+            write(
+                &super::reach_dir(&root).join(format!("{file}.txt")),
+                &format!("scenario {shown}\nsprint 1\nstore.a.x 1\n"),
+            );
+        }
+        let table = root.join(super::TABLE);
+        std::fs::create_dir_all(table.parent().unwrap()).unwrap();
+        assert!(super::check(&root).unwrap_err().contains("missing"));
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        assert_eq!(super::run(&root, &mut out, &mut err), 0);
+        let written = std::fs::read_to_string(&table).unwrap();
+        assert_eq!(super::check(&root), Ok(()));
+        std::fs::write(&table, written.replace("| 1 |", "| 2 |")).unwrap();
+        assert!(super::check(&root).unwrap_err().contains("stale"));
+        // The check wrote nothing: the stale table is still there.
+        assert_ne!(std::fs::read_to_string(&table).unwrap(), written);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

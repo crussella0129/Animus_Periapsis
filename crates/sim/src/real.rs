@@ -248,12 +248,12 @@ impl Fs for RealFs {
         }
     }
 
-    /// From the platform: Windows' rules and case-insensitive names there,
-    /// neither elsewhere. A case-sensitive NTFS directory, or a
-    /// case-insensitive mount on Linux, is not detected (backlog T-015).
     /// Does nothing: points exist for the simulator.
     fn point(&self, _name: &'static str) {}
 
+    /// From the platform: Windows' rules and case-insensitive names there,
+    /// neither elsewhere. A case-sensitive NTFS directory, or a
+    /// case-insensitive mount on Linux, is not detected (backlog T-015).
     fn name_rules(&self) -> NameRules {
         NameRules {
             case_insensitive: cfg!(windows),
