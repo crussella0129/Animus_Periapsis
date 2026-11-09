@@ -415,22 +415,6 @@ pub fn uncrashed(
     (fs, log, killed)
 }
 
-/// Runs one cell, returning its outcome and its log.
-pub fn run_cell_logged(
-    variant: Variant,
-    mode: Mode,
-    seed: u64,
-    kill: Kill,
-    crash_at: u64,
-) -> (Outcome, Log) {
-    let fs = Arc::new(SimFs::new(seed, mode));
-    fs.set_crash_at(Some(crash_at));
-    let log = Arc::new(Mutex::new(Log::default()));
-    let _ = run(&fs, variant, seed, kill, &log, &Watch::default());
-    let log = log.lock().unwrap().clone();
-    (run_cell(variant, mode, seed, kill, crash_at), log)
-}
-
 /// The syscalls an uncrashed run makes, with the cell's kill.
 pub fn syscalls(variant: Variant, mode: Mode, seed: u64, kill: Kill) -> (u64, Log, Vec<bool>) {
     let fs = Arc::new(SimFs::new(seed, mode));
@@ -443,6 +427,18 @@ pub fn syscalls(variant: Variant, mode: Mode, seed: u64, kill: Kill) -> (u64, Lo
 
 /// Runs one cell and checks the recovered state.
 pub fn run_cell(variant: Variant, mode: Mode, seed: u64, kill: Kill, crash_at: u64) -> Outcome {
+    run_cell_logged(variant, mode, seed, kill, crash_at).0
+}
+
+/// Runs one cell: its outcome, its log, and the ops present after recovery,
+/// all from the one run (test critique C-009).
+pub fn run_cell_logged(
+    variant: Variant,
+    mode: Mode,
+    seed: u64,
+    kill: Kill,
+    crash_at: u64,
+) -> (Outcome, Log, BTreeSet<HashRef>) {
     let fs = Arc::new(SimFs::new(seed, mode));
     fs.set_crash_at(Some(crash_at));
     let log = Arc::new(Mutex::new(Log::default()));
@@ -453,7 +449,7 @@ pub fn run_cell(variant: Variant, mode: Mode, seed: u64, kill: Kill, crash_at: u
     let recovered = fs.recover();
     let log = log.lock().unwrap().clone();
     let (violations, fsck) = check(&recovered, &log, variant, seed);
-    Outcome {
+    let outcome = Outcome {
         violations,
         fsck,
         undurable_at_rename: watch.undurable.load(Ordering::SeqCst),
@@ -462,7 +458,9 @@ pub fn run_cell(variant: Variant, mode: Mode, seed: u64, kill: Kill, crash_at: u
         state: digest(&recovered),
         trace: HashAlg::Blake3.hash(trace.as_bytes()),
         reach,
-    }
+    };
+    let (_, ops) = present(&recovered.snapshot());
+    (outcome, log, ops.keys().copied().collect())
 }
 
 /// The invariants on a recovered state: closure; acknowledged ⊆ present ⊆

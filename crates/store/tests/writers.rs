@@ -164,11 +164,27 @@ fn writers_kills_happen() {
         for seed in 0..SEEDS {
             let kill = kill_for(Variant::Correct, *mode, seed, true);
             let (process, _) = kill.unwrap();
-            let (_, _, killed) = uncrashed(Variant::Correct, *mode, seed, kill);
+            let (_, log, killed) = uncrashed(Variant::Correct, *mode, seed, kill);
             assert!(
                 killed[process],
                 "{mode:?} seed {seed}: process {process} was not killed"
             );
+            // In odd seeds process 0 dies at its held rename: a later
+            // process still sees its unsynced op and names it (the process
+            // crash with several writers; test critique C-007). The matrix
+            // checks those cells' closure.
+            if seed % 2 == 1 {
+                assert_eq!(process, 0);
+                assert!(
+                    log.names_op0,
+                    "{mode:?} seed {seed}: process 2 did not name the killed op"
+                );
+                assert_eq!(
+                    log.at_listing,
+                    Some((true, false)),
+                    "{mode:?} seed {seed}: (visible, durable) at the listing"
+                );
+            }
         }
     }
 }
@@ -182,17 +198,24 @@ fn writers_retry_reaches_present() {
             .iter()
             .any(|(name, count)| *name == "store.commit_op.present_synced" && *count > 0)
     );
-    // A crash during the retry: the op stays acknowledged, and present.
+    // A crash during the retry: process 1's op, acknowledged by its first
+    // commit, is present after recovery. Seeds 0 to 3, both modes, no kill;
+    // the log, the outcome and the recovered ops come from one run (test
+    // critique C-009).
     let op1 = first_op_id(1);
     let mut interrupted = 0;
     for mode in modes() {
         for seed in 0..4 {
             let (n, ..) = syscalls(Variant::Correct, *mode, seed, None);
             for crash_at in 1..=n {
-                let (outcome, log) = run_cell_logged(Variant::Correct, *mode, seed, None, crash_at);
+                let (outcome, log, present) =
+                    run_cell_logged(Variant::Correct, *mode, seed, None, crash_at);
                 if log.retry_started && !log.retried {
                     interrupted += 1;
-                    assert!(log.acked.contains(&op1));
+                    assert!(
+                        present.contains(&op1),
+                        "{mode:?} seed {seed} crash {crash_at}"
+                    );
                     assert_eq!(outcome.violations.durability, 0);
                 }
             }

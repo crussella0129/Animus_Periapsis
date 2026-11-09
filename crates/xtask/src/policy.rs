@@ -1210,7 +1210,7 @@ fn points(root: &Path, members: &[PathBuf]) -> Vec<String> {
         let Some(registered) = registries.get(krate) else {
             continue;
         };
-        let registry = format!("{krate}/src/points.rs");
+        let registry = relative(root, &member.join("src").join("points.rs"));
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
         // One unit, one building sprint: otherwise the reach table would
         // show the unit under two sprints (code review CR-04).
@@ -1421,11 +1421,35 @@ mod tests {
                 "in test code",
             ),
         ];
+        // Each failure starts with its file and names the offending point,
+        // unit or call (test critique C-008). The registry's own parse error
+        // comes from `points::registries`, which has no root, so its path is
+        // the crate's.
+        let named = |name: &str| -> (&str, &str) {
+            match name {
+                "unregistered" => ("crates/store/src/lib.rs", "`store.c.d`"),
+                "unused" => ("crates/store/src/points.rs", "`store.e.f`"),
+                "duplicate" | "sprint" => ("crates/store/src/points.rs", "`store.a.b`"),
+                "malformed" => ("crates/store/src/points.rs", "`store.A.b`"),
+                "prefix" => ("crates/store/src/points.rs", "`workspace.a.b`"),
+                "non-literal" => ("crates/store/src/lib.rs", "NAME"),
+                "entry" => ("store/src/points.rs", "\"store.a.b\""),
+                "unit-sprints" => ("crates/store/src/points.rs", "`store::a`"),
+                "path-call" => ("crates/store/src/lib.rs", "::point("),
+                "test-code" => ("crates/store/src/lib.rs", ".point(` in test code"),
+                other => panic!("no file and subject for {other}"),
+            }
+        };
         for (name, lib, registry, expected) in fails {
+            let (file, subject) = named(name);
             let (_, problems) = point_tree(name, lib, &registry);
             assert!(
-                problems.iter().any(|problem| problem.contains(expected)),
-                "{name}: expected {expected:?} in {problems:?}"
+                problems.iter().any(|problem| {
+                    problem.starts_with(&format!("{file}: "))
+                        && problem.contains(subject)
+                        && problem.contains(expected)
+                }),
+                "{name}: expected {file}, {subject:?} and {expected:?} in one of {problems:?}"
             );
         }
         let (_, problems) = point_tree(

@@ -9,8 +9,9 @@
 //! runs passing back through earlier units is this table.
 //!
 //! It fails, writing nothing, if a registered point has no hit, a scenario's
-//! file is missing, or a file names a point no registry declares (names with
-//! the reserved `test.` prefix are ignored). `cargo ci`'s `reach` step
+//! file is missing, a file names a point no registry declares (names with
+//! the reserved `test.` prefix are ignored), or a scenario no longer reaches
+//! a point `EXPECTED` lists for it. `cargo ci`'s `reach` step
 //! generates the same table in memory and compares it with the committed
 //! one, writing nothing.
 
@@ -30,6 +31,48 @@ pub const SCENARIOS: [(&str, &str); 5] = [
     ("snapshot", "Snapshot"),
     ("materialise", "Materialise"),
     ("four-writers", "four writers"),
+];
+
+/// The points each scenario is expected to reach, as the Sprint 4 build
+/// plan lists them (T-006), by the name the table shows. A scenario that
+/// stops reaching one fails the table, even if another scenario still
+/// reaches it (test critique C-011). An expectation is checked when its
+/// point is registered and its scenario recorded; `expectations_are_real`
+/// keeps this list naming real points and scenarios.
+pub const EXPECTED: [(&str, &[&str]); 4] = [
+    (
+        "store",
+        &[
+            "store.init.layout_created",
+            "store.sync_layout.synced",
+            "store.put_object.present_synced",
+            "store.put_object.temp_written",
+            "store.put_object.temp_synced",
+            "store.put_object.renamed",
+            "store.put_object.dir_synced",
+            "store.commit_op.temp_written",
+            "store.commit_op.temp_synced",
+            "store.commit_op.renamed",
+            "store.commit_op.dir_synced",
+            "store.commit_op.references_resynced",
+        ],
+    ),
+    ("four writers", &["store.commit_op.present_synced"]),
+    (
+        "Snapshot",
+        &["workspace.snapshot.scanned", "workspace.snapshot.committed"],
+    ),
+    (
+        "Materialise",
+        &[
+            "workspace.record.written",
+            "workspace.record.dropped",
+            "workspace.apply.path_written",
+            "workspace.apply.path_removed",
+            "workspace.resume.started",
+            "workspace.resume.dropped",
+        ],
+    ),
 ];
 
 /// The committed table.
@@ -112,6 +155,19 @@ pub fn table(
     for (point, total) in &totals {
         if *total == 0 {
             problems.push(format!("point `{point}` is reached by no scenario"));
+        }
+    }
+    for (shown, expected) in EXPECTED {
+        let Some((_, recorded)) = scenarios.iter().find(|(name, _)| *name == shown) else {
+            continue;
+        };
+        for point in expected {
+            if points.contains_key(point) && recorded.counts.get(*point).copied().unwrap_or(0) == 0
+            {
+                problems.push(format!(
+                    "scenario `{shown}` no longer reaches point `{point}`, which it is expected to"
+                ));
+            }
         }
     }
     if !problems.is_empty() {
@@ -317,16 +373,54 @@ mod tests {
         assert!(table.contains("| `store.a.x` | `store::a` | 1 | 8 |"));
     }
 
+    /// A fixture workspace registering `store.a.x` (S1) and `store.b.x`
+    /// (S2), with every scenario's reach file holding `counts`.
+    fn fixture(label: &str, counts: &[(&str, u64)]) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("xtask-reach-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let write = |path: &std::path::Path, text: &str| {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write(
+            &root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/*\"]\n",
+        );
+        write(
+            &root.join("crates/store/Cargo.toml"),
+            "[package]\nname = \"store\"\n",
+        );
+        write(
+            &root.join("crates/store/src/points.rs"),
+            "pub const POINTS: &[Point] = &[\n    \
+             Point { name: \"store.a.x\", unit: \"store::a\", sprint: 1 },\n    \
+             Point { name: \"store.b.x\", unit: \"store::b\", sprint: 2 },\n];\n",
+        );
+        let body: String = counts.iter().map(|(p, c)| format!("{p} {c}\n")).collect();
+        for (file, shown) in super::SCENARIOS {
+            write(
+                &super::reach_dir(&root).join(format!("{file}.txt")),
+                &format!("scenario {shown}\nsprint 1\n{body}"),
+            );
+        }
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        root
+    }
+
+    /// `cargo reach` run twice writes the same bytes, and the check then
+    /// passes (test critique C-010: through `run`, not only `table`).
     #[test]
     fn reach_is_idempotent() {
-        let scenarios = [(
-            "first",
-            recorded("first", 1, &[("store.a.x", 1), ("store.b.x", 1)]),
-        )];
-        assert_eq!(
-            table(&registries(), &scenarios),
-            table(&registries(), &scenarios)
-        );
+        let root = fixture("idempotent", &[("store.a.x", 1), ("store.b.x", 2)]);
+        let mut written = Vec::new();
+        for _ in 0..2 {
+            let (mut out, mut err) = (Vec::new(), Vec::new());
+            assert_eq!(super::run(&root, &mut out, &mut err), 0);
+            written.push(std::fs::read(root.join(super::TABLE)).unwrap());
+        }
+        assert_eq!(written[0], written[1]);
+        assert_eq!(super::check(&root), Ok(()));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -334,6 +428,81 @@ mod tests {
         let scenarios = [("first", recorded("first", 1, &[("store.a.x", 1)]))];
         let problems = table(&registries(), &scenarios).unwrap_err();
         assert_eq!(problems, ["point `store.b.x` is reached by no scenario"]);
+        // Through `cargo reach`: exit 1, the point named, nothing written.
+        let root = fixture("unreached", &[("store.a.x", 1)]);
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        assert_eq!(super::run(&root, &mut out, &mut err), 1);
+        let err = String::from_utf8(err).unwrap();
+        assert!(
+            err.contains("point `store.b.x` is reached by no scenario"),
+            "{err}"
+        );
+        assert!(!root.join(super::TABLE).exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A scenario that stops reaching a point the plan expects of it fails,
+    /// though another scenario still reaches the point (test critique
+    /// C-011). Expected points no registry declares are not checked here;
+    /// `expectations_are_real` keeps the list real.
+    #[test]
+    fn reach_fails_on_an_expected_point_missed() {
+        let registries: BTreeMap<String, Vec<Entry>> = [(
+            "store".to_owned(),
+            vec![
+                entry("store.a.x", "store::a", 1),
+                entry("store.commit_op.present_synced", "store::commit_op", 1),
+            ],
+        )]
+        .into();
+        let both = [("store.a.x", 1), ("store.commit_op.present_synced", 1)];
+        let reaching = [
+            ("store", recorded("store", 1, &both)),
+            ("four writers", recorded("four writers", 4, &both)),
+        ];
+        assert!(table(&registries, &reaching).is_ok());
+        let missing = [
+            ("store", recorded("store", 1, &both)),
+            (
+                "four writers",
+                recorded("four writers", 4, &[("store.a.x", 1)]),
+            ),
+        ];
+        assert_eq!(
+            table(&registries, &missing).unwrap_err(),
+            ["scenario `four writers` no longer reaches point \
+              `store.commit_op.present_synced`, which it is expected to"]
+        );
+    }
+
+    /// Every expectation names a scenario `cargo reach` reads and a point
+    /// this workspace registers, and every registered point is expected of
+    /// some scenario, as the plan lists them.
+    #[test]
+    fn expectations_are_real() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .unwrap();
+        let (registries, problems) = crate::points::registries(&crate::workspace::members(root));
+        assert!(problems.is_empty(), "{problems:?}");
+        let registered: std::collections::BTreeSet<&str> = registries
+            .values()
+            .flatten()
+            .map(|entry| entry.name.as_str())
+            .collect();
+        let mut expected = std::collections::BTreeSet::new();
+        for (shown, points) in super::EXPECTED {
+            assert!(
+                super::SCENARIOS.iter().any(|(_, name)| *name == shown),
+                "no scenario {shown}"
+            );
+            for point in points {
+                assert!(registered.contains(point), "{point} is not registered");
+                assert!(expected.insert(*point), "{point} is expected twice");
+            }
+        }
+        assert_eq!(expected, registered);
     }
 
     #[test]
@@ -351,6 +520,17 @@ mod tests {
             problems,
             ["scenario `first` names point `store.z.z`, which no registry declares"]
         );
+        // Through `cargo reach`: exit 1, the point named, nothing written.
+        let root = fixture(
+            "unregistered",
+            &[("store.a.x", 1), ("store.b.x", 1), ("store.z.z", 1)],
+        );
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        assert_eq!(super::run(&root, &mut out, &mut err), 1);
+        let err = String::from_utf8(err).unwrap();
+        assert!(err.contains("names point `store.z.z`"), "{err}");
+        assert!(!root.join(super::TABLE).exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

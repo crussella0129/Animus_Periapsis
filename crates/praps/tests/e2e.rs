@@ -267,12 +267,25 @@ fn praps_commands_report_skipped_names() {
     let skipped = format!("skipped {shown} (name is not UTF-8)");
     fs::write(root.join(&name), b"untouched").unwrap();
 
-    // A failed `undo` (nothing to undo yet) still reports, after nothing.
+    // A failed `undo` (nothing to undo yet) and a failed `restore` (an
+    // unknown op) still report, after nothing, and exit 1 with the error on
+    // stderr (test critique C-006).
     let output = praps(&["undo"], &root);
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
         format!("{skipped}\n")
+    );
+    let output = praps(&["restore", "0000000000000000"], &root);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!("{skipped}\n")
+    );
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("no op matches `0000000000000000`")
     );
 
     // `new`, `log`, `undo` and `restore`: their own lines, then the report.
