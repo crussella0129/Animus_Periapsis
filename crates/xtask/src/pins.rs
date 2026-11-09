@@ -110,6 +110,85 @@ unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 "#;
 
+/// The root manifest's profile settings (Sprint 5 T-002): tests build
+/// optimised, and nothing else about a profile changes, so debug assertions
+/// and overflow checks keep their `dev` defaults (on) in every build.
+const PROFILE: [&str; 2] = ["dev.opt-level = 1", "dev.package.\"*\".opt-level = 3"];
+
+/// Every setting under `[profile]` in `manifest`, as `dotted.key = value`,
+/// sorted. Tables and inline tables are walked alike, so no form hides one.
+fn profile_settings(manifest: &str) -> Vec<String> {
+    fn walk(prefix: &str, item: &toml_edit::Item, out: &mut Vec<String>) {
+        if let Some(table) = item.as_table_like() {
+            for (key, child) in table.iter() {
+                let key = if key
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                {
+                    key.to_owned()
+                } else {
+                    format!("\"{key}\"")
+                };
+                let path = if prefix.is_empty() {
+                    key
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                walk(&path, child, out);
+            }
+        } else if let Some(value) = item.as_value() {
+            // Only the `parse` feature is enabled, so values are rendered
+            // here: any value that is not an integer, a boolean or a string
+            // still shows up, just not as its literal.
+            let value = match value {
+                toml_edit::Value::Integer(n) => n.value().to_string(),
+                toml_edit::Value::Boolean(b) => b.value().to_string(),
+                toml_edit::Value::String(s) => format!("{:?}", s.value()),
+                _ => "<other>".to_owned(),
+            };
+            out.push(format!("{prefix} = {value}"));
+        }
+    }
+    let manifest: toml_edit::DocumentMut = manifest.parse().expect("the root manifest parses");
+    let mut settings = Vec::new();
+    if let Some(profile) = manifest.get("profile") {
+        walk("", profile, &mut settings);
+    }
+    settings.sort();
+    settings
+}
+
+#[test]
+fn optimised_test_profile_is_the_reviewed_one() {
+    let manifest = repo_file("Cargo.toml");
+    assert_eq!(profile_settings(&manifest), PROFILE);
+
+    // Each change to the profile is caught, whatever form it takes.
+    let without = |table: &str| {
+        assert!(manifest.contains(table), "{table:?}");
+        manifest.replace(table, "")
+    };
+    let mutants = [
+        without("[profile.dev]\nopt-level = 1\n"),
+        without("[profile.dev.package.\"*\"]\nopt-level = 3"),
+        format!("{manifest}\n[profile.test]\nopt-level = 0\n"),
+        manifest.replace(
+            "[profile.dev]\nopt-level = 1\n",
+            "[profile.dev]\nopt-level = 1\noverflow-checks = false\n",
+        ),
+        format!("{manifest}\n[profile.dev.package.codec]\nopt-level = 0\n"),
+        format!("{manifest}\n[profile.dev.build-override]\nopt-level = 0\n"),
+        format!("{manifest}\n[profile.release]\ndebug-assertions = false\n"),
+        manifest.replace(
+            "[profile.dev]\nopt-level = 1\n",
+            "[profile.dev]\nopt-level = 1\ndebug-assertions = false\n",
+        ),
+    ];
+    for mutant in mutants {
+        assert_ne!(profile_settings(&mutant), PROFILE, "{mutant}");
+    }
+}
+
 #[test]
 fn ci_workflow_is_the_reviewed_one() {
     assert_eq!(repo_file(".github/workflows/ci.yml"), CI_WORKFLOW);
