@@ -56,7 +56,7 @@ In attempt 2 of the two `ed14283` runs, the API lists the `cargo ci` jobs again 
 |---|---|---|---|---|
 | `cargo ci (windows-latest)`, all four runs | `windows-2025-vs2026` 20261103.629 | 1.99.1-x86_64-pc-windows-msvc | 478 passed, 0 failed | `ci: all 6 steps passed` |
 | `cargo ci (ubuntu-latest)`, all four runs | `ubuntu-26.04` 20261028.624 | 1.99.1-x86_64-unknown-linux-gnu | 479 passed, 0 failed | `ci: all 6 steps passed` |
-| `cargo deny check`, all six attempts, failed and passing | `ubuntu-26.04` 20261028.624 | cargo-deny 0.20.2, through `EmbarkStudios/cargo-deny-action@v2` | — | passing: `advisories ok, bans ok, licenses ok, sources ok`; failed: `gzip: invalid magic` (6 lines in each failed job's log, 0 in the passing ones) |
+| `cargo deny check`, all seven jobs: four passing (129038159059, 129244467046, 129244396365, 129377865189) and three failed (129038191572, 129038413586, 129038433532) | `ubuntu-26.04` 20261028.624 | cargo-deny 0.20.2, through `EmbarkStudios/cargo-deny-action@v2` | — | passing: `advisories ok, bans ok, licenses ok, sources ok`; failed: `gzip: invalid magic` (6 lines in each failed job's log, 0 in the passing ones) |
 
 - **Test counts.** They equal Sprint 4's local counts at the tested head `9fa59fb` (477 on Windows, 478 in WSL), plus the CR-07 regression test `a_failed_snapshot_reports_nothing_stale`, which was committed after the tested head in `6665913`. The extra Linux test needs a real ext4 symlink, as before.
 - **The six steps:** `fmt`, `clippy`, `test`, `reach`, `policy` and `book`. `reach` was new in Sprint 4. In every leg it passed against the committed `docs/reach.md`, so the reach table generated on GitHub's Windows and Linux runners equals the one committed from the local machines.
