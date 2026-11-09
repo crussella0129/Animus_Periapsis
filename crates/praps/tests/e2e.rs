@@ -242,3 +242,70 @@ fn praps_history_end_to_end() {
     assert_eq!(ok(&["fsck"], &root), ["clean"]);
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// `log`, `undo`, `restore` and `new` report a name with no UTF-8 form as
+/// `status` does, after their own output, on success and on failure, and
+/// keep their exit codes (Sprint 4 T-009, backlog T-019; INT-0004 AC-7).
+#[test]
+fn praps_commands_report_skipped_names() {
+    let dir = claim("raw-commands");
+    let root = dir.join("project");
+    ok(&["init", "project"], &dir);
+    #[cfg(unix)]
+    let (name, shown) = {
+        use std::os::unix::ffi::OsStringExt;
+        (std::ffi::OsString::from_vec(vec![b'q', 0xff]), r"q\xff")
+    };
+    #[cfg(windows)]
+    let (name, shown) = {
+        use std::os::windows::ffi::OsStringExt;
+        (
+            std::ffi::OsString::from_wide(&[u16::from(b'q'), 0xd800]),
+            r"q\u{d800}",
+        )
+    };
+    let skipped = format!("skipped {shown} (name is not UTF-8)");
+    fs::write(root.join(&name), b"untouched").unwrap();
+
+    // A failed `undo` (nothing to undo yet) and a failed `restore` (an
+    // unknown op) still report, after nothing, and exit 1 with the error on
+    // stderr (test critique C-006).
+    let output = praps(&["undo"], &root);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!("{skipped}\n")
+    );
+    let output = praps(&["restore", "0000000000000000"], &root);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        format!("{skipped}\n")
+    );
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("no op matches `0000000000000000`")
+    );
+
+    // `new`, `log`, `undo` and `restore`: their own lines, then the report.
+    write(&root, "a", b"1");
+    let lines = ok(&["new"], &root);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[0].starts_with("new change "));
+    assert_eq!(lines[1], skipped);
+    let lines = ok(&["log"], &root);
+    assert_eq!(lines.last(), Some(&skipped), "{lines:?}");
+    assert_eq!(lines.iter().filter(|line| **line == skipped).count(), 1);
+    let target = lines[0][..12].to_owned();
+    let lines = ok(&["undo"], &root);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[0].starts_with("undid the last op"));
+    assert_eq!(lines[1], skipped);
+    let lines = ok(&["restore", &target], &root);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[0].starts_with("restored the working copy"));
+    assert_eq!(lines[1], skipped);
+    assert_eq!(fs::read(root.join(&name)).unwrap(), b"untouched");
+    let _ = fs::remove_dir_all(&dir);
+}

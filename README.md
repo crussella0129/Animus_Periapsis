@@ -50,7 +50,7 @@ workspaces come later.
 | `workspace` | The working copy: init, snapshot (with `.gitignore` rules), new, status, log, undo and restore |
 | `praps` | The Periapsis command (`praps init`, `new`, `status`, `log`, `undo`, `restore`, `fsck`) |
 | `book` | Checks the Book's typed acceptance criteria |
-| `xtask` | Project tooling behind `cargo ci` and `cargo policy` |
+| `xtask` | Project tooling behind `cargo ci`, `cargo policy` and `cargo reach` |
 
 ## Build and test
 
@@ -60,10 +60,12 @@ Requires rustup; the toolchain is pinned in `rust-toolchain.toml`.
 cargo ci
 ```
 
-`cargo ci` runs formatting, Clippy, the test suite, the workspace policy and
-the Book check, the same way on Windows, Linux and GitHub Actions.
+`cargo ci` runs formatting, Clippy, the test suite, the reach check, the
+workspace policy and the Book check, the same way on Windows, Linux and GitHub
+Actions.
 `cargo policy` and `cargo book` run those last two checks on their own.
-`cargo ci`, `cargo policy` and `cargo book` take no flags.
+`cargo reach` rewrites the reach table, [`docs/reach.md`](docs/reach.md), from the points the latest test run recorded; `cargo ci` fails when it is stale.
+`cargo ci`, `cargo policy`, `cargo book` and `cargo reach` take no flags.
 Licence and advisory checks use
 [cargo-deny](https://github.com/EmbarkStudios/cargo-deny), run exactly as:
 

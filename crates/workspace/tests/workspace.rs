@@ -5,7 +5,7 @@ mod common;
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use codec::{Changeset, Mode, Operation, RepoPath, View};
 use common::{ROOT, delete, put, writes};
@@ -19,13 +19,13 @@ fn path(text: &str) -> RepoPath {
     RepoPath::new(text).unwrap()
 }
 
-fn fresh(seed: u64) -> Workspace<Rc<SimFs>> {
-    let fs = Rc::new(SimFs::new(seed, DirMode::Strict));
+fn fresh(seed: u64) -> Workspace<Arc<SimFs>> {
+    let fs = Arc::new(SimFs::new(seed, DirMode::Strict));
     Workspace::init(fs, Path::new(ROOT), seed).unwrap().0
 }
 
-fn fs_of(ws: &Workspace<Rc<SimFs>>) -> Rc<SimFs> {
-    Rc::clone(ws.store().fs())
+fn fs_of(ws: &Workspace<Arc<SimFs>>) -> Arc<SimFs> {
+    Arc::clone(ws.store().fs())
 }
 
 /// The paths of a tree.
@@ -35,8 +35,8 @@ fn paths(tree: &Tree) -> Vec<&str> {
 
 #[test]
 fn init_creates_a_root_change() {
-    let fs = Rc::new(SimFs::new(1, DirMode::Strict));
-    let (ws, created) = Workspace::init(Rc::clone(&fs), Path::new(ROOT), 1).unwrap();
+    let fs = Arc::new(SimFs::new(1, DirMode::Strict));
+    let (ws, created) = Workspace::init(Arc::clone(&fs), Path::new(ROOT), 1).unwrap();
     assert!(created);
     let snapshot = fs.snapshot();
     assert!(snapshot.contains_key("repo/.praps/store/objects"));
@@ -74,7 +74,7 @@ fn init_is_idempotent() {
     let ws = fresh(2);
     let fs = fs_of(&ws);
     let before = fs.snapshot();
-    let (again, created) = Workspace::init(Rc::clone(&fs), Path::new(ROOT), 99).unwrap();
+    let (again, created) = Workspace::init(Arc::clone(&fs), Path::new(ROOT), 99).unwrap();
     assert!(!created);
     assert_eq!(fs.snapshot(), before, "a second init writes no file");
     assert_eq!(again.store().ops().unwrap().len(), 1);
@@ -84,21 +84,21 @@ fn init_is_idempotent() {
 /// running `init` again finishes the job.
 #[test]
 fn init_completes_an_interrupted_init() {
-    let fs = Rc::new(SimFs::new(3, DirMode::Strict));
+    let fs = Arc::new(SimFs::new(3, DirMode::Strict));
     fs.create_dir(Path::new(ROOT)).unwrap();
     fs.create_dir(Path::new("repo/.praps")).unwrap();
     Store::init(
-        Rc::clone(&fs),
+        Arc::clone(&fs),
         Path::new("repo/.praps/store"),
         HashAlg::DEFAULT,
         0,
     )
     .unwrap();
     assert!(matches!(
-        Workspace::open(Rc::clone(&fs), Path::new(ROOT), 3),
+        Workspace::open(Arc::clone(&fs), Path::new(ROOT), 3),
         Err(Error::NotInitialised(_))
     ));
-    let (ws, created) = Workspace::init(Rc::clone(&fs), Path::new(ROOT), 3).unwrap();
+    let (ws, created) = Workspace::init(Arc::clone(&fs), Path::new(ROOT), 3).unwrap();
     assert!(created);
     assert_eq!(ws.store().ops().unwrap().len(), 1);
 }
@@ -119,7 +119,7 @@ fn several_heads_stop_every_command() {
     let ws = fresh(4);
     let fs = fs_of(&ws);
     let mut other = Store::open(
-        Rc::clone(&fs),
+        Arc::clone(&fs),
         Path::new("repo/.praps/store"),
         HashAlg::DEFAULT,
         9,
@@ -144,7 +144,7 @@ fn several_heads_stop_every_command() {
         })
         .unwrap();
     drop(ws);
-    let mut ws = match Workspace::open(Rc::clone(&fs), Path::new(ROOT), 4) {
+    let mut ws = match Workspace::open(Arc::clone(&fs), Path::new(ROOT), 4) {
         Err(Error::SeveralHeads(heads)) => {
             let mut expected = vec![a, b];
             expected.sort();
@@ -177,11 +177,11 @@ fn several_heads_stop_every_command() {
 /// variant.
 #[test]
 fn init_with_store_uses_the_given_store() {
-    let fs = Rc::new(SimFs::new(5, DirMode::Strict));
+    let fs = Arc::new(SimFs::new(5, DirMode::Strict));
     fs.create_dir(Path::new(ROOT)).unwrap();
     fs.create_dir(Path::new("repo/.praps")).unwrap();
     let store = Store::init_variant(
-        Rc::clone(&fs),
+        Arc::clone(&fs),
         Path::new("repo/.praps/store"),
         HashAlg::DEFAULT,
         5,
@@ -439,7 +439,7 @@ fn merge_changesets_are_refused() {
     let fs = fs_of(&ws);
     let (wc, ..) = ws.working_copy().unwrap();
     let mut store = Store::open(
-        Rc::clone(&fs),
+        Arc::clone(&fs),
         Path::new("repo/.praps/store"),
         HashAlg::DEFAULT,
         3,
@@ -646,7 +646,7 @@ fn a_file_vanishing_mid_scan_is_deleted() {
     put(&fs, "zz.swp", b"swap");
     ws.snapshot().unwrap();
     put(&fs, "zz.swp", b"changed");
-    let hook_fs = Rc::clone(&fs);
+    let hook_fs = Arc::clone(&fs);
     let mut fired = false;
     fs.set_hook(Some(Box::new(move |_| {
         let scanned_top = hook_fs.trace().last().is_some_and(|l| l == "scan repo");
@@ -671,9 +671,9 @@ fn init_and_open_sync_the_roots_parent() {
     for open in [false, true] {
         let before = fs.trace().len();
         if open {
-            Workspace::open(Rc::clone(&fs), Path::new(ROOT), 22).unwrap();
+            Workspace::open(Arc::clone(&fs), Path::new(ROOT), 22).unwrap();
         } else {
-            Workspace::init(Rc::clone(&fs), Path::new(ROOT), 22).unwrap();
+            Workspace::init(Arc::clone(&fs), Path::new(ROOT), 22).unwrap();
         }
         let trace = fs.trace();
         assert!(
@@ -720,7 +720,7 @@ fn invalid_op_files_are_refused() {
         matches!(&error, Error::Corrupt(what) if what.contains("praps fsck")),
         "{error}"
     );
-    let error = Workspace::init(Rc::clone(&fs), Path::new(ROOT), 24)
+    let error = Workspace::init(Arc::clone(&fs), Path::new(ROOT), 24)
         .err()
         .unwrap();
     assert!(matches!(error, Error::Corrupt(_)), "{error}");
@@ -749,7 +749,7 @@ fn snapshot_keeps_other_heads() {
     let fs = fs_of(&ws);
     let (wc, ..) = ws.working_copy().unwrap();
     let mut store = Store::open(
-        Rc::clone(&fs),
+        Arc::clone(&fs),
         Path::new("repo/.praps/store"),
         HashAlg::DEFAULT,
         30,

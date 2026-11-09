@@ -280,7 +280,9 @@ fn recorded<F: Fs>(ws: &Workspace<F>) -> Option<Files> {
 
 /// Checks the state a restart sees. It works on copies, so `recovered`
 /// stays as the crash left it.
-fn check(recovered: &SimFs, log: &Log, seed: u64) -> Violations {
+/// The invariants, and the reach of the next command the scenario models
+/// (the `open` that resumes, or `init`), read before the oracle checks.
+fn check(recovered: &SimFs, log: &Log, seed: u64) -> (Violations, Vec<(&'static str, u64)>) {
     let mut v = Violations::default();
     let root = Path::new(ROOT);
     if let Ok(store) = Store::inspect(recovered, Path::new(STORE), HashAlg::DEFAULT) {
@@ -310,9 +312,10 @@ fn check(recovered: &SimFs, log: &Log, seed: u64) -> Violations {
     } else {
         Workspace::init(&copy, root, seed).map(|(ws, _)| ws)
     };
+    let next = copy.reach();
     let Ok(mut ws) = opened else {
         v.liveness += 1;
-        return v;
+        return (v, next);
     };
     let expected = match &log.phase {
         Phase::Edit => None,
@@ -360,7 +363,7 @@ fn check(recovered: &SimFs, log: &Log, seed: u64) -> Violations {
     }
     let live = ws.snapshot().is_ok() && recorded(&ws) == Some(tracked);
     v.liveness += u64::from(!live);
-    v
+    (v, next)
 }
 
 /// A hash of everything visible in a filesystem.
@@ -395,6 +398,8 @@ struct Cell {
     violations: Violations,
     state: HashRef,
     trace: HashRef,
+    /// The scenario's own reach and its next command's.
+    reach: Vec<(&'static str, u64)>,
 }
 
 /// The second pass for one resuming cell: a crash at every syscall of the
@@ -411,7 +416,7 @@ fn second_pass(recovered: &SimFs, log: &Log, seed: u64) -> (u64, Violations) {
         let copy = recovered.recover();
         copy.set_crash_at(Some(k));
         let _ = Workspace::open(&copy, Path::new(ROOT), seed);
-        v.add(check(&copy.recover(), log, seed));
+        v.add(check(&copy.recover(), log, seed).0);
     }
     (syscalls, v)
 }
@@ -462,13 +467,17 @@ fn matrix_on(variant: Variant, second: bool, host: Host) -> Matrix {
                         out.second.1.add(v);
                     }
                 }
+                let (violations, next) = check(&recovered, &log, seed);
+                let mut reach = fs.reach();
+                reach.extend(next);
                 out.cells.push(Cell {
                     mode,
                     seed,
                     crash_at,
-                    violations: check(&recovered, &log, seed),
+                    violations,
                     state: digest(&recovered),
                     trace: HashAlg::Blake3.hash(fs.trace().join("\n").as_bytes()),
+                    reach,
                 });
             }
         }
@@ -506,6 +515,13 @@ fn materialise_matrix_finds_no_violations() {
         .map(|c| (c.mode, c.seed, c.crash_at, c.violations))
         .collect();
     assert!(failing.is_empty(), "first violating cells: {failing:?}");
+    // The designated record of this scenario's reach (INT-0005 AC-6).
+    let mut totals = sim::reach::Totals::new();
+    for cell in &m.cells {
+        sim::reach::add(&mut totals, &cell.reach);
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("reach");
+    sim::reach::record(&dir, "materialise", "Materialise", 3, &totals).unwrap();
 }
 
 /// The same scenario on a filesystem with no executable bit and Windows'
@@ -547,10 +563,17 @@ fn materialise_matrix_is_reproducible() {
         all.extend_from_slice(&a.state.to_bytes());
         all.extend_from_slice(&a.trace.to_bytes());
     }
+    let digest = HashAlg::Blake3.hash(&all);
     println!(
-        "materialise matrix digest over {} cells: {}",
-        first.cells.len(),
-        HashAlg::Blake3.hash(&all)
+        "materialise matrix digest over {} cells: {digest}",
+        first.cells.len()
+    );
+    // Asserted, not only printed, so a change that moves any cell fails
+    // here on every system (Sprint 4 plan critique, C-008).
+    assert_eq!(first.cells.len(), 40_960);
+    assert_eq!(
+        digest.to_string(),
+        "blake3:6274344b358b15cb24d182a681c592ccad66a82564fd40c5cf45e4fcb666a1ac"
     );
 }
 

@@ -74,7 +74,9 @@ pub fn write(fs: &impl Fs, praps: &Path, record: &Record) -> io::Result<()> {
     fs.write(&new, &record.encode())?;
     fs.sync_file(&new)?;
     fs.rename(&new, &praps.join(RECORD))?;
-    fs.sync_dir(praps)
+    fs.sync_dir(praps)?;
+    fs.point("workspace.record.written");
+    Ok(())
 }
 
 /// The record in `praps`, if there is one: `Ok(None)` when there is none,
@@ -94,5 +96,7 @@ pub fn drop_record(fs: &impl Fs, praps: &Path) -> io::Result<()> {
         Err(error) if error.kind() == ErrorKind::NotFound => {}
         Err(error) => return Err(error),
     }
-    fs.sync_dir(praps)
+    fs.sync_dir(praps)?;
+    fs.point("workspace.record.dropped");
+    Ok(())
 }

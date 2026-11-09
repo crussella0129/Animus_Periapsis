@@ -26,6 +26,11 @@ fn matrix(variant: Variant) -> (Summary, Cells) {
     (summary, cells)
 }
 
+/// Where the designated tests record reach for `cargo reach`.
+fn reach_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("reach")
+}
+
 #[test]
 fn crash_matrix_finds_no_violations() {
     let (summary, cells) = matrix(Variant::Correct);
@@ -50,6 +55,19 @@ fn crash_matrix_finds_no_violations() {
             );
         }
     }
+    // The designated record of this scenario's reach (INT-0005 AC-6): the
+    // two writers apart from the single-writer scenarios.
+    let (mut store, mut two) = (sim::reach::Totals::new(), sim::reach::Totals::new());
+    for (scenario, _, _, _, outcome) in &cells {
+        let totals = if *scenario == Scenario::TwoWriters {
+            &mut two
+        } else {
+            &mut store
+        };
+        sim::reach::add(totals, &outcome.reach);
+    }
+    sim::reach::record(&reach_dir(), "store", "store", 1, &store).unwrap();
+    sim::reach::record(&reach_dir(), "two-writers", "two writers", 1, &two).unwrap();
 }
 
 #[test]
@@ -69,10 +87,14 @@ fn matrix_runs_are_reproducible() {
         all.extend_from_slice(&outcome.state.to_bytes());
         all.extend_from_slice(&outcome.trace.to_bytes());
     }
-    println!(
-        "matrix digest over {} cells: {}",
-        first.len(),
-        HashAlg::Blake3.hash(&all)
+    let digest = HashAlg::Blake3.hash(&all);
+    println!("matrix digest over {} cells: {digest}", first.len());
+    // Asserted, not only printed, so a change that moves any cell fails
+    // here on every system (Sprint 4 plan critique, C-008).
+    assert_eq!(first.len(), 32_840);
+    assert_eq!(
+        digest.to_string(),
+        "blake3:d36b8c9c77744d485a362ef3d94cebe40dcb67ca7260eb409f5430c2a13ae812"
     );
 }
 
@@ -131,4 +153,17 @@ fn unsynced_init_variant_is_caught() {
 #[test]
 fn write_in_place_variant_is_caught() {
     caught(Variant::WriteInPlace);
+}
+
+/// The two-writer race fires from a named point, with no trace inspection,
+/// in every seed of both modes (Sprint 4 T-006). `syscalls` asserts that
+/// each uncrashed correct run raced; the digest test shows the cells are
+/// unchanged from when a hook matched the trace.
+#[test]
+fn two_writer_race_fires_at_the_named_point() {
+    for mode in [Mode::Lenient, Mode::Strict] {
+        for seed in 0..common::matrix::SEEDS {
+            common::matrix::syscalls(Variant::Correct, Scenario::TwoWriters, mode, seed);
+        }
+    }
 }

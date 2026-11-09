@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
-//! Project tooling behind the `cargo ci` and `cargo policy` aliases.
+//! Project tooling behind the `cargo ci`, `cargo policy` and `cargo reach`
+//! aliases.
 //!
 //! Every command here is idempotent, so none takes flags (INT-0003 AC-9).
 
@@ -12,7 +13,9 @@ mod docs;
 mod manifest;
 #[cfg(test)]
 mod pins;
+mod points;
 mod policy;
+mod reach;
 #[cfg(test)]
 mod workflow;
 mod workspace;
@@ -23,7 +26,8 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-const USAGE: &str = "usage: cargo ci | cargo policy   (no flags: both commands are idempotent)";
+const USAGE: &str =
+    "usage: cargo ci | cargo policy | cargo reach   (no flags: every command is idempotent)";
 
 /// Runs one command and returns its exit code: 0 clean, 1 problems found,
 /// 2 for a usage error, including an argument that is not valid Unicode.
@@ -31,6 +35,7 @@ const USAGE: &str = "usage: cargo ci | cargo policy   (no flags: both commands a
 fn cli(args: &[OsString], root: &Path, out: &mut dyn Write, err: &mut dyn Write) -> u8 {
     match args {
         [command] if command == "ci" => ci::run(root, out),
+        [command] if command == "reach" => reach::run(root, out, err),
         [command] if command == "policy" => {
             let mut clean = true;
             for result in policy::check(root) {
@@ -86,7 +91,7 @@ fn guarded(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> u8 {
-    if matches!(args, [command] if command == "ci" || command == "policy") {
+    if matches!(args, [command] if command == "ci" || command == "policy" || command == "reach") {
         let (exe, located) = paths();
         if let Some(problem) = foreign(root, exe, located) {
             writeln!(err, "{problem}").ok();
@@ -179,7 +184,7 @@ mod tests {
     use super::{cli, foreign, guarded, located_workspace, workspace_root};
 
     const USAGE_LINE: &str =
-        "usage: cargo ci | cargo policy   (no flags: both commands are idempotent)\n";
+        "usage: cargo ci | cargo policy | cargo reach   (no flags: every command is idempotent)\n";
 
     fn run(args: &[OsString]) -> (u8, String, String) {
         let (mut out, mut err) = (Vec::new(), Vec::new());
@@ -242,6 +247,42 @@ mod tests {
         ] {
             assert_usage_error(&os_args(args));
         }
+    }
+
+    /// `cargo reach` takes no flag and no other argument (INT-0003 AC-9).
+    #[test]
+    fn reach_rejects_arguments() {
+        for args in [
+            &["reach", "--check"][..],
+            &["reach", "-q"],
+            &["reach", "x"],
+            &["--reach"],
+        ] {
+            assert_usage_error(&os_args(args));
+        }
+    }
+
+    /// Like `ci` and `policy`, `reach` refuses a binary built for another
+    /// checkout or outside this one's target directory.
+    #[test]
+    fn reach_refuses_out_of_tree() {
+        let root = workspace_root();
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = guarded(
+            &os_args(&["reach"]),
+            &root,
+            || {
+                (
+                    Err(std::io::Error::other("gone")),
+                    Ok(root.join("Cargo.toml")),
+                )
+            },
+            &mut out,
+            &mut err,
+        );
+        assert_eq!(code, 1);
+        assert!(out.is_empty());
+        assert!(!err.is_empty());
     }
 
     #[test]

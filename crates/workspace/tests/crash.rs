@@ -212,7 +212,9 @@ impl Violations {
     }
 }
 
-fn check(recovered: &SimFs, log: &Log, seed: u64) -> Violations {
+/// The invariants, and the reach of the next command the scenario models
+/// (`init` then `snapshot` on a copy), read before the oracle checks.
+fn check(recovered: &SimFs, log: &Log, seed: u64) -> (Violations, Vec<(&'static str, u64)>) {
     let mut v = Violations::default();
     let root = Path::new(ROOT);
     match Store::inspect(recovered, Path::new(STORE), HashAlg::DEFAULT) {
@@ -253,14 +255,16 @@ fn check(recovered: &SimFs, log: &Log, seed: u64) -> Violations {
     // Liveness, on a copy: `init` then `snapshot` work, and record the
     // recovered working copy exactly.
     let copy = recovered.recover();
+    let mut next = Vec::new();
     let live = Workspace::init(&copy, root, seed).and_then(|(mut ws, _)| {
         ws.snapshot()?;
+        next = copy.reach();
         Ok(recorded_tree(&ws) == Some(model(&copy)))
     });
     if !matches!(live, Ok(true)) {
         v.liveness += 1;
     }
-    v
+    (v, next)
 }
 
 /// A hash of everything visible in a filesystem.
@@ -290,6 +294,8 @@ struct Cell {
     violations: Violations,
     state: HashRef,
     trace: HashRef,
+    /// The scenario's own reach and its next command's.
+    reach: Vec<(&'static str, u64)>,
 }
 
 fn matrix(variant: Variant) -> Vec<Cell> {
@@ -308,13 +314,17 @@ fn matrix(variant: Variant) -> Vec<Cell> {
                 let log = RefCell::new(Log::default());
                 let _ = run(&fs, variant, seed, &log);
                 let recovered = fs.recover();
+                let (violations, next) = check(&fs.recover(), &log.borrow(), seed);
+                let mut reach = fs.reach();
+                reach.extend(next);
                 cells.push(Cell {
                     mode,
                     seed,
                     crash_at,
-                    violations: check(&fs.recover(), &log.borrow(), seed),
+                    violations,
                     state: digest(&recovered),
                     trace: HashAlg::Blake3.hash(fs.trace().join("\n").as_bytes()),
+                    reach,
                 });
             }
         }
@@ -355,6 +365,13 @@ fn snapshot_matrix_finds_no_violations() {
         .map(|c| (c.mode, c.seed, c.crash_at, c.violations))
         .collect();
     assert!(failing.is_empty(), "first violating cells: {failing:?}");
+    // The designated record of this scenario's reach (INT-0005 AC-6).
+    let mut totals = sim::reach::Totals::new();
+    for cell in &cells {
+        sim::reach::add(&mut totals, &cell.reach);
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("reach");
+    sim::reach::record(&dir, "snapshot", "Snapshot", 2, &totals).unwrap();
 }
 
 #[test]
@@ -377,10 +394,17 @@ fn snapshot_matrix_is_reproducible() {
         all.extend_from_slice(&a.state.to_bytes());
         all.extend_from_slice(&a.trace.to_bytes());
     }
+    let digest = HashAlg::Blake3.hash(&all);
     println!(
-        "snapshot matrix digest over {} cells: {}",
-        first.len(),
-        HashAlg::Blake3.hash(&all)
+        "snapshot matrix digest over {} cells: {digest}",
+        first.len()
+    );
+    // Asserted, not only printed, so a change that moves any cell fails
+    // here on every system (Sprint 4 plan critique, C-008).
+    assert_eq!(first.len(), 25_360);
+    assert_eq!(
+        digest.to_string(),
+        "blake3:c1e39cb10607ff208e0f2774eee8770659aad590dbc8c71abd76522b69013ea3"
     );
 }
 

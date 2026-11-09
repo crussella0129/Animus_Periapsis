@@ -1,11 +1,10 @@
 //! The `Fs` contract on both implementations, and the simulator's fault model
 //! (INT-0005 AC-1, AC-2; INT-0004 AC-1).
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use sim::{DirEntry, Fs, Kind, Mode, Name, NameRules, Node, RealFs, Rng, SimFs, is_crash};
 
@@ -733,13 +732,13 @@ fn every_syscall_has_no_effect_at_its_crash_point() {
     for mode in [Mode::Lenient, Mode::Strict] {
         for k in 1..=EVERY_KIND_SYSCALLS {
             for seed in 0..20 {
-                let fs = Rc::new(SimFs::new(seed, mode));
+                let fs = Arc::new(SimFs::new(seed, mode));
                 fs.set_crash_at(Some(k));
-                let before: Rc<RefCell<Option<(Snapshot, Snapshot)>>> = Rc::default();
-                let (hook_fs, hook_before) = (Rc::clone(&fs), Rc::clone(&before));
+                let before: Arc<Mutex<Option<(Snapshot, Snapshot)>>> = Arc::default();
+                let (hook_fs, hook_before) = (Arc::clone(&fs), Arc::clone(&before));
                 fs.set_hook(Some(Box::new(move |next| {
                     if next == k {
-                        *hook_before.borrow_mut() =
+                        *hook_before.lock().unwrap() =
                             Some((hook_fs.snapshot(), hook_fs.recover().snapshot()));
                     }
                 })));
@@ -747,7 +746,7 @@ fn every_syscall_has_no_effect_at_its_crash_point() {
                 fs.set_hook(None);
                 assert!(is_crash(&error), "k {k}: {error}");
                 assert_eq!(fs.trace().len() as u64, k);
-                let (visible, durable) = before.borrow_mut().take().expect("hook ran at k");
+                let (visible, durable) = before.lock().unwrap().take().expect("hook ran at k");
                 assert_eq!(
                     fs.snapshot(),
                     visible,

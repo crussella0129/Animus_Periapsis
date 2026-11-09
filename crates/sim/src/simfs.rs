@@ -39,10 +39,11 @@
 //! bytes or code units, the same on every host, under a key no `Path` the
 //! simulator accepts can name.
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, ErrorKind};
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::thread::{self, ThreadId};
 
 use crate::fs::{Crash, Fs, NameRules};
 use crate::name::{DirEntry, Kind, Name, RawName};
@@ -183,13 +184,147 @@ struct State {
 /// A hook run at a syscall boundary, given the number the next syscall will
 /// have. It may itself use the filesystem (the syscalls it makes are counted
 /// and traced like any other).
-pub type Hook = Box<dyn FnMut(u64)>;
+pub type Hook = Box<dyn FnMut(u64) + Send>;
+
+/// An action a test attaches to a named point with [`SimFs::on_point`]. It
+/// may itself use the filesystem; its syscalls are counted and traced like
+/// any other, as syscalls of the thread that reached the point.
+pub type Action = Arc<dyn Fn() + Send + Sync>;
+
+/// A boundary the scheduler of [`crate::Processes`] acts at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Boundary {
+    /// Just before a syscall.
+    Syscall,
+    /// At a named point, after it is counted and before its actions run.
+    Point(&'static str),
+}
+
+/// The scheduler's callback, run on the thread that reached a boundary with
+/// no lock held. It may block (a wait for the baton or on an ordering) or
+/// unwind (a kill).
+pub(crate) type Switch = Arc<dyn Fn(Boundary) + Send + Sync>;
+
+/// What the simulator keeps about named points ([`Fs::point`]), apart from
+/// the filesystem state: points are not syscalls.
+#[derive(Default)]
+struct Points {
+    /// How often each name was reached.
+    reach: BTreeMap<&'static str, u64>,
+    /// The actions attached to each name, in the order attached.
+    actions: BTreeMap<&'static str, Vec<Action>>,
+    /// The (thread, name) pairs whose actions are running now, so an action
+    /// that reaches its own point is not entered again.
+    running: Vec<(ThreadId, &'static str)>,
+}
+
+/// Puts a hook back in its slot when it returns or unwinds, unless a new
+/// one was set meanwhile.
+struct HookBack<'a> {
+    fs: &'a SimFs,
+    hook: Option<Hook>,
+}
+
+impl Drop for HookBack<'_> {
+    fn drop(&mut self) {
+        let mut slot = self.fs.hook_slot();
+        if slot.is_none() {
+            *slot = self.hook.take();
+        }
+    }
+}
+
+/// Removes a running (thread, name) pair when its actions end, even by
+/// unwinding.
+struct Running<'a> {
+    fs: &'a SimFs,
+    key: (ThreadId, &'static str),
+}
+
+impl Drop for Running<'_> {
+    fn drop(&mut self) {
+        self.fs.points().running.retain(|key| *key != self.key);
+    }
+}
 
 /// The simulated filesystem. Its root is the empty path; paths are relative
 /// and use normal components only.
+///
+/// It is `Send + Sync`, so several threads may share it through an `Arc`.
+/// Its state sits behind a lock that is never held while a hook runs. A
+/// thread that panics holding the lock does not poison it for the others:
+/// the next caller takes the state as it was, so the first panic is the one
+/// reported.
 pub struct SimFs {
-    state: RefCell<State>,
-    hook: RefCell<Option<Hook>>,
+    state: Mutex<State>,
+    hook: Mutex<Option<Hook>>,
+    points: Mutex<Points>,
+    switch: Mutex<Option<Switch>>,
+}
+
+impl SimFs {
+    fn lock(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn hook_slot(&self) -> MutexGuard<'_, Option<Hook>> {
+        self.hook.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn points(&self) -> MutexGuard<'_, Points> {
+        self.points.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Runs `action` each time a thread reaches the point `name`, after the
+    /// point is counted, in the order actions were attached. An action is
+    /// not entered again for the same name on the same thread while it runs,
+    /// and no action runs once the filesystem has crashed.
+    pub fn on_point(&self, name: &'static str, action: impl Fn() + Send + Sync + 'static) {
+        self.points()
+            .actions
+            .entry(name)
+            .or_default()
+            .push(Arc::new(action));
+    }
+
+    /// Sets or clears the scheduler's callback (see [`crate::Processes`]).
+    pub(crate) fn set_switch(&self, switch: Option<Switch>) {
+        *self.switch.lock().unwrap_or_else(PoisonError::into_inner) = switch;
+    }
+
+    /// Runs the scheduler's callback, if one is set, with no lock held.
+    fn switch_at(&self, at: Boundary) {
+        let switch = self
+            .switch
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(switch) = switch {
+            switch(at);
+        }
+    }
+
+    /// Removes every action attached to points.
+    pub fn clear_points(&self) {
+        self.points().actions.clear();
+    }
+
+    /// Each point reached so far, with how often, sorted by name.
+    pub fn reach(&self) -> Vec<(&'static str, u64)> {
+        self.points()
+            .reach
+            .iter()
+            .map(|(name, count)| (*name, *count))
+            .collect()
+    }
+
+    /// Panics while holding the state lock, so a test can check that the
+    /// lock is not left poisoned. Not part of the simulator's model.
+    #[doc(hidden)]
+    pub fn panic_holding_the_lock(&self) {
+        let _held = self.lock();
+        panic!("a deliberate panic with the state locked");
+    }
 }
 
 fn error(kind: ErrorKind, what: &str, path: &Path) -> io::Error {
@@ -281,7 +416,7 @@ impl SimFs {
         let mut dirs = BTreeMap::new();
         dirs.insert(PathBuf::new(), Dir::default());
         SimFs {
-            state: RefCell::new(State {
+            state: Mutex::new(State {
                 seed,
                 mode,
                 crash_at: None,
@@ -295,26 +430,28 @@ impl SimFs {
                 name_rules: NameRules::default(),
                 removed: BTreeSet::new(),
             }),
-            hook: RefCell::new(None),
+            hook: Mutex::new(None),
+            points: Mutex::new(Points::default()),
+            switch: Mutex::new(None),
         }
     }
 
     /// Whether files carry an executable bit; `true` unless set otherwise,
     /// the same on every host.
     pub fn set_has_executable_bit(&self, has: bool) {
-        self.state.borrow_mut().executable_bit = has;
+        self.lock().executable_bit = has;
     }
 
     /// What [`Fs::name_rules`] reports; neither rule unless set otherwise,
     /// the same on every host.
     pub fn set_name_rules(&self, rules: NameRules) {
-        self.state.borrow_mut().name_rules = rules;
+        self.lock().name_rules = rules;
     }
 
     /// Sets a file's executable bit, durably at once. Not a syscall: the
     /// syscall is [`Fs::set_executable`].
     pub fn make_executable(&self, path: &Path, executable: bool) -> io::Result<()> {
-        let mut st = self.state.borrow_mut();
+        let mut st = self.lock();
         let id = st.file(path)?;
         let inode = st.inode(id);
         inode.executable = executable;
@@ -325,7 +462,7 @@ impl SimFs {
     /// Adds a durable entry `entry` named `name` in `dir`.
     fn make(&self, dir: &Path, name: String, entry: Entry) -> io::Result<()> {
         let full = key(dir)?;
-        let mut st = self.state.borrow_mut();
+        let mut st = self.lock();
         let dir_state = st.dir_mut(&full, dir)?;
         if dir_state.entries.contains_key(&name) {
             return Err(error(ErrorKind::AlreadyExists, "already exists", dir));
@@ -364,7 +501,7 @@ impl SimFs {
         }
         let key_name = raw_key(&raw);
         let id = {
-            let mut st = self.state.borrow_mut();
+            let mut st = self.lock();
             let id = st.next_inode;
             st.next_inode += 1;
             st.inodes.insert(
@@ -379,11 +516,7 @@ impl SimFs {
         };
         self.make(dir, key_name.clone(), Entry::File(id))?;
         let full = key(dir)?;
-        self.state
-            .borrow_mut()
-            .dir_mut(&full, dir)?
-            .raw
-            .insert(key_name, raw);
+        self.lock().dir_mut(&full, dir)?.raw.insert(key_name, raw);
         Ok(())
     }
 
@@ -404,7 +537,7 @@ impl SimFs {
         let key_name = raw_key(&raw);
         self.make(dir, key_name.clone(), Entry::Dir)?;
         let full = key(dir)?;
-        let mut st = self.state.borrow_mut();
+        let mut st = self.lock();
         st.dirs.insert(full.join(&key_name), Dir::default());
         st.dir_mut(&full, dir)?.raw.insert(key_name, raw);
         Ok(())
@@ -412,32 +545,32 @@ impl SimFs {
 
     /// Crash at syscall `at` (counting from 1), or never.
     pub fn set_crash_at(&self, at: Option<u64>) {
-        self.state.borrow_mut().crash_at = at;
+        self.lock().crash_at = at;
     }
 
     /// Runs `hook` before every syscall from now on, or stops running it.
     pub fn set_hook(&self, hook: Option<Hook>) {
-        *self.hook.borrow_mut() = hook;
+        *self.hook_slot() = hook;
     }
 
     /// Syscalls made so far, the crashing one included.
     pub fn syscalls(&self) -> u64 {
-        self.state.borrow().count
+        self.lock().count
     }
 
     /// Whether the crash point has been reached.
     pub fn crashed(&self) -> bool {
-        self.state.borrow().crashed
+        self.lock().crashed
     }
 
     /// The directory-entry mode.
     pub fn mode(&self) -> Mode {
-        self.state.borrow().mode
+        self.lock().mode
     }
 
     /// One line per syscall made, in order: the operation and its path.
     pub fn trace(&self) -> Vec<String> {
-        self.state.borrow().trace.clone()
+        self.lock().trace.clone()
     }
 
     /// Whether the name at `path` would survive a crash now: its directory's
@@ -447,7 +580,7 @@ impl SimFs {
         let Ok((parent, name)) = split(path) else {
             return false;
         };
-        let st = self.state.borrow();
+        let st = self.lock();
         st.dirs.get(&parent).is_some_and(|dir| {
             dir.entries.contains_key(&name) && dir.durable.get(&name) == dir.entries.get(&name)
         })
@@ -456,7 +589,7 @@ impl SimFs {
     /// Everything visible now, keyed by `/`-separated path (the root
     /// excluded). A raw name appears by its display form.
     pub fn snapshot(&self) -> BTreeMap<String, Node> {
-        let st = self.state.borrow();
+        let st = self.lock();
         let mut out = BTreeMap::new();
         let mut stack = vec![PathBuf::new()];
         while let Some(dir) = stack.pop() {
@@ -502,7 +635,7 @@ impl SimFs {
     /// inode kept, dropped or torn, all chosen by the seed. Everything in it
     /// is durable, and it does not crash unless told to.
     pub fn recover(&self) -> SimFs {
-        let st = self.state.borrow();
+        let st = self.lock();
         let mut rng = Rng::new(st.seed);
         let mut resolved: BTreeMap<&PathBuf, BTreeMap<String, Entry>> = BTreeMap::new();
         for (path, dir) in &st.dirs {
@@ -576,7 +709,7 @@ impl SimFs {
         }
 
         SimFs {
-            state: RefCell::new(State {
+            state: Mutex::new(State {
                 seed: rng.next_u64(),
                 mode: st.mode,
                 crash_at: None,
@@ -590,29 +723,38 @@ impl SimFs {
                 name_rules: st.name_rules,
                 removed: BTreeSet::new(),
             }),
-            hook: RefCell::new(None),
+            hook: Mutex::new(None),
+            points: Mutex::new(Points::default()),
+            switch: Mutex::new(None),
         }
     }
 
     /// Counts and traces one syscall, failing it at and after the crash point.
     fn syscall(&self, op: &str, path: &Path) -> io::Result<()> {
+        // Several simulated processes switch here, before anything else.
+        self.switch_at(Boundary::Syscall);
         let next = {
-            let st = self.state.borrow();
+            let st = self.lock();
             if st.crashed {
                 return Err(Crash::error());
             }
             st.count + 1
         };
-        // The hook runs with no borrow held, so it may use the filesystem.
-        let hook = self.hook.borrow_mut().take();
-        if let Some(mut hook) = hook {
-            hook(next);
-            let mut slot = self.hook.borrow_mut();
-            if slot.is_none() {
-                *slot = Some(hook);
-            }
+        // The hook runs with no lock held, so it may use the filesystem. It
+        // is out of its slot while it runs, so its own syscalls do not run
+        // it again, and it goes back even if it unwinds (a panic, or a kill
+        // under `Processes`; code review CR-06). Under `Processes`, other
+        // processes' syscalls made while a hook is out run without it, so
+        // a hook used there should make no syscall of its own.
+        let hook = self.hook_slot().take();
+        if let Some(hook) = hook {
+            let mut back = HookBack {
+                fs: self,
+                hook: Some(hook),
+            };
+            (back.hook.as_mut().expect("just set"))(next);
         }
-        let mut st = self.state.borrow_mut();
+        let mut st = self.lock();
         if st.crashed {
             return Err(Crash::error());
         }
@@ -658,7 +800,7 @@ impl Fs for SimFs {
         self.syscall("create_dir", path)?;
         let (parent, name) = split(path)?;
         let full = key(path)?;
-        let mut st = self.state.borrow_mut();
+        let mut st = self.lock();
         let lenient = st.mode == Mode::Lenient;
         let dir = st.dir_mut(&parent, path)?;
         if dir.entries.contains_key(&name) {
@@ -691,7 +833,7 @@ impl Fs for SimFs {
     fn create_new(&self, path: &Path) -> io::Result<()> {
         self.syscall("create_new", path)?;
         let (parent, name) = split(path)?;
-        let mut st = self.state.borrow_mut();
+        let mut st = self.lock();
         let id = st.next_inode;
         let dir = st.dir_mut(&parent, path)?;
         if dir.entries.contains_key(&name) {
@@ -707,7 +849,7 @@ impl Fs for SimFs {
 
     fn write(&self, path: &Path, data: &[u8]) -> io::Result<()> {
         self.syscall("write", path)?;
-        let mut st = self.state.borrow_mut();
+        let mut st = self.lock();
         let id = st.file(path)?;
         st.inode(id).current.extend_from_slice(data);
         Ok(())
@@ -715,7 +857,7 @@ impl Fs for SimFs {
 
     fn overwrite(&self, path: &Path, data: &[u8]) -> io::Result<()> {
         self.syscall("overwrite", path)?;
-        let mut st = self.state.borrow_mut();
+        let mut st = self.lock();
         let id = st.file(path)?;
         let inode = st.inode(id);
         inode.current = data.to_vec();
@@ -726,7 +868,7 @@ impl Fs for SimFs {
     fn sync_file(&self, path: &Path) -> io::Result<()> {
         self.syscall("sync_file", path)?;
         let (parent, name) = split(path)?;
-        let mut st = self.state.borrow_mut();
+        let mut st = self.lock();
         let id = st.file(path)?;
         let inode = st.inode(id);
         inode.durable = inode.current.clone();
@@ -758,7 +900,7 @@ impl Fs for SimFs {
                 to,
             ));
         }
-        let mut st = self.state.borrow_mut();
+        let mut st = self.lock();
         let dir = st.dir_mut(&from_parent, from)?;
         let entry = match dir.entries.get(&from_name) {
             Some(Entry::File(id)) => Entry::File(*id),
@@ -787,7 +929,7 @@ impl Fs for SimFs {
     fn sync_dir(&self, path: &Path) -> io::Result<()> {
         self.syscall("sync_dir", path)?;
         let full = key(path)?;
-        let mut st = self.state.borrow_mut();
+        let mut st = self.lock();
         let dir = st.dir_mut(&full, path)?;
         dir.durable = dir.entries.clone();
         dir.pending.clear();
@@ -796,7 +938,7 @@ impl Fs for SimFs {
 
     fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
         self.syscall("read", path)?;
-        let mut st = self.state.borrow_mut();
+        let mut st = self.lock();
         let id = st.file(path)?;
         Ok(st.inode(id).current.clone())
     }
@@ -804,7 +946,7 @@ impl Fs for SimFs {
     fn list(&self, path: &Path) -> io::Result<Vec<String>> {
         self.syscall("list", path)?;
         let full = key(path)?;
-        let st = self.state.borrow();
+        let st = self.lock();
         if let Some(dir) = st.dirs.get(&full) {
             return Ok(dir.entries.keys().cloned().collect());
         }
@@ -817,7 +959,7 @@ impl Fs for SimFs {
     fn remove_file(&self, path: &Path) -> io::Result<()> {
         self.syscall("remove_file", path)?;
         let (parent, name) = split(path)?;
-        let mut st = self.state.borrow_mut();
+        let mut st = self.lock();
         let entry = Entry::File(st.file(path)?);
         let dir = st.dir_mut(&parent, path)?;
         dir.entries.remove(&name);
@@ -828,7 +970,7 @@ impl Fs for SimFs {
     fn scan(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
         self.syscall("scan", path)?;
         let full = key(path)?;
-        let st = self.state.borrow();
+        let st = self.lock();
         let Some(dir) = st.dirs.get(&full) else {
             return match st.file(path) {
                 Ok(_) => Err(error(ErrorKind::NotADirectory, "not a directory", path)),
@@ -859,14 +1001,14 @@ impl Fs for SimFs {
     }
 
     fn has_executable_bit(&self) -> bool {
-        self.state.borrow().executable_bit
+        self.lock().executable_bit
     }
 
     fn remove_dir(&self, path: &Path) -> io::Result<()> {
         self.syscall("remove_dir", path)?;
         let (parent, name) = split(path)?;
         let full = key(path)?;
-        let mut st = self.state.borrow_mut();
+        let mut st = self.lock();
         match st.dir(&parent, path)?.entries.get(&name) {
             Some(Entry::Dir) => {}
             Some(_) => return Err(error(ErrorKind::NotADirectory, "not a directory", path)),
@@ -900,7 +1042,7 @@ impl Fs for SimFs {
 
     fn set_executable(&self, path: &Path, executable: bool) -> io::Result<()> {
         self.syscall("set_executable", path)?;
-        let mut st = self.state.borrow_mut();
+        let mut st = self.lock();
         let id = st.file(path)?;
         if st.executable_bit {
             st.inode(id).executable = executable;
@@ -909,6 +1051,40 @@ impl Fs for SimFs {
     }
 
     fn name_rules(&self) -> NameRules {
-        self.state.borrow().name_rules
+        self.lock().name_rules
+    }
+
+    fn point(&self, name: &'static str) {
+        // Counted first, with no syscall, trace line or seed draw, so a point
+        // changes nothing a single-process run does.
+        self.points()
+            .reach
+            .entry(name)
+            .and_modify(|n| *n += 1)
+            .or_insert(1);
+        // Under several simulated processes: a kill, then any ordering wait,
+        // happen here, after the count and before the actions.
+        self.switch_at(Boundary::Point(name));
+        let crashed = self.lock().crashed;
+        let me = thread::current().id();
+        let actions = {
+            let points = self.points();
+            if crashed || points.running.contains(&(me, name)) {
+                return;
+            }
+            match points.actions.get(name) {
+                Some(actions) if !actions.is_empty() => actions.clone(),
+                _ => return,
+            }
+        };
+        self.points().running.push((me, name));
+        let _running = Running {
+            fs: self,
+            key: (me, name),
+        };
+        // No lock is held while the actions run.
+        for action in &actions {
+            action();
+        }
     }
 }

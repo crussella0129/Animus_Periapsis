@@ -501,3 +501,138 @@ fn ops_are_never_removed() {
         }
     }
 }
+
+/// Every command that snapshots reports what it left alone, once, in
+/// `status`'s form and order (Sprint 4 T-009, backlog T-019; INT-0004
+/// AC-7). Each command runs on a freshly opened `Workspace` that has
+/// reported nothing yet, so its report can only come from its own snapshot;
+/// two names make the order checked (test critique C-005).
+#[test]
+fn snapshotting_commands_return_reports() {
+    let (mut ws, fs) = fresh(41);
+    for raw in [vec![b'r', 0xff], vec![b'q', 0xfe]] {
+        fs.make_raw(Path::new(ROOT), sim::RawName::Bytes(raw), b"x")
+            .unwrap();
+    }
+    put(&fs, "a", b"1");
+    let expected = ws.status().unwrap().reported;
+    assert_eq!(expected.len(), 2);
+    assert_eq!(ws.reported(), expected);
+    let reopen = |seed: u64| {
+        let ws = Workspace::open(Rc::clone(&fs), Path::new(ROOT), seed).unwrap();
+        assert!(ws.reported().is_empty());
+        ws
+    };
+    let mut ws = reopen(1);
+    ws.new_change().unwrap();
+    assert_eq!(ws.reported(), expected, "new_change");
+    put(&fs, "a", b"2");
+    let mut ws = reopen(2);
+    ws.log().unwrap();
+    assert_eq!(ws.reported(), expected, "log");
+    let mut ws = reopen(3);
+    let (undone, _) = ws.undo().unwrap();
+    // `undo` snapshots twice; its report is one, not two.
+    assert_eq!(ws.reported(), expected, "undo");
+    let mut ws = reopen(4);
+    ws.restore(&undone.to_string()[7..19]).unwrap();
+    assert_eq!(ws.reported(), expected, "restore");
+}
+
+/// A command that fails after its snapshot still reports what it left
+/// alone: `undo` with nothing to undo, and `restore` of an unknown op, of a
+/// view with a hazard, and over a blocking entry (test critique C-006).
+#[test]
+fn failed_commands_carry_reports() {
+    let raw = |fs: &SimFs| {
+        fs.make_raw(Path::new(ROOT), sim::RawName::Bytes(vec![0xfe]), b"x")
+            .unwrap();
+    };
+    let carries = |ws: &Ws, what: &str| {
+        assert_eq!(ws.reported().len(), 1, "{what}");
+        assert!(ws.reported()[0].path.contains("\\xfe"), "{what}");
+    };
+
+    let (mut ws, fs) = fresh(42);
+    raw(&fs);
+    assert!(matches!(ws.undo(), Err(Error::NothingToUndo)));
+    carries(&ws, "nothing to undo");
+
+    let (mut ws, fs) = fresh(43);
+    raw(&fs);
+    assert!(matches!(
+        ws.restore("0000000000000000"),
+        Err(Error::UnknownOp(_))
+    ));
+    carries(&ws, "unknown op");
+
+    // A hazard: two names that fold together on a case-insensitive
+    // filesystem.
+    let (mut ws, fs) = fresh(44);
+    put(&fs, "README", b"x");
+    put(&fs, "readme", b"x");
+    ws.snapshot().unwrap();
+    let target = head(&ws);
+    delete(&fs, "README");
+    delete(&fs, "readme");
+    ws.snapshot().unwrap();
+    fs.set_name_rules(NameRules {
+        case_insensitive: true,
+        windows_names: false,
+    });
+    raw(&fs);
+    assert!(matches!(ws.restore(&hex(&target)), Err(Error::Hazards(_))));
+    carries(&ws, "hazard");
+
+    // A blocking entry: a tracked name, deleted, then ignored and recreated
+    // with the user's own content.
+    let (mut ws, fs) = fresh(45);
+    put(&fs, "b", b"tracked");
+    ws.snapshot().unwrap();
+    let target = head(&ws);
+    delete(&fs, "b");
+    put(&fs, ".gitignore", b"b\n");
+    ws.snapshot().unwrap();
+    put(&fs, "b", b"mine");
+    raw(&fs);
+    assert!(matches!(ws.restore(&hex(&target)), Err(Error::Blocked(_))));
+    carries(&ws, "blocking entry");
+}
+
+/// A snapshot that fails before its scan reports nothing, so a `Workspace`
+/// used for a second command never shows the first command's entries as its
+/// own (code review CR-07; test critique round 2, C-001).
+#[test]
+fn a_failed_snapshot_reports_nothing_stale() {
+    let (mut ws, fs) = fresh(46);
+    fs.make_raw(Path::new(ROOT), sim::RawName::Bytes(vec![0xfe]), b"x")
+        .unwrap();
+    ws.status().unwrap();
+    assert_eq!(ws.reported().len(), 1);
+    // Two ops on the head, written through a second store handle: the next
+    // load stops with several heads, before any scan.
+    let base = head(&ws);
+    let view = view_of(&ws, &base);
+    let mut other = store::Store::open(
+        Rc::clone(&fs),
+        &Path::new(ROOT).join(".praps").join("store"),
+        hash::HashAlg::DEFAULT,
+        47,
+    )
+    .unwrap();
+    let mut second = codec::View::from_envelope(&other.get_object(&view).unwrap()).unwrap();
+    second
+        .workspaces
+        .insert("other".to_owned(), second.workspaces["default"]);
+    let second = other.put_object(&second.to_envelope()).unwrap();
+    for view in [view, second] {
+        other
+            .commit_op(&codec::Operation {
+                parents: [base].into(),
+                view,
+            })
+            .unwrap();
+    }
+    assert!(matches!(ws.status(), Err(Error::SeveralHeads(h)) if h.len() == 2));
+    assert!(ws.reported().is_empty(), "{:?}", ws.reported());
+}

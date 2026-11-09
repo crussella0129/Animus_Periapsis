@@ -5,6 +5,7 @@ use std::fmt;
 use std::io;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::name::DirEntry;
 
@@ -54,6 +55,11 @@ pub trait Fs {
     /// Which names this filesystem cannot hold apart or hold at all
     /// (INT-0004). Not a syscall.
     fn name_rules(&self) -> NameRules;
+    /// Marks that the code has reached the named point (INT-0005 AC-6). Not
+    /// a syscall: on a real filesystem it does nothing; [`crate::SimFs`]
+    /// counts it and runs the actions a test attached to the name. Every
+    /// implementation states what it does, so no forwarder can drop points.
+    fn point(&self, name: &'static str);
 }
 
 /// The naming rules of a filesystem, which decide what a write must refuse
@@ -113,6 +119,9 @@ impl<T: Fs + ?Sized> Fs for &T {
     fn name_rules(&self) -> NameRules {
         (**self).name_rules()
     }
+    fn point(&self, name: &'static str) {
+        (**self).point(name)
+    }
 }
 
 /// Shared ownership, so several stores (and a [`crate::SimFs`] hook) can use
@@ -162,6 +171,62 @@ impl<T: Fs + ?Sized> Fs for Rc<T> {
     }
     fn name_rules(&self) -> NameRules {
         (**self).name_rules()
+    }
+    fn point(&self, name: &'static str) {
+        (**self).point(name)
+    }
+}
+
+/// Shared ownership across threads, so several simulated processes
+/// ([`crate::SimFs`] is `Send + Sync`) can use one filesystem.
+impl<T: Fs + ?Sized> Fs for Arc<T> {
+    fn create_dir(&self, path: &Path) -> io::Result<()> {
+        (**self).create_dir(path)
+    }
+    fn create_new(&self, path: &Path) -> io::Result<()> {
+        (**self).create_new(path)
+    }
+    fn write(&self, path: &Path, data: &[u8]) -> io::Result<()> {
+        (**self).write(path, data)
+    }
+    fn overwrite(&self, path: &Path, data: &[u8]) -> io::Result<()> {
+        (**self).overwrite(path, data)
+    }
+    fn sync_file(&self, path: &Path) -> io::Result<()> {
+        (**self).sync_file(path)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        (**self).rename(from, to)
+    }
+    fn sync_dir(&self, path: &Path) -> io::Result<()> {
+        (**self).sync_dir(path)
+    }
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        (**self).read(path)
+    }
+    fn list(&self, path: &Path) -> io::Result<Vec<String>> {
+        (**self).list(path)
+    }
+    fn remove_file(&self, path: &Path) -> io::Result<()> {
+        (**self).remove_file(path)
+    }
+    fn scan(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        (**self).scan(path)
+    }
+    fn has_executable_bit(&self) -> bool {
+        (**self).has_executable_bit()
+    }
+    fn remove_dir(&self, path: &Path) -> io::Result<()> {
+        (**self).remove_dir(path)
+    }
+    fn set_executable(&self, path: &Path, executable: bool) -> io::Result<()> {
+        (**self).set_executable(path, executable)
+    }
+    fn name_rules(&self) -> NameRules {
+        (**self).name_rules()
+    }
+    fn point(&self, name: &'static str) {
+        (**self).point(name)
     }
 }
 

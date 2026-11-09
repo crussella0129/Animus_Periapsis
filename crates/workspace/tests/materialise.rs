@@ -8,7 +8,7 @@ mod common;
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use codec::RepoPath;
 use common::{ROOT, delete, files_on_disk, put, writes};
@@ -19,11 +19,11 @@ use workspace::record::{self, Record};
 use workspace::tree::Tree;
 use workspace::{Error, Workspace};
 
-type Ws = Workspace<Rc<SimFs>>;
+type Ws = Workspace<Arc<SimFs>>;
 
-fn fresh(seed: u64) -> (Ws, Rc<SimFs>) {
-    let fs = Rc::new(SimFs::new(seed, DirMode::Strict));
-    let ws = Workspace::init(Rc::clone(&fs), Path::new(ROOT), seed)
+fn fresh(seed: u64) -> (Ws, Arc<SimFs>) {
+    let fs = Arc::new(SimFs::new(seed, DirMode::Strict));
+    let ws = Workspace::init(Arc::clone(&fs), Path::new(ROOT), seed)
         .unwrap()
         .0;
     (ws, fs)
@@ -309,7 +309,7 @@ fn make_durable(fs: &SimFs) {
 }
 
 /// Two views whose working copies differ in every way, on a fresh fs.
-fn swap_setup(seed: u64) -> (Ws, Rc<SimFs>, HashRef) {
+fn swap_setup(seed: u64) -> (Ws, Arc<SimFs>, HashRef) {
     let (mut ws, fs) = fresh(seed);
     put(&fs, "a", b"file");
     put(&fs, "keep", b"1");
@@ -439,7 +439,7 @@ fn resume_drops_a_record_whose_target_is_not_the_head() {
     )
     .unwrap();
     let before = files_on_disk(&*fs);
-    let ws = Workspace::open(Rc::clone(&fs), Path::new(ROOT), 70).unwrap();
+    let ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 70).unwrap();
     assert_eq!(ws.notes().len(), 1, "{:?}", ws.notes());
     assert!(ws.notes()[0].contains("no longer the only head"));
     assert_eq!(files_on_disk(&*fs), before);
@@ -466,7 +466,7 @@ fn resume_with_a_target_that_is_not_the_head_removes_temporaries() {
         },
     )
     .unwrap();
-    let ws = Workspace::open(Rc::clone(&fs), Path::new(ROOT), 71).unwrap();
+    let ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 71).unwrap();
     assert_eq!(ws.notes().len(), 1);
     assert_eq!(files_on_disk(&*fs), expect(&[("a", "2", false)]));
 }
@@ -543,7 +543,7 @@ fn materialise_without_an_executable_bit_compares_bytes_only() {
 fn corrupt_record_is_an_error() {
     let (_, fs) = fresh(91);
     put(&fs, ".praps/working-copy", b"from nothing\n");
-    match Workspace::open(Rc::clone(&fs), Path::new(ROOT), 91) {
+    match Workspace::open(Arc::clone(&fs), Path::new(ROOT), 91) {
         Err(Error::Corrupt(what)) => assert!(what.contains("working-copy"), "{what}"),
         other => panic!("{:?}", other.err()),
     }
@@ -568,9 +568,9 @@ fn init_never_resumes() {
     )
     .unwrap();
     let before = fs.snapshot();
-    Workspace::init(Rc::clone(&fs), Path::new(ROOT), 92).unwrap();
+    Workspace::init(Arc::clone(&fs), Path::new(ROOT), 92).unwrap();
     assert_eq!(fs.snapshot(), before, "a repeated init writes nothing");
-    Workspace::open(Rc::clone(&fs), Path::new(ROOT), 92).unwrap();
+    Workspace::open(Arc::clone(&fs), Path::new(ROOT), 92).unwrap();
     assert!(!fs.snapshot().contains_key("repo/.praps/working-copy"));
 }
 
@@ -645,7 +645,7 @@ fn resume_keeps_a_tracked_file_at_a_temporary_name() {
     // the head without writing a file, and the record naming it.
     let view = ws.store().ops().unwrap()[&old_op].view;
     let mut store = store::Store::open(
-        Rc::clone(&fs),
+        Arc::clone(&fs),
         &Path::new(ROOT).join(".praps/store"),
         hash::HashAlg::DEFAULT,
         1,
@@ -666,7 +666,7 @@ fn resume_keeps_a_tracked_file_at_a_temporary_name() {
         },
     )
     .unwrap();
-    let ws = Workspace::open(Rc::clone(&fs), Path::new(ROOT), 101).unwrap();
+    let ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 101).unwrap();
     assert_eq!(files_on_disk(&*fs)[".praps-tmp-0"].0, b"tracked");
     // `a` (diff index 0) has `.praps-tmp-0` as its temporary name: skipped.
     assert!(
@@ -711,22 +711,22 @@ fn edits_during_the_write_are_kept() {
     put(&fs, "b", b"2");
     put(&fs, "c", b"2");
     checkpoint(&mut ws);
-    let hook_fs = Rc::clone(&fs);
-    let done = Rc::new(std::cell::Cell::new((false, false)));
-    let flags = Rc::clone(&done);
+    let hook_fs = Arc::clone(&fs);
+    let done = Arc::new(std::sync::Mutex::new((false, false)));
+    let flags = Arc::clone(&done);
     fs.set_hook(Some(Box::new(move |_| {
         let last = hook_fs.trace().last().cloned().unwrap_or_default();
-        let (c_done, a_done) = flags.get();
+        let (c_done, a_done) = *flags.lock().unwrap();
         // After the op is written, before step 1 re-checks `c`.
         if !c_done && last.starts_with("create_new repo/.praps/store/ops/") {
-            flags.set((true, a_done));
+            *flags.lock().unwrap() = (true, a_done);
             hook_fs
                 .overwrite(&Path::new(ROOT).join("c"), b"saved by the user")
                 .unwrap();
         }
         // After `a`'s temporary file is synced, before it replaces `a`.
         if !a_done && last == "sync_file repo/.praps-tmp-0" {
-            flags.set((flags.get().0, true));
+            flags.lock().unwrap().1 = true;
             hook_fs
                 .overwrite(&Path::new(ROOT).join("a"), b"saved too")
                 .unwrap();
@@ -734,7 +734,7 @@ fn edits_during_the_write_are_kept() {
     })));
     ws.restore_view(&target).unwrap();
     fs.set_hook(None);
-    assert_eq!(done.get(), (true, true));
+    assert_eq!(*done.lock().unwrap(), (true, true));
     let on_disk = files_on_disk(&*fs);
     assert_eq!(on_disk["a"].0, b"saved too");
     assert_eq!(on_disk["b"].0, b"1");
@@ -772,4 +772,90 @@ fn resume_skips_a_directory_at_a_temporary_name() {
     assert_eq!(on_disk["keep"].0, b"2", "left as F had it");
     assert!(fs.snapshot().contains_key("repo/.praps-tmp-2"));
     assert!(!fs.snapshot().contains_key("repo/.praps/working-copy"));
+}
+
+/// Each stage of the working copy marks its named point (Sprint 4 T-006):
+/// a snapshot, a write of the working copy, and both ways a resume ends.
+#[test]
+fn workspace_points_mark_each_stage() {
+    use std::sync::Mutex;
+    let watch = |fs: &SimFs| {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        for point in workspace::points::POINTS {
+            let seen = Arc::clone(&seen);
+            fs.on_point(point.name, move || seen.lock().unwrap().push(point.name));
+        }
+        seen
+    };
+    let take = |seen: &Arc<Mutex<Vec<&'static str>>>| std::mem::take(&mut *seen.lock().unwrap());
+
+    let (mut ws, fs) = fresh(105);
+    let seen = watch(&fs);
+    put(&fs, "a", b"1");
+    let target = checkpoint(&mut ws);
+    assert_eq!(
+        take(&seen),
+        ["workspace.snapshot.scanned", "workspace.snapshot.committed"]
+    );
+    delete(&fs, "a");
+    put(&fs, "b", b"2");
+    checkpoint(&mut ws);
+    take(&seen);
+    ws.restore_view(&target).unwrap();
+    let marked = take(&seen);
+    for stage in [
+        "workspace.record.written",
+        "workspace.apply.path_written",
+        "workspace.apply.path_removed",
+        "workspace.record.dropped",
+    ] {
+        assert!(marked.contains(&stage), "{stage} not in {marked:?}");
+    }
+    assert_eq!(marked.first(), Some(&"workspace.snapshot.scanned"));
+    fs.clear_points();
+
+    // A crash right after the record is written, before the target op: the
+    // next open drops the record.
+    for (finish, expected) in [
+        (false, "workspace.resume.dropped"),
+        (true, "workspace.apply.path_written"),
+    ] {
+        // Two paths, so a crash after the first is written leaves the second
+        // for resume.
+        let (mut ws, fs) = fresh(106);
+        put(&fs, "a", b"1");
+        put(&fs, "b", b"1");
+        let target = checkpoint(&mut ws);
+        put(&fs, "a", b"2");
+        put(&fs, "b", b"2");
+        // Durable, so the crash keeps the user's files as they were.
+        for name in ["a", "b"] {
+            fs.sync_file(&Path::new(ROOT).join(name)).unwrap();
+        }
+        fs.sync_dir(Path::new(ROOT)).unwrap();
+        checkpoint(&mut ws);
+        let crash_fs = Arc::clone(&fs);
+        let crash_on = if finish {
+            "workspace.apply.path_written"
+        } else {
+            "workspace.record.written"
+        };
+        fs.on_point(crash_on, move || {
+            crash_fs.set_crash_at(Some(crash_fs.syscalls() + 1));
+        });
+        assert!(ws.restore_view(&target).is_err());
+        fs.clear_points();
+        drop(ws);
+        let restarted = Arc::new(fs.recover());
+        let seen = watch(&restarted);
+        Workspace::open(Arc::clone(&restarted), Path::new(ROOT), 7).unwrap();
+        let marked = take(&seen);
+        assert_eq!(
+            marked.first(),
+            Some(&"workspace.resume.started"),
+            "{marked:?}"
+        );
+        assert!(marked.contains(&expected), "{expected} not in {marked:?}");
+        restarted.clear_points();
+    }
 }

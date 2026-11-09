@@ -646,3 +646,52 @@ fn fsck_lists_tmp_files_as_leftovers() {
     let opened = Store::open(&fs, Path::new("plain"), HashAlg::DEFAULT, 0);
     assert!(opened.is_err());
 }
+
+/// Each stage of a write marks its named point once, in order; a file
+/// already present marks only `present_synced` (Sprint 4 T-006).
+#[test]
+fn store_points_mark_each_stage() {
+    use std::sync::{Arc, Mutex};
+    let fs = SimFs::new(1, Mode::Strict);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    for point in store::points::POINTS {
+        let seen = Arc::clone(&seen);
+        fs.on_point(point.name, move || seen.lock().unwrap().push(point.name));
+    }
+    let take = || std::mem::take(&mut *seen.lock().unwrap());
+    let fresh_write = |kind: &str| {
+        ["temp_written", "temp_synced", "renamed", "dir_synced"]
+            .map(|stage| format!("store.{kind}.{stage}"))
+            .to_vec()
+    };
+    let mut store = Store::init(&fs, Path::new(ROOT), HashAlg::DEFAULT, 9).unwrap();
+    assert_eq!(
+        take(),
+        ["store.init.layout_created", "store.sync_layout.synced"]
+    );
+    let b = store.put_object(&blob(b"x")).unwrap();
+    assert_eq!(take(), fresh_write("put_object"));
+    store.put_object(&blob(b"x")).unwrap();
+    assert_eq!(take(), ["store.put_object.present_synced"]);
+    let view = state(&mut store, &[&b]).unwrap();
+    take();
+    let root = op(&[], view);
+    let root_id = store.commit_op(&root).unwrap();
+    let mut expected = vec!["store.commit_op.references_resynced".to_owned()];
+    expected.extend(fresh_write("commit_op"));
+    assert_eq!(take(), expected);
+    store.commit_op(&op(&[&root_id], view)).unwrap();
+    assert_eq!(take(), expected);
+    store.commit_op(&root).unwrap();
+    assert_eq!(
+        take(),
+        [
+            "store.commit_op.references_resynced",
+            "store.commit_op.present_synced"
+        ]
+    );
+    drop(store);
+    Store::open(&fs, Path::new(ROOT), HashAlg::DEFAULT, 9).unwrap();
+    assert_eq!(take(), ["store.sync_layout.synced"]);
+    fs.clear_points();
+}

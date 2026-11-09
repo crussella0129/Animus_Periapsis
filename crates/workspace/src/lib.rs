@@ -17,6 +17,7 @@
 pub mod hazard;
 mod ignore;
 pub mod materialise;
+pub mod points;
 pub mod record;
 pub mod tree;
 #[cfg(feature = "variants")]
@@ -389,6 +390,8 @@ pub struct Workspace<F: Fs> {
     rng: Rng,
     /// What resuming an interrupted write left undone, for the user.
     notes: Vec<String>,
+    /// What the latest snapshot reported and left alone (INT-0004 AC-7).
+    reported: Vec<Reported>,
     #[cfg(feature = "variants")]
     variant: Variant,
 }
@@ -502,6 +505,7 @@ impl<F: Fs> Workspace<F> {
             root: root.to_path_buf(),
             rng: Rng::new(seed),
             notes: Vec::new(),
+            reported: Vec::new(),
             #[cfg(feature = "variants")]
             variant: Variant::Correct,
         }
@@ -526,6 +530,16 @@ impl<F: Fs> Workspace<F> {
     /// What resuming an interrupted write left undone, one line each.
     pub fn notes(&self) -> &[String] {
         &self.notes
+    }
+
+    /// The entries the latest snapshot reported and left alone, sorted, as
+    /// [`Status::reported`] gives them (INT-0004 AC-7). Every command that
+    /// snapshots (`log`, `undo`, `restore`, `new_change`, `status`) sets
+    /// it, and it stays set when the command then fails. A command that
+    /// snapshots twice (`undo`, through [`Workspace::restore_view`]) scans
+    /// the same files both times, so it holds one report, not two.
+    pub fn reported(&self) -> &[Reported] {
+        &self.reported
     }
 
     fn praps_dir(&self) -> PathBuf {
@@ -566,10 +580,12 @@ impl<F: Fs> Workspace<F> {
                 return Err(corrupt(format!("{PRAPS_DIR}/{}: {why}", record::RECORD)));
             }
         };
+        self.store.fs().point("workspace.resume.started");
         let ops = self.store.ops()?;
         let Some(target_op) = ops.get(&record.target) else {
             // The target op never landed, so no file was touched.
             record::drop_record(self.store.fs(), &praps)?;
+            self.store.fs().point("workspace.resume.dropped");
             return Ok(());
         };
         let from_op = ops.get(&record.from).ok_or_else(|| {
@@ -791,6 +807,9 @@ impl<F: Fs> Workspace<F> {
     /// old changeset (as head and as the `default` workspace), and an op
     /// whose parent is the single head. Otherwise it writes nothing.
     pub fn snapshot(&mut self) -> Result<Snapshot, Error> {
+        // A snapshot that fails before its scan reports nothing, rather than
+        // leaving an earlier command's entries (code review CR-07).
+        self.reported.clear();
         let loaded = self.load()?;
         let known: BTreeSet<HashRef> = loaded
             .wc_tree
@@ -803,6 +822,8 @@ impl<F: Fs> Workspace<F> {
             contents,
             reported,
         } = self.scan(&loaded.wc_tree, &loaded.parent_tree, &known)?;
+        self.store.fs().point("workspace.snapshot.scanned");
+        self.reported.clone_from(&reported);
         if tree == loaded.wc_tree {
             return Ok(Snapshot { op: None, reported });
         }
@@ -818,6 +839,7 @@ impl<F: Fs> Workspace<F> {
             description: loaded.wc.description.clone(),
         };
         let op = self.replace_working_copy(&loaded, &changeset)?;
+        self.store.fs().point("workspace.snapshot.committed");
         Ok(Snapshot {
             op: Some(op),
             reported,

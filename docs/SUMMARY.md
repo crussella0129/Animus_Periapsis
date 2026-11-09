@@ -46,6 +46,8 @@
 - [Format v1 specification](spec/format-v1.md)
 - [Storage durability](spec/storage-durability.md)
 - [The working copy](spec/working-copy.md)
+- [Simulation: named points, several processes and reach](spec/simulation.md)
+- [Reach table](reach.md)
 - [Tasks](work/tasks.md)
 - [Completed tasks](work/completed-tasks.md)
 - [Sprint 0](sprints/s0/sprint-meta.md)
@@ -55,3 +57,4 @@
 - [Sprint 1](sprints/s1/sprint-meta.md)
 - [Sprint 2](sprints/s2/sprint-meta.md)
 - [Sprint 3](sprints/s3/sprint-meta.md)
+- [Sprint 4](sprints/s4/sprint-meta.md)

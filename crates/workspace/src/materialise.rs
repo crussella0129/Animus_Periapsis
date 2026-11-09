@@ -475,7 +475,7 @@ pub fn apply(
             continue;
         }
         match fs.remove_file(&at) {
-            Ok(()) => {}
+            Ok(()) => fs.point("workspace.apply.path_removed"),
             Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
@@ -537,6 +537,7 @@ pub fn apply(
             continue;
         }
         fs.rename(&tmp_path, &at)?;
+        fs.point("workspace.apply.path_written");
         touched.insert(split(path.as_str()).0);
     }
     // 5. Sync every directory a file was renamed into.

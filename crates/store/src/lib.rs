@@ -16,6 +16,7 @@
 
 mod fsck;
 pub mod names;
+pub mod points;
 #[cfg(feature = "variants")]
 mod variant;
 
@@ -162,6 +163,7 @@ impl<F: Fs> Store<F> {
                 self.fs.create_dir(dir)?;
             }
         }
+        self.fs.point("store.init.layout_created");
         if self.pointer_file() {
             let pointer = self.root.join(POINTER);
             match self.fs.create_new(&pointer) {
@@ -187,7 +189,9 @@ impl<F: Fs> Store<F> {
         self.fs.sync_dir(&self.objects)?;
         self.fs.sync_dir(&self.ops)?;
         self.fs.sync_dir(&self.root)?;
-        self.fs.sync_dir(&parent_dir(&self.root))
+        self.fs.sync_dir(&parent_dir(&self.root))?;
+        self.fs.point("store.sync_layout.synced");
+        Ok(())
     }
 
     /// Opens an existing store; a directory without `objects/` and `ops/` is
@@ -306,6 +310,7 @@ impl<F: Fs> Store<F> {
             if !op.parents.is_empty() {
                 self.fs.sync_dir(&self.ops)?;
             }
+            self.fs.point("store.commit_op.references_resynced");
         }
         let envelope = op.to_envelope();
         let id = object_id(self.alg, &envelope);
@@ -359,15 +364,25 @@ impl<F: Fs> Store<F> {
     /// Writes `bytes` as `dir/name` durably. A file already there with these
     /// bytes is synced again with its directory; one with other bytes (a copy
     /// a crash damaged) is replaced through the same temporary-file path.
+    ///
+    /// Each stage of the correct write marks a named point: `store.put_object.*`
+    /// for an object, `store.commit_op.*` for an op (INT-0005 AC-6).
     fn write_file(&mut self, dir: &Path, name: &str, bytes: &[u8]) -> io::Result<()> {
         let path = dir.join(name);
+        let is_op = *dir == self.ops;
         let sync_data = dir != self.objects || self.syncs_object_data();
         match self.fs.read(&path) {
             Ok(existing) if existing == bytes => {
                 if sync_data {
                     self.fs.sync_file(&path)?;
                 }
-                return self.fs.sync_dir(dir);
+                self.fs.sync_dir(dir)?;
+                if is_op {
+                    self.fs.point("store.commit_op.present_synced");
+                } else {
+                    self.fs.point("store.put_object.present_synced");
+                }
+                return Ok(());
             }
             Ok(_) => {}
             Err(error) if error.kind() == ErrorKind::NotFound => {}
@@ -393,11 +408,32 @@ impl<F: Fs> Store<F> {
             }
         };
         self.fs.write(&tmp, bytes)?;
+        if is_op {
+            self.fs.point("store.commit_op.temp_written");
+        } else {
+            self.fs.point("store.put_object.temp_written");
+        }
         if sync_data {
             self.fs.sync_file(&tmp)?;
+            if is_op {
+                self.fs.point("store.commit_op.temp_synced");
+            } else {
+                self.fs.point("store.put_object.temp_synced");
+            }
         }
         self.fs.rename(&tmp, &path)?;
-        self.fs.sync_dir(dir)
+        if is_op {
+            self.fs.point("store.commit_op.renamed");
+        } else {
+            self.fs.point("store.put_object.renamed");
+        }
+        self.fs.sync_dir(dir)?;
+        if is_op {
+            self.fs.point("store.commit_op.dir_synced");
+        } else {
+            self.fs.point("store.put_object.dir_synced");
+        }
+        Ok(())
     }
 
     /// Every valid op in the store: its file name parses, its content hashes

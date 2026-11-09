@@ -9,12 +9,17 @@
 
 mod fs;
 mod name;
+mod point;
+mod processes;
+pub mod reach;
 mod real;
 mod rng;
 mod simfs;
 
 pub use fs::{Crash, Fs, NameRules, is_crash};
 pub use name::{DirEntry, Kind, Name, RawName};
+pub use point::Point;
+pub use processes::{After, KillAt, Outcome, Processes, Stopped};
 pub use real::{RealFs, os_seed};
 pub use rng::Rng;
-pub use simfs::{Hook, Mode, Node, SimFs};
+pub use simfs::{Action, Hook, Mode, Node, SimFs};

@@ -10,11 +10,12 @@
 //! Every op names a view; a view names a changeset; a changeset names blobs
 //! (Sprint 2). Closure follows those references.
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use codec::{
     Changeset, Entry, Mode as FileMode, ObjectKind, Operation, RepoPath, View, blob,
@@ -29,7 +30,7 @@ use store::{Store, Variant, heads_of};
 pub const SEEDS: u64 = 40;
 pub const MODES: [Mode; 2] = [Mode::Lenient, Mode::Strict];
 pub const ROOT: &str = "repo";
-const ALG: HashAlg = HashAlg::DEFAULT;
+pub const ALG: HashAlg = HashAlg::DEFAULT;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Scenario {
@@ -145,13 +146,15 @@ pub struct Outcome {
     pub state: HashRef,
     /// A hash of the syscall trace.
     pub trace: HashRef,
+    /// The named points the scenario's own run reached (not the oracle's).
+    pub reach: Vec<(&'static str, u64)>,
 }
 
-fn id_of(op: &Operation) -> HashRef {
+pub fn id_of(op: &Operation) -> HashRef {
     object_id(ALG, &op.to_envelope())
 }
 
-fn op(parents: &[HashRef], view: HashRef) -> Operation {
+pub fn op(parents: &[HashRef], view: HashRef) -> Operation {
     Operation {
         parents: parents.iter().copied().collect(),
         view,
@@ -161,7 +164,7 @@ fn op(parents: &[HashRef], view: HashRef) -> Operation {
 /// The objects one recorded state needs, in put order: a blob per file, a
 /// changeset holding them, and a view whose head and `default` workspace are
 /// that changeset.
-fn state(tag: &str, files: &[&str]) -> Vec<Vec<u8>> {
+pub fn state(tag: &str, files: &[&str]) -> Vec<Vec<u8>> {
     let mut envelopes = Vec::new();
     let mut changes = BTreeMap::new();
     for (i, content) in files.iter().enumerate() {
@@ -194,21 +197,21 @@ fn state(tag: &str, files: &[&str]) -> Vec<Vec<u8>> {
     envelopes
 }
 
-fn view_of(state: &[Vec<u8>]) -> HashRef {
+pub fn view_of(state: &[Vec<u8>]) -> HashRef {
     object_id(ALG, state.last().unwrap())
 }
 
-fn put(store: &mut Store<Rc<SimFs>>, envelope: &[u8], log: &RefCell<Log>) -> io::Result<HashRef> {
+fn put(store: &mut Store<Arc<SimFs>>, envelope: &[u8], log: &Mutex<Log>) -> io::Result<HashRef> {
     let id = store.put_object(envelope)?;
-    log.borrow_mut().objects_acked.push(id);
+    log.lock().unwrap().objects_acked.push(id);
     Ok(id)
 }
 
 /// Puts a state's objects in order and returns its view.
 fn record(
-    store: &mut Store<Rc<SimFs>>,
+    store: &mut Store<Arc<SimFs>>,
     state: &[Vec<u8>],
-    log: &RefCell<Log>,
+    log: &Mutex<Log>,
 ) -> io::Result<HashRef> {
     for envelope in state {
         put(store, envelope, log)?;
@@ -216,25 +219,25 @@ fn record(
     Ok(view_of(state))
 }
 
-fn commit(store: &mut Store<Rc<SimFs>>, op: &Operation, log: &RefCell<Log>) -> io::Result<()> {
+fn commit(store: &mut Store<Arc<SimFs>>, op: &Operation, log: &Mutex<Log>) -> io::Result<()> {
     let id = id_of(op);
-    log.borrow_mut().attempted.push(id);
+    log.lock().unwrap().attempted.push(id);
     store.commit_op(op)?;
-    log.borrow_mut().acked.push(id);
+    log.lock().unwrap().acked.push(id);
     Ok(())
 }
 
 /// Runs a scenario until it ends or the first error (the crash).
 fn run(
-    fs: &Rc<SimFs>,
+    fs: &Arc<SimFs>,
     scenario: Scenario,
     variant: Variant,
     seed: u64,
-    log: &Rc<RefCell<Log>>,
+    log: &Arc<Mutex<Log>>,
 ) -> io::Result<()> {
     let root = Path::new(ROOT);
-    let mut a = Store::init_variant(Rc::clone(fs), root, ALG, seed, variant)?;
-    log.borrow_mut().init_acked = true;
+    let mut a = Store::init_variant(Arc::clone(fs), root, ALG, seed, variant)?;
+    log.lock().unwrap().init_acked = true;
     match scenario {
         Scenario::Init => Ok(()),
         Scenario::Chain => {
@@ -248,7 +251,7 @@ fn run(
                 parents = vec![id_of(&next)];
                 ops.push(next);
             }
-            log.borrow_mut().chain = ops.iter().map(id_of).collect();
+            log.lock().unwrap().chain = ops.iter().map(id_of).collect();
             for (state, next) in states.iter().zip(&ops) {
                 record(&mut a, state, log)?;
                 commit(&mut a, next, log)?;
@@ -278,7 +281,7 @@ fn run(
             // B opens now: `open` syncs the layout, which inside A's writes
             // would also make A's pending names durable and hide the race.
             let b = Store::open_variant(
-                Rc::clone(fs),
+                Arc::clone(fs),
                 Path::new(ROOT),
                 ALG,
                 seed.wrapping_add(1_000),
@@ -306,57 +309,61 @@ fn run(
                 record(&mut a, &x, log)?;
                 commit(&mut a, &child, log)
             })();
-            fs.set_hook(None);
+            fs.clear_points();
             result
         }
     }
 }
 
-/// Fires B once, at the first syscall boundary right after A renamed
-/// `target` into place while its name is not yet durable.
+/// Fires B once, at A's named point right after it renamed `target` into
+/// place (`store.put_object.renamed` for the view race,
+/// `store.commit_op.renamed` for the parent race), while the name is not yet
+/// durable. The point sits immediately after `rename` returns, with no
+/// syscall between, so B's syscalls take the numbers they took when this was
+/// a hook matching the trace (Sprint 4 T-006; plan critique C-008).
 fn install_race(
-    fs: &Rc<SimFs>,
-    log: &Rc<RefCell<Log>>,
+    fs: &Arc<SimFs>,
+    log: &Arc<Mutex<Log>>,
     race: Race,
     target: PathBuf,
-    mut b: Store<Rc<SimFs>>,
+    b: Store<Arc<SimFs>>,
     b_op: Operation,
 ) {
-    let (hook_fs, hook_log) = (Rc::clone(fs), Rc::clone(log));
+    let point = match race {
+        Race::View => "store.put_object.renamed",
+        Race::Parent => "store.commit_op.renamed",
+    };
+    let (action_fs, action_log) = (Arc::clone(fs), Arc::clone(log));
     let shown = target.to_string_lossy().replace('\\', "/");
-    let mut fired = false;
-    fs.set_hook(Some(Box::new(move |_next| {
-        if fired {
-            return;
-        }
+    let b = Mutex::new(b);
+    let fired = AtomicBool::new(false);
+    fs.on_point(point, move || {
         // None of these checks is a syscall, so none moves the crash point.
-        let after_rename = hook_fs
-            .trace()
-            .last()
-            .is_some_and(|line| line.starts_with("rename "));
-        if !after_rename || !hook_fs.snapshot().contains_key(&shown) || hook_fs.is_durable(&target)
+        if fired.load(Ordering::SeqCst)
+            || !action_fs.snapshot().contains_key(&shown)
+            || action_fs.is_durable(&target)
         {
             return;
         }
-        fired = true;
+        fired.store(true, Ordering::SeqCst);
         // B's commit may fail (the crash); the log shows whether it was
         // acknowledged.
-        if commit(&mut b, &b_op, &hook_log).is_ok() {
-            hook_log.borrow_mut().raced = Some(race);
+        if commit(&mut b.lock().unwrap(), &b_op, &action_log).is_ok() {
+            action_log.lock().unwrap().raced = Some(race);
         }
-    })));
+    });
 }
 
 /// The syscalls a run makes when nothing crashes.
 pub fn syscalls(variant: Variant, scenario: Scenario, mode: Mode, seed: u64) -> u64 {
-    let fs = Rc::new(SimFs::new(seed, mode));
-    let log = Rc::new(RefCell::new(Log::default()));
+    let fs = Arc::new(SimFs::new(seed, mode));
+    let log = Arc::new(Mutex::new(Log::default()));
     run(&fs, scenario, variant, seed, &log).expect("an uncrashed run succeeds");
     // Every seed races in the correct store; a variant may never reach the
     // boundary (write-in-place has no rename).
     if scenario == Scenario::TwoWriters && variant == Variant::Correct {
         assert!(
-            log.borrow().raced.is_some(),
+            log.lock().unwrap().raced.is_some(),
             "seed {seed}: the uncrashed two-writer run must race"
         );
     }
@@ -372,22 +379,24 @@ pub fn run_cell(
     seed: u64,
     crash_at: u64,
 ) -> (Outcome, SimFs) {
-    let fs = Rc::new(SimFs::new(seed, mode));
+    let fs = Arc::new(SimFs::new(seed, mode));
     fs.set_crash_at(Some(crash_at));
-    let log = Rc::new(RefCell::new(Log::default()));
+    let log = Arc::new(Mutex::new(Log::default()));
     let _ = run(&fs, scenario, variant, seed, &log);
+    let reach = fs.reach();
     let trace = fs.trace().join("\n");
     // Recovery is a function of the crashed state and the seed, so the
     // checks (whose final `init` writes) get their own copy and the state
     // returned, hashed and handed on is the one the crash left.
     let recovered = fs.recover();
-    let log = log.borrow().clone();
+    let log = log.lock().unwrap().clone();
     let violations = check(&fs.recover(), &log, scenario, variant, seed);
     let outcome = Outcome {
         violations,
         raced: log.raced,
         state: digest(&recovered),
         trace: HashAlg::Blake3.hash(trace.as_bytes()),
+        reach,
     };
     (outcome, recovered)
 }
@@ -417,13 +426,13 @@ pub fn digest(fs: &SimFs) -> HashRef {
 }
 
 /// A valid object: its kind and the ids it names.
-struct Object {
-    kind: ObjectKind,
-    refs: Vec<HashRef>,
+pub struct Object {
+    pub kind: ObjectKind,
+    pub refs: Vec<HashRef>,
 }
 
 /// An object file's content, if it is wholly a valid object (not an op).
-fn as_object(content: &[u8]) -> Option<Object> {
+pub fn as_object(content: &[u8]) -> Option<Object> {
     let kind = decode_envelope(content).ok()?.kind;
     if kind == ObjectKind::Operation {
         return None;
@@ -435,7 +444,7 @@ fn as_object(content: &[u8]) -> Option<Object> {
 }
 
 /// The present objects and ops under the store root, read from the raw state.
-fn present(
+pub fn present(
     snapshot: &BTreeMap<String, Node>,
 ) -> (BTreeMap<HashRef, Object>, BTreeMap<HashRef, Operation>) {
     let mut objects = BTreeMap::new();
@@ -466,7 +475,7 @@ fn present(
 
 /// Closure violations: missing parents and views of present ops, and missing
 /// references of every object those views reach.
-fn closure(objects: &BTreeMap<HashRef, Object>, ops: &BTreeMap<HashRef, Operation>) -> u64 {
+pub fn closure(objects: &BTreeMap<HashRef, Object>, ops: &BTreeMap<HashRef, Operation>) -> u64 {
     let mut count = 0;
     let mut stack = Vec::new();
     for op in ops.values() {
