@@ -831,11 +831,15 @@ sprint 1
                 Some("ci: all 6 steps passed")
             )
         );
-        for test in [
+        for line in [
             "test inherits_no_stripped_variable ... ok",
             "test probe_inherits_no_stripped_variable ... ok",
+            // The pre-build's own report found both executables, the probe
+            // library's and `tests/probe.rs`'s, so the unrun check checked
+            // something real (code review CR-04).
+            "test: 2 test executables built, 2 run",
         ] {
-            assert!(out.contains(test), "{test}");
+            assert!(out.contains(line), "{line}");
         }
     }
 
@@ -1033,6 +1037,55 @@ sprint 1
                     "runs-on: windows-latest"
                 )
                 .trim_end()
+            ),
+            // Code review fixes (CR-01, CR-02, CR-03, CR-07). First, no lint
+            // job of its own: fmt and Clippy moved into the suite's job.
+            format!(
+                "{}{}",
+                &workflow[..workflow.find("\n  lint:\n").unwrap()],
+                workflow[workflow.find("\n  ci:\n").unwrap()..].replace(
+                    "      - run: cargo ci\n",
+                    &format!(
+                        "      - run: cargo fmt --all --check\n{CLIPPY}      - run: cargo ci\n"
+                    )
+                )
+            ),
+            replace(
+                &workflow,
+                "  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' || github.sha }}\n",
+                "  group: ci-${{ github.ref }}-${{ github.event_name == 'push' || github.sha }}\n",
+            ),
+            in_job(
+                &workflow,
+                "ci",
+                "    timeout-minutes: 30\n",
+                "    timeout-minutes: 30\n    concurrency:\n      group: x-${{ github.ref }}\n      cancel-in-progress: true\n",
+            ),
+            replace(
+                &workflow,
+                "      - run: cargo ci\n",
+                "      - run: cargo ci\n        shell: cat {0}\n",
+            ),
+            in_job(
+                &workflow,
+                "ci",
+                "    timeout-minutes: 30\n",
+                "    timeout-minutes: 30\n    defaults:\n      run:\n        shell: cat {0}\n",
+            ),
+            replace(
+                &workflow,
+                CLIPPY,
+                &format!("{CLIPPY}        working-directory: crates/hash\n"),
+            ),
+            replace(
+                &workflow,
+                "          tool: cargo-deny@0.20.2\n",
+                "          tool: cargo-deny@0.20.2\n          checksum: false\n",
+            ),
+            replace(
+                &workflow,
+                "tool: cargo-deny@0.20.2",
+                "tool: cargo-deny-unrelated",
             ),
             // Commands that outlive their own failure.
             format!("{workflow}      - run: cargo deny check || true\n"),

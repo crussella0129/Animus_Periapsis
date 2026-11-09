@@ -77,6 +77,15 @@ pub fn problems(workflow: &str) -> Vec<String> {
         }
     }
     problems.extend(concurrency_problems(&top));
+    // A job's own concurrency would cancel or queue jobs apart from the
+    // workflow's rule.
+    let jobs_list = under(&top, &["jobs"]).map_or(&[][..], |jobs| jobs.children.as_slice());
+    if jobs_list
+        .iter()
+        .any(|job| field(&job.children, "concurrency").is_some())
+    {
+        problems.push("a job sets its own concurrency".to_owned());
+    }
     if field(&top, "defaults").is_some() {
         problems.push("the workflow sets step defaults".to_owned());
     }
@@ -89,12 +98,14 @@ pub fn problems(workflow: &str) -> Vec<String> {
             "no job runs `cargo ci` on a matrix of ubuntu-latest and windows-latest".to_owned(),
         );
     }
-    if !jobs
-        .iter()
-        .any(|job| runs_on_both_platforms(job, &[FMT, CLIPPY]))
-    {
+    let lint = |job: &Node| {
+        runs_on_both_platforms(job, &[FMT, CLIPPY])
+            && !steps(job).any(|(_, entries)| entries.contains(&("run", CARGO_CI)))
+    };
+    if !jobs.iter().any(lint) {
         problems.push(
-            "no lint job runs fmt and Clippy on a matrix of ubuntu-latest and windows-latest"
+            "no lint job of its own runs fmt and Clippy on a matrix of ubuntu-latest and \
+             windows-latest"
                 .to_owned(),
         );
     }
@@ -115,6 +126,10 @@ const CARGO_CI: &str = "cargo ci";
 const FMT: &str = "cargo fmt --all --check";
 const CLIPPY: &str = "cargo clippy --workspace --all-targets --locked -- -D warnings";
 
+/// The only concurrency group accepted: one group per pull request, and one
+/// per commit for every other event, so no push to `main` shares a group.
+const GROUP: &str = "ci-${{ github.ref }}-${{ github.event_name == 'pull_request' || github.sha }}";
+
 /// The only `cancel-in-progress` value accepted: a newer push to a pull
 /// request cancels the run it replaces, and nothing else is cancelled.
 const CANCEL_PULL_REQUESTS: &str = "${{ github.event_name == 'pull_request' }}";
@@ -127,11 +142,8 @@ fn concurrency_problems(top: &[Node]) -> Vec<String> {
         return vec!["there is no top-level concurrency".to_owned()];
     };
     let mut problems = Vec::new();
-    let group = field(&concurrency.children, "group").map_or("", value_of);
-    if !(group.contains("github.ref") && group.contains("github.sha")) {
-        problems.push(
-            "the concurrency group does not contain both github.ref and github.sha".to_owned(),
-        );
+    if field(&concurrency.children, "group").map(value_of) != Some(GROUP) {
+        problems.push(format!("the concurrency group is not exactly {GROUP}"));
     }
     if field(&concurrency.children, "cancel-in-progress").map(value_of)
         != Some(CANCEL_PULL_REQUESTS)
@@ -181,9 +193,17 @@ fn outside_expressions(line: &str) -> String {
     shell
 }
 
+/// Whether a step's entries leave it unconditional and running where and how
+/// it says: no `if:`, `working-directory` or `shell`.
+fn plain(entries: &[(&str, &str)]) -> bool {
+    !entries
+        .iter()
+        .any(|&(key, _)| ["if", "working-directory", "shell"].contains(&key))
+}
+
 /// A job whose matrix holds both platforms and nothing that adds or removes a
-/// leg, that runs on the matrix's platform, and whose own steps run each of
-/// `commands`. Neither the job nor those steps may carry an `if:`.
+/// leg, that runs on the matrix's platform, sets no step defaults, and whose
+/// own plain steps run each of `commands`. The job carries no `if:`.
 fn runs_on_both_platforms(job: &Node, commands: &[&str]) -> bool {
     let matrix = under(&job.children, &["strategy", "matrix"]);
     let os = matrix
@@ -197,16 +217,16 @@ fn runs_on_both_platforms(job: &Node, commands: &[&str]) -> bool {
         && os.contains(&"windows-latest")
         && fixed
         && unconditional(&job.children)
+        && field(&job.children, "defaults").is_none()
         && runs_on(job) == Some("${{ matrix.os }}")
         && commands.iter().all(|command| {
-            steps(job).any(|(_, entries)| {
-                entries.contains(&("run", command)) && !entries.iter().any(|&(key, _)| key == "if")
-            })
+            steps(job).any(|(_, entries)| entries.contains(&("run", command)) && plain(&entries))
         })
 }
 
 /// A job on ubuntu-latest whose own steps install cargo-deny with
-/// `taiki-e/install-action` (checksum verified, downloads retried) and then
+/// `taiki-e/install-action` (checksum verified, which may not be turned off,
+/// and downloads retried) and then
 /// run a plain `cargo deny check`, which runs every check (advisories, bans,
 /// licences and sources) on this workspace. A check that narrows what it
 /// checks does not count. Neither the job nor those steps may carry an `if:`,
@@ -214,11 +234,6 @@ fn runs_on_both_platforms(job: &Node, commands: &[&str]) -> bool {
 /// `working-directory`, `shell`). cargo-deny's own action is not accepted:
 /// its unchecked download failed Sprint 4's checkpoint.
 fn runs_deny_on_ubuntu(job: &Node) -> bool {
-    let plain = |entries: &[(&str, &str)]| {
-        !entries
-            .iter()
-            .any(|&(key, _)| ["if", "working-directory", "shell"].contains(&key))
-    };
     let jobs_steps: Vec<_> = steps(job).collect();
     let install = jobs_steps.iter().position(|(step, entries)| {
         plain(entries)
@@ -229,8 +244,10 @@ fn runs_deny_on_ubuntu(job: &Node) -> bool {
                         .starts_with("taiki-e/install-action@")
             })
             && field(&step.children, "with").is_some_and(|with| {
-                field(&with.children, "tool")
-                    .is_some_and(|tool| value_of(tool).starts_with("cargo-deny"))
+                let tool = field(&with.children, "tool").map(value_of);
+                let checksum = field(&with.children, "checksum").map(value_of);
+                tool.is_some_and(|tool| tool == "cargo-deny" || tool.starts_with("cargo-deny@"))
+                    && matches!(checksum, None | Some("true"))
             })
     });
     let check = jobs_steps.iter().position(|(_, entries)| {

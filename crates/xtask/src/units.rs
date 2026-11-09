@@ -15,7 +15,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::Write;
+use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -35,10 +35,11 @@ pub const UNIT: [&str; 4] = ["test", "--workspace", "--locked", "--no-fail-fast"
 /// Settings that fix the form of Cargo's status lines, which the step reads.
 /// Set on the command, they override the environment and `term.*` in any
 /// Cargo configuration.
-pub const TERMINAL: [(&str, &str); 3] = [
+pub const TERMINAL: [(&str, &str); 4] = [
     ("CARGO_TERM_QUIET", "false"),
     ("CARGO_TERM_VERBOSE", "false"),
     ("CARGO_TERM_COLOR", "never"),
+    ("CARGO_TERM_PROGRESS_WHEN", "never"),
 ];
 
 /// One `cargo test` selection.
@@ -105,29 +106,52 @@ pub fn discover(root: &Path) -> Vec<Unit> {
 }
 
 /// What one command did: whether it succeeded, and its standard output and
-/// error, in that order.
+/// error, interleaved as the command wrote them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ran {
     pub ok: bool,
     pub output: String,
 }
 
-/// Runs `command`, capturing both streams.
+/// Runs `command`, capturing both streams through one pipe, so each
+/// `Running` line stays next to the results it heads.
 pub fn run_command(mut command: Command) -> Ran {
-    match command.output() {
-        Ok(output) => Ran {
-            ok: output.status.success(),
-            output: format!(
-                "{}{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            ),
+    let failed = |error: io::Error| Ran {
+        ok: false,
+        output: format!("could not run cargo: {error}\n"),
+    };
+    let (mut reader, writer) = match io::pipe() {
+        Ok(pipe) => pipe,
+        Err(error) => return failed(error),
+    };
+    let errors = match writer.try_clone() {
+        Ok(errors) => errors,
+        Err(error) => return failed(error),
+    };
+    command.stdout(writer).stderr(errors);
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => return failed(error),
+    };
+    // The command still holds this process's ends of the pipe; dropping it
+    // closes them, so the read below ends when the child exits.
+    drop(command);
+    let mut output = Vec::new();
+    let read = reader.read_to_end(&mut output);
+    let status = child.wait();
+    match (read, status) {
+        (Ok(_), Ok(status)) => Ran {
+            ok: status.success(),
+            output: String::from_utf8_lossy(&output).into_owned(),
         },
-        Err(error) => Ran {
-            ok: false,
-            output: format!("could not run cargo: {error}\n"),
-        },
+        (Err(error), _) | (_, Err(error)) => failed(error),
     }
+}
+
+/// What a worker tells the main thread, which alone writes to `out`.
+enum Event {
+    Started(usize),
+    Finished(usize, Ran, Duration),
 }
 
 /// How many units run at once.
@@ -189,21 +213,36 @@ pub fn execute(
                     };
                     let args = unit.args();
                     let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                    if send.send(Event::Started(index)).is_err() {
+                        break;
+                    }
                     let started = Instant::now();
                     let ran = run(command(&args));
-                    if send.send((index, ran, started.elapsed())).is_err() {
+                    if send
+                        .send(Event::Finished(index, ran, started.elapsed()))
+                        .is_err()
+                    {
                         break;
                     }
                 }
             });
         }
         drop(send);
-        for (index, ran, took) in receive {
-            report(out, parallel[index], &ran, took);
-            finished.push((parallel[index], ran));
+        for event in receive {
+            match event {
+                Event::Started(index) => {
+                    writeln!(out, "---- unit {}: started", parallel[index].name).ok();
+                    out.flush().ok();
+                }
+                Event::Finished(index, ran, took) => {
+                    report(out, parallel[index], &ran, took);
+                    finished.push((parallel[index], ran));
+                }
+            }
         }
     });
     for unit in doc {
+        writeln!(out, "---- unit {}: started", unit.name).ok();
         let args = unit.args();
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let started = Instant::now();
@@ -245,6 +284,23 @@ pub fn execute(
             rebuilt.join(", ")
         ));
     }
+    // The oracle must not pass for want of input: with test units to run, the
+    // build must have reported executables, and every executable a unit ran
+    // must be one the build reported (a rename of Cargo's status lines, or a
+    // rebuild, shows up here).
+    if built.is_empty() && !parallel.is_empty() {
+        problems.push("the test build reported no test executable".to_owned());
+    }
+    let unbuilt: Vec<&str> = run_anywhere
+        .difference(&built)
+        .map(String::as_str)
+        .collect();
+    if !built.is_empty() && !unbuilt.is_empty() {
+        problems.push(format!(
+            "units ran executables the test build did not report: {}",
+            unbuilt.join(", ")
+        ));
+    }
     // A failing unit can stop before some of its executables, so unrun
     // executables are reported only when every unit passed.
     if failed.is_empty() {
@@ -270,6 +326,13 @@ pub fn execute(
             }
         }
     }
+    writeln!(
+        out,
+        "test: {} test executables built, {} run",
+        built.len(),
+        run_anywhere.len()
+    )
+    .ok();
     writeln!(
         out,
         "test: {} units, {passed} passed, {failed_tests} failed, {ignored} ignored",
@@ -455,6 +518,13 @@ mod tests {
             if let Some((_, ran)) = self.outputs.iter().find(|(name, _)| *name == last) {
                 return ran.clone();
             }
+            if last == "--doc" {
+                // Doc tests have no executable of their own, as with Cargo.
+                return Ran {
+                    ok: true,
+                    output: "   Doc-tests fake\n".to_owned(),
+                };
+            }
             Ran {
                 ok: true,
                 output: format!(
@@ -463,6 +533,13 @@ mod tests {
                 ),
             }
         }
+    }
+
+    /// Pre-build output reporting executables `u0` to `u{n-1}`.
+    fn built(n: usize) -> String {
+        (0..n)
+            .map(|i| format!("  Executable tests/u{i}.rs (target/debug/deps/u{i})\n"))
+            .collect()
     }
 
     fn units(names: &[&str]) -> Vec<Unit> {
@@ -577,7 +654,7 @@ mod tests {
             if last == "--no-run" {
                 return Ran {
                     ok: true,
-                    output: String::new(),
+                    output: built(12),
                 };
             }
             let inside = now.fetch_add(1, Ordering::SeqCst) + 1;
@@ -595,6 +672,9 @@ mod tests {
         assert_eq!(most.load(Ordering::SeqCst), 3);
     }
 
+    /// Only the main thread writes to the step's writer, which is not `Send`,
+    /// so units cannot interleave by construction; this test pins that down
+    /// against a change that would let workers write.
     #[test]
     fn unit_output_is_never_interleaved() {
         let names: Vec<String> = (0..8).map(|i| format!("u{i}")).collect();
@@ -620,7 +700,7 @@ mod tests {
             let lines: Vec<&str> = out.lines().collect();
             let header = lines
                 .iter()
-                .position(|line| line.starts_with(&format!("---- unit {name}: ")))
+                .position(|line| line.starts_with(&format!("---- unit {name}: PASS")))
                 .unwrap();
             let marker = format!("marker {name}");
             let first = lines.iter().position(|line| *line == marker).unwrap();
@@ -666,7 +746,7 @@ mod tests {
 
     #[test]
     fn a_unit_that_runs_nothing_fails_the_step() {
-        let fake = Fake::new(&[])
+        let fake = Fake::new(&["a"])
             .with(
                 "a",
                 true,
@@ -674,7 +754,13 @@ mod tests {
             )
             .with("--doc", true, "   Doc-tests codec\n");
         let (problems, _) = step(&fake, &["a", "doc"], 2);
-        assert_eq!(problems, ["units ran no test executable: a"]);
+        assert_eq!(
+            problems,
+            [
+                "units ran no test executable: a",
+                "test executables built but never run: a"
+            ]
+        );
     }
 
     #[test]
@@ -757,8 +843,71 @@ mod tests {
             );
         let (_, out) = step(&fake, &["a", "b"], 2);
         assert_eq!(
-            out.lines().last(),
-            Some("test: 2 units, 4 passed, 2 failed, 1 ignored")
+            out.lines().rev().take(2).collect::<Vec<_>>(),
+            [
+                "test: 2 units, 4 passed, 2 failed, 1 ignored",
+                "test: 2 test executables built, 2 run"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_build_that_reports_nothing_fails_the_step() {
+        // Cargo's `Executable` lines did not parse, or there were none: the
+        // unrun check would otherwise pass without checking anything.
+        let fake = Fake::new(&[]);
+        let (problems, _) = step(&fake, &["a"], 2);
+        assert_eq!(problems, ["the test build reported no test executable"]);
+    }
+
+    #[test]
+    fn an_executable_the_build_did_not_report_fails_the_step() {
+        let fake = Fake::new(&["a"]).with(
+            "b",
+            true,
+            "     Running tests/b.rs (target/debug/deps/b-9)\n",
+        );
+        let (problems, _) = step(&fake, &["a", "b"], 2);
+        assert_eq!(
+            problems,
+            ["units ran executables the test build did not report: b-9"]
+        );
+    }
+
+    #[test]
+    fn each_unit_is_announced_when_it_starts() {
+        let fake = Fake::new(&["a", "b"]);
+        let (_, out) = step(&fake, &["a", "b", "doc"], 1);
+        for name in ["a", "b", "doc"] {
+            let started = out
+                .lines()
+                .position(|line| line == format!("---- unit {name}: started"))
+                .unwrap_or_else(|| panic!("{name} was not announced"));
+            let finished = out
+                .lines()
+                .position(|line| line.starts_with(&format!("---- unit {name}: PASS")))
+                .unwrap();
+            assert!(started < finished, "{name}");
+        }
+    }
+
+    #[test]
+    fn run_command_keeps_the_streams_in_order() {
+        // A child that writes to stdout, then stderr, then stdout again: the
+        // captured output keeps that order. `cargo --version` and an unknown
+        // flag stand in, run through a shell-free chain of two commands.
+        let mut command = Command::new(env!("CARGO"));
+        command.args(["--version"]);
+        let ran = super::run_command(command);
+        assert!(ran.ok && ran.output.starts_with("cargo "), "{ran:?}");
+        let mut command = Command::new(env!("CARGO"));
+        command.arg("--no-such-flag");
+        let ran = super::run_command(command);
+        assert!(!ran.ok && ran.output.contains("--no-such-flag"), "{ran:?}");
+        let ran = super::run_command(Command::new("no-such-program-anywhere"));
+        assert!(
+            !ran.ok && ran.output.starts_with("could not run cargo: "),
+            "{ran:?}"
         );
     }
 
