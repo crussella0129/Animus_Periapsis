@@ -883,77 +883,164 @@ sprint 1
         assert_eq!(scrubbed(set.map(OsString::from)), names);
     }
 
+    /// `workflow` with `from` replaced by `to` inside job `job` only.
+    fn in_job(workflow: &str, job: &str, from: &str, to: &str) -> String {
+        let start = workflow
+            .find(&format!("\n  {job}:\n"))
+            .unwrap_or_else(|| panic!("no job {job}"));
+        // The job ends at the next line at job depth: two spaces, then a
+        // letter.
+        let body = &workflow[start + 1..];
+        let end = body
+            .match_indices("\n  ")
+            .find(|&(at, _)| {
+                body[at + 3..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic())
+            })
+            .map_or(workflow.len(), |(at, _)| start + 1 + at);
+        let section = &workflow[start..end];
+        assert!(section.contains(from), "{from:?} is not in job {job}");
+        format!(
+            "{}{}{}",
+            &workflow[..start],
+            section.replace(from, to),
+            &workflow[end..]
+        )
+    }
+
     #[test]
     fn workflow_matches_ci_contract() {
         let workflow = repo_file(".github/workflows/ci.yml").replace("\r\n", "\n");
         assert_eq!(workflow::problems(&workflow), Vec::<String>::new());
 
+        const PUSH: &str = "    branches: [main]\n";
+        const PR: &str = "  pull_request:\n";
+        const INSTALL: &str = "      - uses: taiki-e/install-action@v2\n        with:\n          tool: cargo-deny@0.20.2\n";
+        const DENY: &str = "      - run: cargo deny check\n";
+        const MATRIX: &str = "        os: [ubuntu-latest, windows-latest]\n";
+        const CLIPPY: &str =
+            "      - run: cargo clippy --workspace --all-targets --locked -- -D warnings\n";
+
         // Each mutant breaks one point of the clause and must be caught.
         let without_ci = replace(&workflow, "      - run: cargo ci\n", "");
+        let without_install = replace(&workflow, INSTALL, "");
         let mutants = [
+            // Triggers (INT-0003 AC-2).
+            replace(&workflow, PUSH, "    branches: [dev, main]\n"),
+            replace(&workflow, PUSH, "    branches: ['**']\n"),
+            replace(&workflow, PUSH, "    branches: [develop]\n"),
+            replace(&workflow, PUSH, ""),
+            replace(&workflow, &format!("  push:\n{PUSH}"), ""),
+            replace(&workflow, "pull_request:", "pull_request_target:"),
+            replace(&workflow, "  workflow_dispatch:\n", ""),
+            // Concurrency.
             replace(
                 &workflow,
+                "concurrency:\n  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' || github.sha }}\n  \
+                 cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+                "",
+            ),
+            replace(
+                &workflow,
+                "  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' || github.sha }}\n",
+                "  group: ci\n",
+            ),
+            replace(
+                &workflow,
+                "  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' || github.sha }}\n",
+                "  group: ci-${{ github.ref }}\n",
+            ),
+            replace(
+                &workflow,
+                "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+                "  cancel-in-progress: true\n",
+            ),
+            // The suite on both platforms.
+            in_job(
+                &workflow,
+                "ci",
                 "runs-on: ${{ matrix.os }}",
                 "runs-on: ubuntu-latest",
             ),
+            format!("{}\n      - run: cargo ci\n", without_ci.trim_end()),
             replace(
                 &workflow,
-                "branches: [dev, main]",
-                "branches: [develop, main]",
+                "      - run: cargo ci\n",
+                "      - run: cargo ci\n        if: false\n",
             ),
-            replace(&workflow, "pull_request:", "pull_request_target:"),
-            format!("{}\n      - run: cargo ci\n", without_ci.trim_end()),
+            in_job(
+                &workflow,
+                "ci",
+                MATRIX,
+                &format!("{MATRIX}        exclude:\n          - os: windows-latest\n"),
+            ),
+            in_job(
+                &workflow,
+                "ci",
+                "    timeout-minutes: 30\n",
+                "    timeout-minutes: 30\n    continue-on-error: true\n",
+            ),
+            // The lint checks on both platforms (INT-0003 AC-4).
+            in_job(&workflow, "lint", MATRIX, "        os: [ubuntu-latest]\n"),
+            in_job(
+                &workflow,
+                "lint",
+                "runs-on: ${{ matrix.os }}",
+                "runs-on: ubuntu-latest",
+            ),
+            in_job(
+                &workflow,
+                "lint",
+                "    timeout-minutes: 30\n",
+                "    timeout-minutes: 30\n    if: false\n",
+            ),
+            replace(&workflow, CLIPPY, ""),
+            replace(&workflow, "      - run: cargo fmt --all --check\n", ""),
+            replace(&workflow, " -- -D warnings\n", "\n"),
+            in_job(
+                &workflow,
+                "lint",
+                MATRIX,
+                &format!("{MATRIX}        include:\n          - os: macos-latest\n"),
+            ),
+            replace(&workflow, CLIPPY, &format!("{}        if: false\n", CLIPPY)),
+            // The deny job (INT-0003 AC-3).
+            without_install.clone(),
+            in_job(
+                &without_install,
+                "lint",
+                CLIPPY,
+                &format!("{CLIPPY}{INSTALL}"),
+            ),
+            replace(&without_install, DENY, &format!("{DENY}{INSTALL}")),
+            replace(
+                &without_install,
+                DENY,
+                "      - uses: EmbarkStudios/cargo-deny-action@v2\n",
+            ),
+            replace(&workflow, "tool: cargo-deny@0.20.2", "tool: cargo-nextest"),
+            replace(&workflow, INSTALL, &format!("{INSTALL}        if: false\n")),
+            replace(&workflow, DENY, &format!("{DENY}        if: false\n")),
+            replace(&workflow, "  deny:\n", "  deny:\n    if: false\n"),
             format!(
                 "{}\n  other:\n    runs-on: ubuntu-latest\n    steps:\n      - run: cargo --version\n",
-                replace(
+                in_job(
                     &workflow,
+                    "deny",
                     "runs-on: ubuntu-latest",
                     "runs-on: windows-latest"
                 )
                 .trim_end()
             ),
+            // Commands that outlive their own failure.
             format!("{workflow}      - run: cargo deny check || true\n"),
             format!("{workflow}      - run: cargo deny check ||true\n"),
             format!("{workflow}      - run: cargo deny check || :\n"),
             format!("{workflow}      - run: cargo deny check || exit 0\n"),
             format!("{workflow}      - run: cargo deny check ||\n          true\n"),
             format!("{workflow}      - run: set +e\n"),
-            replace(
-                &workflow,
-                "uses: EmbarkStudios/cargo-deny-action@v2",
-                "uses: taiki-e/install-action@cargo-deny",
-            ),
-            replace(
-                &workflow,
-                "      - uses: EmbarkStudios/cargo-deny-action@v2\n",
-                "      - uses: EmbarkStudios/cargo-deny-action@v2\n        with:\n          command: fetch\n",
-            ),
-            replace(
-                &workflow,
-                "      - uses: EmbarkStudios/cargo-deny-action@v2\n",
-                "      - run: cargo deny fetch\n",
-            ),
-            replace(
-                &workflow,
-                "      - uses: EmbarkStudios/cargo-deny-action@v2\n",
-                "      - run: cargo deny fetch && echo check\n",
-            ),
-            replace(&workflow, "  deny:\n", "  deny:\n    if: false\n"),
-            replace(
-                &workflow,
-                "      - run: cargo ci\n",
-                "      - run: cargo ci\n        if: false\n",
-            ),
-            replace(
-                &workflow,
-                "        os: [ubuntu-latest, windows-latest]\n",
-                "        os: [ubuntu-latest, windows-latest]\n        exclude:\n          - os: windows-latest\n",
-            ),
-            replace(
-                &workflow,
-                "    runs-on: ${{ matrix.os }}\n",
-                "    runs-on: ${{ matrix.os }}\n    continue-on-error: true\n",
-            ),
         ];
         for mutant in mutants {
             assert!(
@@ -962,28 +1049,8 @@ sprint 1
             );
         }
 
-        // A deny step that narrows the checks, the workspace or the
+        // A deny check that narrows the checks, the workspace or the
         // configuration does not count as the deny job's check.
-        const DENY: &str = "      - uses: EmbarkStudios/cargo-deny-action@v2\n";
-        for narrowed in [
-            "command: check bans",
-            "command: check bans licenses sources",
-            "command-arguments: advisories",
-            "arguments: --exclude winnow",
-            "manifest-path: other/Cargo.toml",
-            "log-level: warn --exclude winnow",
-            "log-level: warn --exclude-dev",
-        ] {
-            let mutant = replace(
-                &workflow,
-                DENY,
-                &format!("{DENY}        with:\n          {narrowed}\n"),
-            );
-            assert!(
-                !workflow::problems(&mutant).is_empty(),
-                "this deny step must not count:\n{narrowed}"
-            );
-        }
         for narrowed in [
             "cargo deny check sources",
             "cargo deny check advisories bans",
@@ -991,6 +1058,8 @@ sprint 1
             "cargo deny check --config other.toml",
             "cargo deny --offline check",
             "cargo deny check check",
+            "cargo deny fetch",
+            "cargo deny fetch && echo check",
         ] {
             let mutant = replace(&workflow, DENY, &format!("      - run: {narrowed}\n"));
             assert!(
@@ -998,17 +1067,8 @@ sprint 1
                 "this deny step must not count:\n{narrowed}"
             );
         }
-        // Inputs the rule cannot read, and settings that change where or how
-        // the step runs.
+        // Settings that change where or how the check runs.
         for (from, to) in [
-            (
-                DENY,
-                "      - uses: EmbarkStudios/cargo-deny-action@v2\n        with: {command: check bans}\n",
-            ),
-            (
-                DENY,
-                "      - with:\n          command: check bans\n        uses: EmbarkStudios/cargo-deny-action@v2\n",
-            ),
             (
                 DENY,
                 "      - run: cargo deny check\n        working-directory: crates/hash\n",
@@ -1018,8 +1078,8 @@ sprint 1
                 "      - run: cargo deny check\n        shell: cat {0}\n",
             ),
             (
-                "    runs-on: ubuntu-latest\n",
-                "    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: crates/hash\n",
+                "    timeout-minutes: 10\n",
+                "    timeout-minutes: 10\n    defaults:\n      run:\n        working-directory: crates/hash\n",
             ),
             (
                 "jobs:\n",
@@ -1033,12 +1093,10 @@ sprint 1
             );
         }
         // A trigger filter can keep CI from ever running.
-        const PUSH: &str = "    branches: [dev, main]\n";
-        const PR: &str = "  pull_request:\n";
         for (from, filter) in [
             (PUSH, "    paths-ignore: ['**']\n"),
             (PUSH, "    paths: ['nothing/**']\n"),
-            (PUSH, "    branches-ignore: [dev, main]\n"),
+            (PUSH, "    branches-ignore: [main]\n"),
             (PR, "    types: [closed]\n"),
             (PR, "    paths-ignore: ['**']\n"),
             (PR, "    branches: [nothing]\n"),
@@ -1053,10 +1111,7 @@ sprint 1
         }
         // A later `!` pattern excludes a branch the list names.
         for (from, to) in [
-            (
-                PUSH,
-                "    branches: [dev, main, '!dev', '!main']\n".to_owned(),
-            ),
+            (PUSH, "    branches: [main, '!main']\n".to_owned()),
             (PR, format!("{PR}    branches: [dev, main, '!**']\n")),
         ] {
             let mutant = replace(&workflow, from, &to);
@@ -1070,11 +1125,8 @@ sprint 1
         let both = replace(&workflow, PR, &format!("{PR}    branches: [dev, main]\n"));
         assert_eq!(workflow::problems(&both), Vec::<String>::new());
 
-        // The forms of a full check: the action's defaults written out, and
-        // plain commands.
+        // The forms of a full check: plain commands.
         for full in [
-            "      - uses: EmbarkStudios/cargo-deny-action@v2\n        with:\n          command: check\n          \
-             arguments: --all-features\n          log-level: warn\n",
             "      - run: cargo deny check\n",
             "      - run: cargo deny --all-features --locked check\n",
         ] {

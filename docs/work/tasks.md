@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-004 (sprint 5) [intent: INT-0003, INT-0004]: The CI workflow, its pin and its clause — touches: .github/workflows/ci.yml, crates/xtask/src/pins.rs, crates/xtask/src/workflow.rs, crates/xtask/src/ci.rs
 - [ ] T-005 (sprint 5) [intent: INT-0003]: README, credits and backlog — touches: README.md, docs/prior-art.md, crates/xtask/src/docs.rs, docs/work/tasks.md
 
 - [ ] T-012 (backlog) [intent: INT-0006]: Give the provisional `operation`, `changeset` and `view` bodies the fields INT-0006 names for them that they still lack: the operation's actor, advisory wall clock and signature (INT-0016); the changeset's author, intent references, renames and conflict terms (INT-0011, INT-0012, INT-0017); the view's named pointers. Sprint 2 gave the operation its view hash. Due before the Phase 1 exit gate freezes format v1 — touches: docs/spec/format-v1.md, crates/codec/

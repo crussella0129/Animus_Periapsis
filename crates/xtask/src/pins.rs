@@ -17,19 +17,44 @@ fn repo_file(path: &str) -> String {
         .replace("\r\n", "\n")
 }
 
-/// The CI workflow (T-007): pushes to dev and main and every pull request run
-/// `cargo ci` on Linux and Windows, and a deny job runs every cargo-deny check.
+/// The CI workflow (T-007, revised in Sprint 5 T-004): every pull request,
+/// every push to `main` and a manual dispatch run separate `lint` and
+/// `cargo ci` checks on Linux and Windows and a checksum-verified cargo-deny
+/// check; superseded pull-request runs are cancelled.
 const CI_WORKFLOW: &str = r#"name: ci
 
 on:
   push:
-    branches: [dev, main]
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# A newer push to a pull request cancels the run it replaces. Each push to
+# main has a group of its own, so no later push cancels or replaces it.
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  lint:
+    name: lint (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      # Installs the toolchain and components pinned in rust-toolchain.toml.
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
   ci:
     name: cargo ci (${{ matrix.os }})
     strategy:
@@ -37,18 +62,25 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      # Installs the toolchain and components pinned in rust-toolchain.toml.
       - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
       - run: cargo ci
 
   deny:
     name: cargo deny check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - run: rustup toolchain install
+      # Checksum-verified, with retried downloads.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+      - run: cargo deny check
 "#;
 
 /// The project commands (INT-0003 AC-2 and AC-9): each builds `--locked`, and
