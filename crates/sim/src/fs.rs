@@ -55,6 +55,11 @@ pub trait Fs {
     /// Which names this filesystem cannot hold apart or hold at all
     /// (INT-0004). Not a syscall.
     fn name_rules(&self) -> NameRules;
+    /// Marks that the code has reached the named point (INT-0005 AC-6). Not
+    /// a syscall: on a real filesystem it does nothing; [`crate::SimFs`]
+    /// counts it and runs the actions a test attached to the name. Every
+    /// implementation states what it does, so no forwarder can drop points.
+    fn point(&self, name: &'static str);
 }
 
 /// The naming rules of a filesystem, which decide what a write must refuse
@@ -114,6 +119,9 @@ impl<T: Fs + ?Sized> Fs for &T {
     fn name_rules(&self) -> NameRules {
         (**self).name_rules()
     }
+    fn point(&self, name: &'static str) {
+        (**self).point(name)
+    }
 }
 
 /// Shared ownership, so several stores (and a [`crate::SimFs`] hook) can use
@@ -164,6 +172,9 @@ impl<T: Fs + ?Sized> Fs for Rc<T> {
     fn name_rules(&self) -> NameRules {
         (**self).name_rules()
     }
+    fn point(&self, name: &'static str) {
+        (**self).point(name)
+    }
 }
 
 /// Shared ownership across threads, so several simulated processes
@@ -213,6 +224,9 @@ impl<T: Fs + ?Sized> Fs for Arc<T> {
     }
     fn name_rules(&self) -> NameRules {
         (**self).name_rules()
+    }
+    fn point(&self, name: &'static str) {
+        (**self).point(name)
     }
 }
 

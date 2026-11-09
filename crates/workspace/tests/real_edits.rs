@@ -80,6 +80,9 @@ impl Fs for Under {
     fn name_rules(&self) -> sim::NameRules {
         RealFs.name_rules()
     }
+    fn point(&self, name: &'static str) {
+        RealFs.point(name)
+    }
 }
 
 #[cfg(unix)]

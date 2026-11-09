@@ -42,7 +42,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, ErrorKind};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::thread::{self, ThreadId};
 
 use crate::fs::{Crash, Fs, NameRules};
 use crate::name::{DirEntry, Kind, Name, RawName};
@@ -185,6 +186,37 @@ struct State {
 /// and traced like any other).
 pub type Hook = Box<dyn FnMut(u64) + Send>;
 
+/// An action a test attaches to a named point with [`SimFs::on_point`]. It
+/// may itself use the filesystem; its syscalls are counted and traced like
+/// any other, as syscalls of the thread that reached the point.
+pub type Action = Arc<dyn Fn() + Send + Sync>;
+
+/// What the simulator keeps about named points ([`Fs::point`]), apart from
+/// the filesystem state: points are not syscalls.
+#[derive(Default)]
+struct Points {
+    /// How often each name was reached.
+    reach: BTreeMap<&'static str, u64>,
+    /// The actions attached to each name, in the order attached.
+    actions: BTreeMap<&'static str, Vec<Action>>,
+    /// The (thread, name) pairs whose actions are running now, so an action
+    /// that reaches its own point is not entered again.
+    running: Vec<(ThreadId, &'static str)>,
+}
+
+/// Removes a running (thread, name) pair when its actions end, even by
+/// unwinding.
+struct Running<'a> {
+    fs: &'a SimFs,
+    key: (ThreadId, &'static str),
+}
+
+impl Drop for Running<'_> {
+    fn drop(&mut self) {
+        self.fs.points().running.retain(|key| *key != self.key);
+    }
+}
+
 /// The simulated filesystem. Its root is the empty path; paths are relative
 /// and use normal components only.
 ///
@@ -196,6 +228,7 @@ pub type Hook = Box<dyn FnMut(u64) + Send>;
 pub struct SimFs {
     state: Mutex<State>,
     hook: Mutex<Option<Hook>>,
+    points: Mutex<Points>,
 }
 
 impl SimFs {
@@ -205,6 +238,36 @@ impl SimFs {
 
     fn hook_slot(&self) -> MutexGuard<'_, Option<Hook>> {
         self.hook.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn points(&self) -> MutexGuard<'_, Points> {
+        self.points.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Runs `action` each time a thread reaches the point `name`, after the
+    /// point is counted, in the order actions were attached. An action is
+    /// not entered again for the same name on the same thread while it runs,
+    /// and no action runs once the filesystem has crashed.
+    pub fn on_point(&self, name: &'static str, action: impl Fn() + Send + Sync + 'static) {
+        self.points()
+            .actions
+            .entry(name)
+            .or_default()
+            .push(Arc::new(action));
+    }
+
+    /// Removes every action attached to points.
+    pub fn clear_points(&self) {
+        self.points().actions.clear();
+    }
+
+    /// Each point reached so far, with how often, sorted by name.
+    pub fn reach(&self) -> Vec<(&'static str, u64)> {
+        self.points()
+            .reach
+            .iter()
+            .map(|(name, count)| (*name, *count))
+            .collect()
     }
 
     /// Panics while holding the state lock, so a test can check that the
@@ -320,6 +383,7 @@ impl SimFs {
                 removed: BTreeSet::new(),
             }),
             hook: Mutex::new(None),
+            points: Mutex::new(Points::default()),
         }
     }
 
@@ -611,6 +675,7 @@ impl SimFs {
                 removed: BTreeSet::new(),
             }),
             hook: Mutex::new(None),
+            points: Mutex::new(Points::default()),
         }
     }
 
@@ -930,5 +995,32 @@ impl Fs for SimFs {
 
     fn name_rules(&self) -> NameRules {
         self.lock().name_rules
+    }
+
+    fn point(&self, name: &'static str) {
+        // Counted first, with no syscall, trace line or seed draw, so a point
+        // changes nothing a single-process run does.
+        let crashed = self.lock().crashed;
+        let me = thread::current().id();
+        let actions = {
+            let mut points = self.points();
+            *points.reach.entry(name).or_insert(0) += 1;
+            if crashed || points.running.contains(&(me, name)) {
+                return;
+            }
+            match points.actions.get(name) {
+                Some(actions) if !actions.is_empty() => actions.clone(),
+                _ => return,
+            }
+        };
+        self.points().running.push((me, name));
+        let _running = Running {
+            fs: self,
+            key: (me, name),
+        };
+        // No lock is held while the actions run.
+        for action in &actions {
+            action();
+        }
     }
 }

@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-003 (sprint 4) [intent: INT-0005]: Named points and the point registry — touches: crates/sim/, crates/workspace/tests/real_edits.rs
 - [ ] T-004 (sprint 4) [intent: INT-0005, INT-0003]: The points policy rule — touches: crates/xtask/src/policy.rs
 - [ ] T-005 (sprint 4) [intent: INT-0005, INT-0007]: sim::Processes, the deterministic scheduler with orderings and kills — touches: crates/sim/
 - [ ] T-006 (sprint 4) [intent: INT-0005, INT-0007, INT-0014]: Plant and register points in store and workspace, and move the two-writer race to a named point — touches: crates/store/, crates/workspace/
