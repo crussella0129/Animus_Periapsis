@@ -16,6 +16,32 @@ Windows 11 (NTFS) ran in the working checkout. WSL Ubuntu (Linux 6.6.114.1-micro
 - **T-002 alone:** optimised, with the files still one after another: 667 s. That run was measured during the build, in a scratch worktree, with other work running alongside.
 - **T-003 added:** 344 s at the T-003 state, and 291 s at the tested head.
 
+**Every unit's time at `87df514`** (seconds):
+
+| Unit | Windows | WSL run 1 |
+|---|---|---|
+| `materialise_crash` | 254.2 | 207.4 |
+| `lib and bins` | 179.4 | 9.2 |
+| `crash` | 165.1 | 131.4 |
+| `writers` | 108.1 | 144.5 |
+| `edits` | 38.6 | 15.0 |
+| `cli` | 29.0 | 1.1 |
+| `real_edits` | 20.3 | 2.2 |
+| `fsck` | 15.9 | 17.4 |
+| `e2e` | 15.8 | 1.5 |
+| `real_writers` | 13.9 | 0.8 |
+| `golden` | 11.4 | 1.0 |
+| `real_store`, `real_workspace` | 10.7, 10.7 | 0.5, 0.4 |
+| `real_hazards` | 10.0 | 0.8 |
+| `spec`, `scan`, `relative_root` | 9.9, 9.7, 9.7 | 0.5, 0.4, 0.1 |
+| `store`, `vectors`, `threads` | 9.1, 8.7, 8.6 | 0.6, 1.5, 0.8 |
+| `contract`, `real_scan`, `history` | 8.3, 7.6, 7.4 | 0.7, 0.6, 2.8 |
+| `workspace`, `doc` | 6.9, 6.2 | 0.7, 0.4 |
+| `mutants`, `points`, `objects` | 5.4, 5.4, 4.0 | 0.8, 0.6, 0.8 |
+| `materialise`, `properties`, `hazards` | 3.4, 3.0, 2.3 | 0.8, 3.0, 1.0 |
+| `book`, `processes`, `real_durability` | 1.5, 1.5, 1.5 | 1.2, 1.5, 0.7 |
+| `alloc`, `ignore` | 0.7, 0.7 | 0.9, 0.7 |
+
 **Slowest units at `3289008`** (seconds). At `87df514` they were close to these: `materialise_crash` 254, 207 and 206; `crash` 165, 131 and 133; `writers` 108, 145 and 149; Windows `lib and bins` 179.
 
 | Unit | Windows | WSL run 1 | WSL run 2 |
@@ -63,7 +89,7 @@ At `3289008`, on each system, the four matrix files were run optimised with `--n
 - `workspace/tests/crash.rs`;
 - `workspace/tests/materialise_crash.rs`.
 
-Every line reporting a matrix result was compared, as a multiset, with the same lines in Sprint 4's [test-matrix-log.md](../../s4/sprint-tests/test-matrix-log.md). That covers cell counts, races, violation counts per invariant, controls, kills, `fsck` problems and the four digests. Only durations and libtest's progress dots were removed first.
+The filtered lines, and the result of the comparison, are committed in [test-matrix-log.md](test-matrix-log.md). Every line reporting a matrix result was compared, as a multiset, with the same lines in Sprint 4's [test-matrix-log.md](../../s4/sprint-tests/test-matrix-log.md). That covers cell counts, races, violation counts per invariant, controls, kills, `fsck` problems and the four digests. Only durations and libtest's progress dots were removed first.
 
 | System | Sprint 4 lines | Sprint 5 lines | Missing | Extra |
 |---|---|---|---|---|

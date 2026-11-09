@@ -24,11 +24,22 @@
 
 - **Conclusions.** Every job of every sample succeeded.
 - **Queue time.** `created_at` to `started_at` was 2 to 4 seconds for every job.
+- **Job IDs.** These logs are the durable copy of the test lines:
+
+  | Job | Sample 1 | Sample 2 | Sample 3 |
+  |---|---|---|---|
+  | `cargo ci (windows-latest)` | 129468494598 | 129474151333 | 129482862185 |
+  | `cargo ci (ubuntu-latest)` | 129468494534 | 129474151106 | 129482861920 |
+  | `lint (windows-latest)` | 129468494555 | 129474150522 | 129482861644 |
+  | `lint (ubuntu-latest)` | 129468494599 | 129474151051 | 129482862210 |
+  | `cargo deny check` | 129468494298 | 129474150890 | 129482862025 |
 - **Cache state, as each log reports it.** Every `lint` and `cargo ci` job of all three samples printed `Cache hit for: v0-rust-{ci,lint}-{Linux,Windows_NT}-x64-…`.
   - Sample 1 was **warm** too. rust-cache's key comes from the toolchain and `Cargo.lock`, not the sources, so it found the entries saved by the earlier runs of this pull request.
-  - The cold case was measured in the first round below.
+  - The cold case was measured only in the first round below, at `3289008`. That stands for the tested head: `3289008..1ebb35e` changes only `crates/xtask/src/{ci,units,workflow}.rs`, so a cold build compiles the same dependencies.
 
 **Result:** AC-11's threshold is met, 3 of 3. No job of any sample took more than 20 minutes; the slowest took 16:02. The aim of 15 minutes was met in sample 1 and missed in samples 2 and 3, by the Windows suite alone.
+
+**The spread over all six samples.** The Windows suite took 9:41 to 16:12, which leaves at least 3:48 of headroom under 20 minutes. Ubuntu took 6:51 to 9:09. On the slow Windows runners `writers` (up to 544 s) and `materialise_crash` (up to 729 s) roughly double, with the same 4 slots. That points to slower runner hardware, which the project does not control.
 
 **What sets the Windows time.** It varies from runner to runner. In both runs over 15 minutes, `materialise_crash` alone took 715 s and 729 s; in sample 1 it took 397 s. Ubuntu's `materialise_crash` took 435 to 443 s in all three samples. The Windows suite is that one unit plus a few seconds, so it is the next thing to shorten (backlog T-027).
 

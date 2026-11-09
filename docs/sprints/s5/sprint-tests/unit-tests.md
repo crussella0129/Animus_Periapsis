@@ -36,6 +36,13 @@ Sprint 4's GitHub legs ran 478 tests on Windows and 479 on Linux. This sprint ad
 - `a_reservation_on_the_error_path_is_measured` (`crates/codec/tests/alloc.rs`).
   - Under `opt-level = 1`, a function that reserves `COUNT` elements and then fails, with no `black_box` or other barrier, measures at least `COUNT × 8` bytes. So optimisation did not remove the allocation, and `rejected_cheaply` still sees a reserving decoder.
   - The fallback the plan decided on, a `codec` override, was **not needed**. The pin keeps exactly two settings.
+- **The negative controls are still caught** (build-plan T-002's second clause). The test plan mapped this clause to the `*_finds_no_violations` tests, which run only the correct variants; that mapping was wrong (test critique C-001). The executed evidence is these 12 control tests:
+  - `pointer_file_variant_is_caught`, `unsynced_objects_variant_is_caught`, `unsynced_references_variant_is_caught`, `unsynced_init_variant_is_caught` and `write_in_place_variant_is_caught` (store);
+  - `writers_catch_pointer_file`, `writers_catch_unsynced_init`, `writers_catch_unsynced_objects`, `writers_catch_unsynced_references` and `writers_catch_write_in_place` (four writers);
+  - `snapshot_catches_unsynced_objects` (Snapshot);
+  - `materialise_catches_no_record` (Materialise).
+
+  Each printed `... ok` at `87df514`, locally on Windows and in WSL, and in GitHub jobs 129468494598 (Windows) and 129468494534 (Ubuntu).
 - **The behavioural evidence** is the four reproducibility tests, unchanged, each asserting its digest as a constant. All passed on both systems:
   - `matrix_runs_are_reproducible` (store `d36b8c9c…`);
   - `writers_matrix_is_reproducible` (four writers `253b1eab…`);
@@ -71,7 +78,7 @@ All in `crates/xtask/src/units.rs` unless noted.
   - `test_step_clears_the_recorded_reach`.
   - `test_step_removes_golden_create`: now covers the pre-build and all 36 unit commands of this repository, and none inherits a scrubbed variable.
   - `hostile_variables_never_reach_a_step`: the child `cargo ci` printed both `test inherits_no_stripped_variable ... ok` and `test probe_inherits_no_stripped_variable ... ok`. So a `--lib --bins` unit and a `--test probe` unit both ran under the scrubbed environment.
-  - `run_passes_a_clean_workspace`: since CR-04, it also asserts `test: 2 test executables built, 2 run`. So the real pre-build's `Executable` lines were parsed, and the probe library's executable and `tests/probe.rs`'s both ran.
+  - `run_passes_a_clean_workspace`: its own `... ok` in the top-level run means nothing, because without `XTASK_CI_WORKSPACE` it returns at once. Its assertions run in `hostile_variables_never_reach_a_step`'s child, and that parent's pass is the evidence. Since CR-04, it also asserts `test: 2 test executables built, 2 run`. So the real pre-build's `Executable` lines were parsed, and the probe library's executable and `tests/probe.rs`'s both ran.
   - `steps_execute_for_real`;
   - `ci_failures_do_not_stop_later_steps`.
 
@@ -80,10 +87,11 @@ These are in `crates/xtask/src/units.rs` unless noted ([code-review.md](code-rev
 - `a_build_that_reports_nothing_fails_the_step` (CR-04): with test units to run and no `Executable` line, the step fails.
 - `an_executable_the_build_did_not_report_fails_the_step` (CR-04): a unit that ran `b-9`, which the build did not report, fails the step.
 - `each_unit_is_announced_when_it_starts` (CR-05): `---- unit <name>: started` comes before each unit's result block.
-- `run_command_keeps_the_streams_in_order` (CR-06):
-  - `cargo --version` passes with its output;
-  - `cargo --no-such-flag` fails with its error;
-  - a missing program fails as "could not run cargo".
+- `run_command_keeps_the_streams_in_order` (CR-06), strengthened after the test critique (C-002) in `664b156`, after the tested head.
+  - It now runs this test binary as a child (`stream_order_child`) that writes to stdout, then stderr, then stdout, and asserts that the three markers keep that order.
+  - Against the old capture, stdout whole and then stderr, the test fails: `order-second` comes last. That mutation was run and then reverted.
+  - It also checks a failing `cargo --no-such-flag` and a missing program.
+  - At `664b156`, `xtask`'s binary passed 111 of 111 tests on Windows and in a fresh WSL clone. `664b156` changes nothing else.
 
 ### T-004: The workflow
 - `workflow_matches_ci_contract` (`crates/xtask/src/ci.rs`). The committed workflow has no problems, and each of the following mutants is caught.
@@ -119,5 +127,9 @@ These are in `crates/xtask/src/units.rs` unless noted ([code-review.md](code-rev
 - `ci_workflow_is_the_reviewed_one`: `ci.yml` equals the pinned `CI_WORKFLOW`.
 
 ### T-005: README and credits
-- `readme_keeps_statement_and_links_book` and `readme_must_document_each_command` pass on the new README.
+- `readme_keeps_statement_and_links_book` and `readme_must_document_each_command` pass on the new README. They predate this sprint, so they do not check its three new statements (test critique C-009).
+- **README review.** This is the evidence for T-005's first clause. Lines 63 to 70 of the README's Build and test section say:
+  - that tests build optimised and the suite runs the test files in parallel, failing if any executable Cargo built goes unrun;
+  - that GitHub Actions runs on every pull request, every push to `main` and on demand;
+  - that fmt and Clippy, the suite and cargo-deny show as separate checks, and a newer push to a pull request cancels the run it replaces.
 - `prior_art_credits_every_listed_system` passes with `nextest`, now the 37th name in `CREDITED`. The nextest row in `docs/prior-art.md` is what satisfies it.
