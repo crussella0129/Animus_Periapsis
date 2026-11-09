@@ -8,7 +8,7 @@
   - AC-5: the nextest credit;
   - AC-9: `cargo ci` stays flagless and idempotent with the parallel test step;
   - AC-10: the README;
-  - AC-11 (new): each sampled run of the sprint's pull request takes at most 20 minutes, with every test executable run.
+  - AC-11 (new): no job of a sampled run of the sprint's pull request takes more than 20 minutes, with every test executable run.
 - [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md) — state: active; acceptance criteria covered: AC-1 to AC-3 and AC-6, each kept unchanged through optimised builds and parallel test files. The evidence is the four asserted matrix digests, the controls and the reach table.
 - [INT-0004](../../../intents/INT-0004-windows-and-linux.md) — state: active; acceptance criteria covered: AC-1, with every check on both platforms.
 - [INT-0001](../../../intents/INT-0001-periapsis-charter.md), [INT-0002](../../../intents/INT-0002-typed-acceptance-criteria.md), [INT-0006](../../../intents/INT-0006-format-v1.md), [INT-0007](../../../intents/INT-0007-crash-safe-storage.md) — through T-001 (backlog T-020) only.
@@ -58,7 +58,8 @@
     - the four asserted matrix digests match: store `d36b8c9c…`, four writers `253b1eab…`, Snapshot `c1e39cb1…` and Materialise `6274344b…`, asserted by `matrix_runs_are_reproducible`, `writers_matrix_is_reproducible`, `snapshot_matrix_is_reproducible` and `materialise_matrix_is_reproducible`;
     - the negative controls are caught;
     - `cargo ci`'s `reach` step passes against the committed `docs/reach.md`.
-  - **WHEN** code that reserves `COUNT` elements and then fails is measured with `allocation_counter` under this profile, **THEN** the measured peak **SHALL** be at least `COUNT × 8` bytes. This shows the allocation tests still see a reservation that optimisation could otherwise remove.
+  - **WHEN** code that reserves `COUNT` elements and then fails is measured with `allocation_counter` under this profile, **THEN** the measured peak **SHALL** be at least `COUNT × 8` bytes. This shows the allocation tests still see a reservation that optimisation could otherwise remove. The control **SHALL** use no optimisation barrier: no `black_box`, no `#[inline(never)]`, no volatile access.
+  - **WHEN** that control fails under `opt-level = 1`, **THEN** `[profile.dev.package.codec] opt-level = 0` **SHALL** be added. The pin test **SHALL** allow exactly that third entry, and INT-0003's Consequences **SHALL** record that `codec` and its allocation tests run unoptimised. Either outcome **SHALL** be recorded in the test report.
 - **Notes:** the profile goes in `Cargo.toml`, not the environment, because `cargo ci` scrubs `CARGO_PROFILE_*` (`crates/xtask/src/ci.rs`, `SCRUBBED_PREFIXES`). `profile.test` inherits from `dev`, so the test build, Clippy and `cargo build` share one profile.
 
 ### T-003: Run test targets in parallel inside `cargo ci`
@@ -76,16 +77,18 @@
       - one unit per distinct test-target name;
       - `--doc`.
 
-    Each unit **SHALL** run as `cargo test --workspace --locked <selection>`, built by `cargo_command`, so it inherits none of the scrubbed variables.
+    Each unit **SHALL** run as `cargo test --workspace --locked --no-fail-fast <selection>`, built by `cargo_command`, so it inherits none of the scrubbed variables.
+  - **WHEN** the step runs the pre-build or a unit, **THEN** it **SHALL** set `CARGO_TERM_QUIET=false`, `CARGO_TERM_VERBOSE=false` and `CARGO_TERM_COLOR=never` on the command. Those override the environment and any `term.*` configuration, so the status lines it reads keep one form.
   - **WHEN** units are discovered, **THEN** each workspace member's `tests/*.rs` and `tests/<dir>/main.rs` **SHALL** yield a unit named after the file stem or directory, in sorted order between `--lib --bins` and `--doc`. A name shared by several members, as `crash` and `cli` are, **SHALL** yield one unit.
   - **WHEN** all units have finished, **THEN** the step **SHALL** fail, naming each executable or unit, in any of these cases:
-    - an executable the pre-build reported on an `Executable … (<path>)` line was not reported on a `Running … (<path>)` line by any unit;
+    - every unit passed, but an executable the pre-build reported on an `Executable … (<path>)` line was not reported on a `Running … (<path>)` line by any unit;
     - a unit other than `--doc` reported no `Running` line;
-    - a unit's output contains a `Compiling ` line, meaning it rebuilt something.
+    - the output of a unit other than `--doc` contains a `Compiling ` line, meaning it rebuilt something.
 
-    Executables are compared by file name.
+    Executables are compared by file name, with Windows and Unix separators both read.
+  - **WHEN** the parallel units have finished, **THEN** the `--doc` unit **SHALL** run alone. rustdoc may build a library that no test target links, so it never runs while test executables do.
   - **WHEN** units run, **THEN**:
-    - at most `std::thread::available_parallelism()` of them **SHALL** run at once;
+    - at most `std::thread::available_parallelism()` of the units other than `--doc` **SHALL** run at once;
     - each unit's captured standard output and error **SHALL** be written whole to the step's writer, as one block headed by the unit's name, result and duration, in the order units finish;
     - no two units' output **SHALL** interleave;
     - the step **SHALL** end with one line, `test: <u> units, <p> passed, <f> failed, <i> ignored`, summed from every `test result:` line.
@@ -105,7 +108,7 @@
 - **Success criterion (EARS):**
   - **WHEN** the workflow is read, **THEN** it **SHALL** contain:
     - **Triggers:** `pull_request` (unfiltered), `push` with `branches: [main]`, and `workflow_dispatch`.
-    - **Concurrency:** a top-level `concurrency` block with `group: ci-${{ github.ref }}` and `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`.
+    - **Concurrency:** a top-level `concurrency` block with `group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' || github.sha }}` and `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`. Pull-request runs share one group per pull request; each push to `main` has a group of its own.
     - **Job `lint`,** named `lint (${{ matrix.os }})`:
       - a `fail-fast: false` matrix of `ubuntu-latest` and `windows-latest`, `runs-on: ${{ matrix.os }}`, and `timeout-minutes: 30`;
       - steps `actions/checkout@v7`, `run: rustup toolchain install`, `Swatinem/rust-cache@v2`, `run: cargo fmt --all --check` and `run: cargo clippy --workspace --all-targets --locked -- -D warnings`.
@@ -124,7 +127,7 @@
       - `push` triggers on another branch or a pattern (any entry other than `main`);
       - `push` has no branch list;
       - there is no `workflow_dispatch` trigger;
-      - there is no top-level `concurrency`, its `group` does not contain `github.ref`, or its `cancel-in-progress` is not exactly `${{ github.event_name == 'pull_request' }}`;
+      - there is no top-level `concurrency`, its `group` does not contain both `github.ref` and `github.sha`, or its `cancel-in-progress` is not exactly `${{ github.event_name == 'pull_request' }}`;
       - no `lint` job runs both commands on both platforms. The test is the `ci` job's predicate: a matrix of both platforms with no `include` or `exclude`, `runs-on: ${{ matrix.os }}`, no `if:` on the job or on either command step, and one step each running `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings`.
   - **WHEN** `workflow_matches_ci_contract` runs, **THEN** each new or changed problem **SHALL** have a mutant that is caught, and the existing mutants **SHALL** be kept, adapted to the new text. `workflow_forms_read_alike` **SHALL** assert the new problem set.
   - **WHEN** `ci.yml` differs from `pins.rs`'s `CI_WORKFLOW`, **THEN** `ci_workflow_is_the_reviewed_one` **SHALL** fail.

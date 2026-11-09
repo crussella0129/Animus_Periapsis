@@ -30,7 +30,7 @@
   - adding `dev.overflow-checks = false`;
   - adding `dev.package.codec`;
   - adding `dev.build-override`.
-- `a_reservation_on_the_error_path_is_measured` (`crates/codec/tests/alloc.rs`): a function shaped like a decoder reserves `Vec::<u64>::with_capacity(COUNT)` and then returns an error without using it. Measured with `allocation_counter::measure`, `bytes_max` is at least `COUNT × 8`. This is the negative control for `rejected_cheaply` under the optimised profile.
+- `a_reservation_on_the_error_path_is_measured` (`crates/codec/tests/alloc.rs`): a function shaped like a decoder reserves `Vec::<u64>::with_capacity(COUNT)` and then returns an error without using it, with no `black_box`, `#[inline(never)]` or volatile access. Measured with `allocation_counter::measure`, `bytes_max` is at least `COUNT × 8`. This is the negative control for `rejected_cheaply` under the optimised profile. If it fails, the decided response is T-002's `codec` override, and the pin test changes to allow exactly that entry.
 - The four `*_is_reproducible` tests, unchanged, are the behavioural evidence: they assert the digests as constants.
 
 ### T-003 unit tests
@@ -39,19 +39,26 @@
 - `units_merge_shared_names`: two members that both have `tests/crash.rs` yield one `--test crash` unit.
 - `an_unrun_executable_fails_the_step`: the pre-build reports executables `x-1` and `y-2`, but the units report running only `x-1`. The step fails and names `y-2`.
 - `a_unit_that_runs_nothing_fails_the_step`: a `--test a` unit reports no `Running` line, and the step fails naming it. A `--doc` unit with none passes.
-- `a_unit_that_rebuilds_fails_the_step`: a unit whose output has `   Compiling codec v0.1.0` fails the step as a rebuild.
+- `a_unit_that_rebuilds_fails_the_step`: a unit whose output has `   Compiling codec v0.1.0` fails the step as a rebuild, and so does the same line with ANSI colour codes around `Compiling`. The `--doc` unit's `Compiling` line does not fail it.
+- `cargo_status_lines_parse_on_both_systems`: these literal lines yield the right executable file names:
+  - `  Executable unittests src\lib.rs (target\debug\deps\codec-4a546ad5229c1036.exe)`;
+  - `     Running tests/crash.rs (target/debug/deps/crash-32b2523c1477e52b)`;
+  - `     Running unittests src/main.rs (target/debug/deps/praps-a08907f81f5aba35)`.
+- `the_step_sets_cargo_terminal_settings`: the pre-build and every unit command carry `CARGO_TERM_QUIET=false`, `CARGO_TERM_VERBOSE=false` and `CARGO_TERM_COLOR=never`.
+- `the_doc_unit_runs_alone_and_last`: with a recording closure, the `--doc` command starts only after every other unit has finished.
+- `a_failing_unit_is_not_reported_as_unrun`: a unit fails and leaves an executable unreported. The step names the failed unit only, not an unrun executable.
 - `units_never_exceed_the_slots`: 12 fake units, each sleeping briefly and counting itself in and out with an atomic counter, under 3 slots. The highest count seen is 3, and all 12 ran.
 - `unit_output_is_never_interleaved`: 8 fake units, each producing 50 marker lines with yields between them. In the step's writer, each unit's lines are contiguous under its header.
 - `a_failed_unit_fails_the_step_after_all_run`: unit 2 of 6 fails. All 6 ran, and the step fails naming exactly that unit.
 - `the_step_totals_every_test_result`: units whose outputs hold `test result: ok. 3 passed; 0 failed; 1 ignored` and `test result: FAILED. 1 passed; 2 failed; 0 ignored` end the step with `test: 2 units, 4 passed, 2 failed, 1 ignored`.
 - `a_failed_build_runs_no_unit`: when the recorded cargo's `--no-run` command fails, the step fails, prints the build output, and runs no unit command.
-- `test_step_builds_once_then_runs_each_unit`: with a recording closure for cargo, the first command is `test --workspace --locked --no-run`. Every following command starts `test --workspace --locked`, one per unit.
+- `test_step_builds_once_then_runs_each_unit`: with a recording closure for cargo, the first command is `test --workspace --locked --no-run`. Every following command starts `test --workspace --locked --no-fail-fast`, one per unit.
 - Existing tests, kept and updated:
   - `ci_steps_are_ordered_and_locked`: `test` is `Action::Test`.
   - `test_step_clears_the_recorded_reach`.
   - `test_step_removes_golden_create`: asserts over every command the test step builds, the pre-build and each unit, so none can inherit `PERI_GOLDEN_CREATE`.
-  - `hostile_variables_never_reach_a_step`: `clean_workspace` gains `tests/probe.rs` with the same assertions as `PROBE`, so both a `--lib --bins` unit and a `--test probe` unit run under the scrubbed environment.
-  - `run_passes_a_clean_workspace`: checks that the six `PASS` lines appear in order and that the run ends `ci: all 6 steps passed`. Unit blocks now sit between them.
+  - `hostile_variables_never_reach_a_step`: `clean_workspace` gains `tests/probe.rs`, whose test `probe_inherits_no_stripped_variable` makes the same assertions as `PROBE`. So both a `--lib --bins` unit and a `--test probe` unit run under the scrubbed environment. The parent asserts both `test inherits_no_stripped_variable ... ok` and `test probe_inherits_no_stripped_variable ... ok` on the child's stdout.
+  - `run_passes_a_clean_workspace`: checks that the six `PASS` lines appear in order and that the run ends `ci: all 6 steps passed`. It also checks that its captured output holds both probe lines, then prints that output to stdout for the parent.
   - `steps_execute_for_real`.
   - `ci_failures_do_not_stop_later_steps`: for the new execute signature.
 
@@ -65,6 +72,7 @@
   - `workflow_dispatch` removed;
   - `concurrency` removed;
   - `group: ci`, a constant;
+  - `group: ci-${{ github.ref }}`, without `github.sha`;
   - `cancel-in-progress: true`;
   - `lint` without `windows-latest`;
   - `lint` with `runs-on: ubuntu-latest`;
@@ -111,18 +119,19 @@
 - **Status:** possible, except `dispatch_runs_on_dev`.
 - **Setup (owner's decision, 2026-11-09).** During Test, `dev` is pushed and the sprint's `dev → main` pull request is opened. It is the pull request the Loop checkpoint uses. Nothing is merged.
 - `sampled_runs_meet_the_budget`. Three samples of the tested head:
-  - the pull request's first run, with a cold cache;
-  - two attempts of "re-run all jobs" (`gh run rerun <run>`), with a warm cache.
+  - the pull request's first completed run of the tested head;
+  - two attempts of "re-run all jobs" (`gh run rerun <run>`).
 
   For each attempt, from `gh api …/actions/runs/<run>/attempts/<n>/jobs`:
-  - **Time:** the first job's `started_at` to the last job's `completed_at`.
+  - **Job time:** each job's own `started_at` to `completed_at`.
   - **Queue time:** each job's `created_at` to `started_at`, reported separately.
+  - **Cache state:** each `lint` and `ci` job's rust-cache restore line, "Cache restored from key" or "No cache found", read from its log.
 
   Pass:
   - every job of every sample succeeds;
-  - each sample's time is at most 20 minutes.
+  - no job of any sample takes more than 20 minutes.
 
-  Recorded: each job's duration, whether the 15-minute aim was met, and which sample was cold.
+  Recorded: each job's time, whether the 15-minute aim was met, and each sample's observed cache state. A cancelled run is never a sample.
 - `checks_appear_separately`. The pull request shows these checks:
   - `lint (ubuntu-latest)`;
   - `lint (windows-latest)`;
