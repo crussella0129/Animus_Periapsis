@@ -88,7 +88,8 @@ fn short(bytes: &[u8]) -> String {
 }
 
 fn log(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
-    match with_workspace(dir, err, |ws| ws.log()) {
+    let (result, reported) = with_reports(dir, err, |ws| ws.log());
+    let code = match result {
         Ok(entries) => {
             for entry in entries {
                 let files = if entry.files == 1 { "file" } else { "files" };
@@ -103,11 +104,14 @@ fn log(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
             0
         }
         Err(error) => fail("log", dir, error, err),
-    }
+    };
+    print_reported(&reported, out);
+    code
 }
 
 fn undo(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
-    match with_workspace(dir, err, |ws| ws.undo()) {
+    let (result, reported) = with_reports(dir, err, |ws| ws.undo());
+    let code = match result {
         Ok((restored, _)) => {
             let _ = writeln!(
                 out,
@@ -117,11 +121,14 @@ fn undo(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
             0
         }
         Err(error) => fail("undo", dir, error, err),
-    }
+    };
+    print_reported(&reported, out);
+    code
 }
 
 fn restore(op: &str, dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
-    match with_workspace(dir, err, |ws| ws.restore(op)) {
+    let (result, reported) = with_reports(dir, err, |ws| ws.restore(op));
+    let code = match result {
         Ok((restored, _)) => {
             let _ = writeln!(
                 out,
@@ -131,7 +138,9 @@ fn restore(op: &str, dir: &Path, out: &mut impl Write, err: &mut impl Write) -> 
             0
         }
         Err(error) => fail("restore", dir, error, err),
-    }
+    };
+    print_reported(&reported, out);
+    code
 }
 
 fn fail(command: &str, dir: &Path, error: impl std::fmt::Display, err: &mut impl Write) -> u8 {
@@ -173,16 +182,48 @@ fn with_workspace<T>(
     result
 }
 
+/// `with_workspace`, also returning what the command's snapshot reported
+/// and left alone, whether the command succeeded or failed (INT-0004
+/// AC-7). Nothing is reported when the repository did not open.
+fn with_reports<T>(
+    dir: &Path,
+    err: &mut impl Write,
+    command: impl FnOnce(&mut Workspace<RealFs>) -> Result<T, workspace::Error>,
+) -> (Result<T, workspace::Error>, Vec<workspace::Reported>) {
+    let mut reported = Vec::new();
+    let result = with_workspace(dir, err, |ws| {
+        let result = command(ws);
+        reported = ws.reported().to_vec();
+        result
+    });
+    (result, reported)
+}
+
+/// Prints each entry a snapshot reported and left alone, in `status`'s
+/// format: `skipped PATH (REASON)`.
+fn print_reported(reported: &[workspace::Reported], out: &mut impl Write) {
+    for reported in reported {
+        let _ = writeln!(
+            out,
+            "skipped {} ({})",
+            reported.path,
+            reported.reason.text()
+        );
+    }
+}
+
 fn new(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
-    let result = with_workspace(dir, err, |ws| ws.new_change());
-    match result {
+    let (result, reported) = with_reports(dir, err, |ws| ws.new_change());
+    let code = match result {
         Ok(change_id) => {
             let hex: String = change_id.iter().map(|b| format!("{b:02x}")).collect();
             let _ = writeln!(out, "new change {hex}");
             0
         }
         Err(error) => fail("new", dir, error, err),
-    }
+    };
+    print_reported(&reported, out);
+    code
 }
 
 fn status(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
@@ -195,14 +236,7 @@ fn status(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
                 let shown = sim::Name::Utf8(path.as_str().to_owned()).display();
                 let _ = writeln!(out, "{} {shown}", change.letter());
             }
-            for reported in &status.reported {
-                let _ = writeln!(
-                    out,
-                    "skipped {} ({})",
-                    reported.path,
-                    reported.reason.text()
-                );
-            }
+            print_reported(&status.reported, out);
             0
         }
         Err(error) => fail("status", dir, error, err),

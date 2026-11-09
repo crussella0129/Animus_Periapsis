@@ -501,3 +501,37 @@ fn ops_are_never_removed() {
         }
     }
 }
+
+/// Every command that snapshots reports what it left alone, once, in
+/// `status`'s form, on success and on failure (Sprint 4 T-009, backlog
+/// T-019; INT-0004 AC-7).
+#[test]
+fn snapshotting_commands_return_reports() {
+    let (mut ws, fs) = fresh(41);
+    fs.make_raw(Path::new(ROOT), sim::RawName::Bytes(vec![b'r', 0xff]), b"x")
+        .unwrap();
+    put(&fs, "a", b"1");
+    let expected = ws.status().unwrap().reported;
+    assert_eq!(expected.len(), 1);
+    assert_eq!(ws.reported(), expected);
+    ws.new_change().unwrap();
+    assert_eq!(ws.reported(), expected);
+    put(&fs, "a", b"2");
+    ws.log().unwrap();
+    assert_eq!(ws.reported(), expected);
+    let (undone, _) = ws.undo().unwrap();
+    // `undo` snapshots twice; its report is one, not two.
+    assert_eq!(ws.reported(), expected);
+    ws.restore(&undone.to_string()[7..19]).unwrap();
+    assert_eq!(ws.reported(), expected);
+}
+
+#[test]
+fn failed_undo_carries_reports() {
+    let (mut ws, fs) = fresh(42);
+    fs.make_raw(Path::new(ROOT), sim::RawName::Bytes(vec![0xfe]), b"x")
+        .unwrap();
+    assert!(matches!(ws.undo(), Err(Error::NothingToUndo)));
+    assert_eq!(ws.reported().len(), 1);
+    assert!(ws.reported()[0].path.contains("\\xfe"));
+}

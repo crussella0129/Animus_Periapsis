@@ -390,6 +390,8 @@ pub struct Workspace<F: Fs> {
     rng: Rng,
     /// What resuming an interrupted write left undone, for the user.
     notes: Vec<String>,
+    /// What the latest snapshot reported and left alone (INT-0004 AC-7).
+    reported: Vec<Reported>,
     #[cfg(feature = "variants")]
     variant: Variant,
 }
@@ -503,6 +505,7 @@ impl<F: Fs> Workspace<F> {
             root: root.to_path_buf(),
             rng: Rng::new(seed),
             notes: Vec::new(),
+            reported: Vec::new(),
             #[cfg(feature = "variants")]
             variant: Variant::Correct,
         }
@@ -527,6 +530,16 @@ impl<F: Fs> Workspace<F> {
     /// What resuming an interrupted write left undone, one line each.
     pub fn notes(&self) -> &[String] {
         &self.notes
+    }
+
+    /// The entries the latest snapshot reported and left alone, sorted, as
+    /// [`Status::reported`] gives them (INT-0004 AC-7). Every command that
+    /// snapshots (`log`, `undo`, `restore`, `new_change`, `status`) sets
+    /// it, and it stays set when the command then fails. A command that
+    /// snapshots twice (`undo`, through [`Workspace::restore_view`]) scans
+    /// the same files both times, so it holds one report, not two.
+    pub fn reported(&self) -> &[Reported] {
+        &self.reported
     }
 
     fn praps_dir(&self) -> PathBuf {
@@ -807,6 +820,7 @@ impl<F: Fs> Workspace<F> {
             reported,
         } = self.scan(&loaded.wc_tree, &loaded.parent_tree, &known)?;
         self.store.fs().point("workspace.snapshot.scanned");
+        self.reported.clone_from(&reported);
         if tree == loaded.wc_tree {
             return Ok(Snapshot { op: None, reported });
         }
