@@ -6,7 +6,7 @@
 - **Work evidence:** [Sprint 1 T-009 build plan](../sprints/s1/sprint-plans/build-plan.md#t-009-record-sprint-0s-github-actions-runs-and-owner-sign-offs), [T-010 backlog](../work/tasks.md), [Sprint 2 T-001 build plan](../sprints/s2/sprint-plans/build-plan.md#t-001-record-sprint-1s-github-actions-runs-and-owner-sign-offs), [T-013 backlog](../work/tasks.md), [Sprint 3 T-001 build plan](../sprints/s3/sprint-plans/build-plan.md#t-001-record-sprint-2s-github-actions-runs-and-owner-sign-offs), [T-017 backlog](../work/tasks.md), [Sprint 4 T-001 build plan](../sprints/s4/sprint-plans/build-plan.md#t-001-record-the-sprint-3-checkpoints-github-actions-runs-and-owner-sign-offs), [Sprint 5 T-001 build plan](../sprints/s5/sprint-plans/build-plan.md#t-001-record-the-sprint-4-checkpoints-github-actions-runs-and-owner-sign-offs)
 - **Completion evidence:** none
 - **Code evidence:** none
-- **Test evidence:** none
+- **Test evidence:** none, [Sprint 4 CI record](../sprints/s5/sprint-tests/ci-sprint4.md)
 - **Documentation evidence:** none
 
 ## Intent
