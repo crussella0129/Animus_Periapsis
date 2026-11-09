@@ -139,6 +139,13 @@
   - **WHEN** an ordering is given, **THEN** process *q*, on reaching its *m*-th point B, **SHALL** wait. The predecessor is either a point, `((p, A, n), (q, B, m))`, or the end of a process, `((p, End), (q, B, m))`:
     - for a point, *q* waits until process *p* has reached its *n*-th point A. A process counts as having reached a point as soon as it arrives, even if it then waits there;
     - for an end, *q* waits until process *p* has ended.
+  - **WHEN** a process arrives at a point under `Processes`, **THEN** these **SHALL** happen in this order:
+    1. the point is counted;
+    2. a kill set for that arrival takes effect;
+    3. the process waits on every ordering whose successor it is;
+    4. once released, the point's actions run.
+
+    So an action sees the state as it is when the process goes on (`point_events_are_ordered`).
   - **WHEN** the system has crashed, or the predecessor's process has ended (returned, killed or panicked) without reaching A, **THEN** the wait **SHALL** be released. After a crash the waiter's next syscall fails.
   - **WHEN** every live process waits on a live process, **THEN** the run **SHALL** stop with an ordering-deadlock error naming the waiting points. This is a test bug, never a matrix outcome.
   - **WHEN** a kill is set for process *p*, either at its *k*-th boundary or at its *n*-th arrival at point A, **THEN** *p* **SHALL** stop there, make no further syscall, and report `Killed`. Its writes, synced or not, **SHALL** stay visible to the others. **WHEN** the system then crashes, **THEN** `recover` **SHALL** settle them by the seed like any pending state.
@@ -182,7 +189,7 @@
     - Snapshot: `workspace.snapshot.*`;
     - Materialise: `workspace.record.*`, `workspace.apply.*` and `workspace.resume.*`. `resume.dropped` is reached where a crash falls between the record's write and the target op's commit.
 
-    **WHEN** a build run finds a point unreached, **THEN** a new scenario **SHALL** be extended to reach it, or the point **SHALL** be removed. Either change is recorded in the build notes. No Sprint 3 scenario is changed, so its digest stays fixed.
+    **WHEN** a build run finds a point unreached, **THEN** a new scenario **SHALL** be extended to reach it. The point **SHALL** be removed instead only if its unit keeps at least one reached point (INT-0005 Consequences). Either change is recorded in the build notes. No Sprint 3 scenario is changed, so its digest stays fixed.
   - **WHEN** `put_object` or `commit_op` writes a new file in the correct store, **THEN** it **SHALL** reach `temp_written`, `temp_synced`, `renamed` and `dir_synced` once each, in that order. **WHEN** the file is already present, **THEN** it **SHALL** reach only `present_synced`.
   - **WHEN** the two-writer scenario runs, **THEN** writer B **SHALL** be fired by an action on `store.put_object.renamed` (the view race) or `store.commit_op.renamed` (the parent race). The action re-checks that the target is visible and not durable, as `install_race` does now, and reads no trace. The point sits immediately after `rename` returns, with no syscall in between, so B's syscalls take the same numbers as before. The store digest **SHALL** equal its asserted constant.
   - **WHEN** all three Sprint 3 matrices run, **THEN** their asserted digests **SHALL** hold.
@@ -214,6 +221,7 @@
     - It lives outside the process threads and survives kills.
     - An op is *attempted* when a process logs it before calling `commit_op`, and *acknowledged* when `commit_op` returned `Ok`. Objects are logged the same way.
     - The *in-flight* ops are those attempted but not acknowledged, in any process, including a killed one.
+    - All three are sets of op ids: in-flight = attempted ids − acknowledged ids. An op acknowledged once stays acknowledged even if a retry of it is then interrupted.
   - **WHEN** a cell runs, over 40 seeds × 2 modes × every global crash step × {no kill, one kill}, **THEN** the recovered store **SHALL** satisfy:
     - closure;
     - acknowledged ⊆ present ⊆ acknowledged ∪ in-flight (plus the base);
@@ -226,7 +234,7 @@
     - **WHEN** a kill run is uncrashed, **THEN** it **SHALL** report `Killed` for the chosen process. The number of cells that killed a process **SHALL** be printed.
   - **WHEN** an odd seed's uncrashed run is examined in the correct store, **THEN**:
     - process 2's second op **SHALL** name process 0's op;
-    - process 0's op name **SHALL NOT** be durable when process 2 reaches `test.writers.listing`;
+    - when process 2 is released from `test.writers.listing`, an action there **SHALL** find process 0's op name visible and not durable;
     - the number of odd cells in which it is still not durable at process 2's second `renamed` **SHALL** be printed per variant, and **SHALL** be non-zero for `UnsyncedReferences`. **WHEN** any even seed's uncrashed run is examined, **THEN** at least one of them **SHALL** show two commits overlapping.
   - **WHEN** each store variant runs the matrix in strict mode, **THEN** it **SHALL** produce semantic violations (closure, durability, heads or atomicity), as Sprints 1 to 3 required:
     - `PointerFile`, `UnsyncedObjects`, `UnsyncedInit`, `WriteInPlace`: at least one;
@@ -256,7 +264,7 @@
 
 ### T-008: Reach recording, `cargo reach`, the `reach` step in `cargo ci`, and the simulation spec
 - **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0003](../../../intents/INT-0003-engineering-baseline.md)
-- **Touches:** crates/store/tests/, crates/workspace/tests/, crates/xtask/src/reach.rs, crates/xtask/src/main.rs, crates/xtask/src/ci.rs, .cargo/config.toml, docs/reach.md, docs/spec/simulation.md, docs/SUMMARY.md
+- **Touches:** crates/sim/src/reach.rs, crates/store/tests/, crates/workspace/tests/, crates/xtask/src/reach.rs, crates/xtask/src/main.rs, crates/xtask/src/ci.rs, .cargo/config.toml, docs/reach.md, docs/spec/simulation.md, docs/SUMMARY.md
 - **Depends on:** T-006, T-007
 - **Acceptance criterion:** INT-0005 AC-6; INT-0003 AC-9.
 - **Success criterion (EARS):**
@@ -268,11 +276,12 @@
     - Materialise (`materialise_matrix_finds_no_violations`, Unix rules).
 
     **WHEN** that test finishes, **THEN** it **SHALL** write the scenario's name, the sprint that added it, and the point counts summed over its cells to `$CARGO_TARGET_TMPDIR/reach/<scenario>.txt`, through a temporary file and a rename.
+  - **The recorder** is one function in `sim` (`sim::reach::record`, writing through `RealFs`), shared by the store and workspace tests and tested once in `sim` (`reach_record_round_trips`).
   - **Which runs count:**
     - reach is read from the scenario's own `SimFs` after its run;
     - for a scenario that models a next command on the recovered filesystem, reach is also read from that copy right after the command returns, before the oracle runs any check. The command is `init` and `snapshot` for Snapshot, and the resuming `open` for Materialise. Store, two writers and four writers model none;
     - the oracle's checks (`fsck`, inspection, its own `init`, `open` or `snapshot`) never count;
-    - names with the reserved `test.` prefix are dropped (`reach_drops_test_points`).
+    - names with the reserved `test.` prefix may appear in a reach file. `cargo reach` ignores them and fails on any other unregistered name (`reach_ignores_test_points`).
   - **WHEN** `cargo reach` runs, **THEN** it **SHALL** take no arguments and write `docs/reach.md`:
     - one row per scenario, ordered by sprint;
     - one column per unit, grouped and ordered by the sprint that built it;
@@ -283,7 +292,7 @@
   - **WHEN** any of these holds, **THEN** `cargo reach` **SHALL** fail and name it, writing nothing:
     - a registered point has no hits;
     - a scenario's file is missing;
-    - a file names an unregistered point.
+    - a file names an unregistered point outside the reserved `test.` prefix.
   - **WHEN** `cargo ci` runs, **THEN** it **SHALL**:
     - clear the reach directory before `test`;
     - after `test`, run a `reach` step that generates the table in memory, compares it with `docs/reach.md`, fails on any difference, and writes nothing;
