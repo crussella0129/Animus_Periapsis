@@ -8,13 +8,16 @@ use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
-use crate::{policy, reach};
+use crate::{policy, reach, units};
 
 /// What a step does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     /// Runs `cargo` with these arguments at the workspace root.
     Cargo(&'static [&'static str]),
+    /// Builds every test executable once, then runs the test targets as
+    /// units, several at a time (`units`, Sprint 5 T-003).
+    Test,
     /// Runs the policy rules in-process.
     Policy,
     /// Checks the Book in-process.
@@ -51,7 +54,7 @@ pub const STEPS: [Step; 6] = [
     },
     Step {
         name: "test",
-        action: Action::Cargo(&["test", "--workspace", "--locked"]),
+        action: Action::Test,
     },
     Step {
         name: "reach",
@@ -96,17 +99,18 @@ pub enum Outcome {
 }
 
 /// Runs every step, even after a failure, printing one line per step, and
-/// returns the names of the failed steps.
+/// returns the names of the failed steps. A step may write its own output to
+/// `out` before its line.
 pub fn run_with(
     steps: &[Step],
     out: &mut dyn Write,
-    mut execute: impl FnMut(&Step) -> Outcome,
+    mut execute: impl FnMut(&Step, &mut dyn Write) -> Outcome,
 ) -> Vec<&'static str> {
     let mut failed = Vec::new();
     for step in steps {
         // Child processes write to the same terminal; keep the lines in order.
         out.flush().ok();
-        match execute(step) {
+        match execute(step, out) {
             Outcome::Pass => {
                 writeln!(out, "PASS {}", step.name).ok();
             }
@@ -134,9 +138,9 @@ pub fn finish(failed: &[&str], out: &mut dyn Write) -> u8 {
 /// Runs the suite at `root` and returns the exit code.
 pub fn run(root: &Path, out: &mut dyn Write) -> u8 {
     let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
-    let failed = run_with(&STEPS, out, |step| {
+    let failed = run_with(&STEPS, out, |step, out| {
         prepare(root, step);
-        execute_with(root, step, |args| cargo_command(&cargo, root, args))
+        execute_with(root, step, out, |args| cargo_command(&cargo, root, args))
     });
     finish(&failed, out)
 }
@@ -201,16 +205,37 @@ fn scrubbed(set: impl IntoIterator<Item = OsString>) -> BTreeSet<OsString> {
 /// for the `reach` step (INT-0005 AC-6). Kept apart from `execute_with`, so
 /// tests that run a step's command at the real root clear nothing.
 fn prepare(root: &Path, step: &Step) {
-    if step.action == Action::Cargo(&["test", "--workspace", "--locked"]) {
+    if step.action == Action::Test {
         reach::clear(root);
     }
 }
 
 /// Runs one step at `root`. A cargo step runs the command `cargo` builds from
 /// the step's arguments: `cargo_command` with the cargo that started
-/// `cargo ci` (or `cargo` from the path), or whatever a test builds.
-fn execute_with(root: &Path, step: &Step, cargo: impl Fn(&[&str]) -> Command) -> Outcome {
+/// `cargo ci` (or `cargo` from the path), or whatever a test builds. The test
+/// step builds all its commands with `cargo` too, and writes their captured
+/// output to `out`; other cargo steps print straight to the terminal.
+fn execute_with(
+    root: &Path,
+    step: &Step,
+    out: &mut dyn Write,
+    cargo: impl Fn(&[&str]) -> Command + Sync,
+) -> Outcome {
     match step.action {
+        Action::Test => {
+            let problems = units::execute(
+                &units::discover(root),
+                units::slots(),
+                out,
+                &cargo,
+                &units::run_command,
+            );
+            if problems.is_empty() {
+                Outcome::Pass
+            } else {
+                Outcome::Fail(problems.join("; "))
+            }
+        }
         Action::Cargo(args) => match cargo(args).status() {
             Ok(status) if status.success() => Outcome::Pass,
             Ok(status) => Outcome::Fail(format!("cargo {} exited with {status}", args.join(" "))),
@@ -243,12 +268,12 @@ fn execute_with(root: &Path, step: &Step, cargo: impl Fn(&[&str]) -> Command) ->
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
     use std::collections::BTreeSet;
     use std::ffi::{OsStr, OsString};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
+    use std::sync::Mutex;
 
     use super::{
         Action, Outcome, STEPS, Step, cargo_command, execute_with, finish, prepare, run, run_with,
@@ -318,6 +343,15 @@ fn inherits_no_stripped_variable() {
             "version = 4\n\n[[package]]\nname = \"probe\"\nversion = \"0.0.0\"\n",
         );
         write("src/lib.rs", PROBE);
+        // An integration test too, so a `--test` unit also runs under the
+        // scrubbed environment (Sprint 5 T-003).
+        write(
+            "tests/probe.rs",
+            &PROBE.replace(
+                "fn inherits_no_stripped_variable",
+                "fn probe_inherits_no_stripped_variable",
+            ),
+        );
         write(
             "docs/.sprint-loop-book",
             "schema-version: 2\ntyped-acceptance: 1\n",
@@ -362,7 +396,7 @@ fn inherits_no_stripped_variable() {
             },
             Step {
                 name: "test",
-                action: Action::Cargo(&["test", "--workspace", "--locked"]),
+                action: Action::Test,
             },
             Step {
                 name: "reach",
@@ -400,16 +434,16 @@ fn inherits_no_stripped_variable() {
                 "{}",
                 step.name
             );
-            let handed = RefCell::new(Vec::new());
-            let outcome = execute_with(&root, &step, |passed| {
-                handed.borrow_mut().push(owned(passed));
+            let handed = Mutex::new(Vec::new());
+            let outcome = execute_with(&root, &step, &mut std::io::sink(), |passed| {
+                handed.lock().unwrap().push(owned(passed));
                 // A command that passes, so only the arguments are at stake.
                 let mut version = Command::new(env!("CARGO"));
                 version.arg("--version").stdout(Stdio::null());
                 version
             });
             assert_eq!(
-                (outcome, handed.into_inner()),
+                (outcome, handed.into_inner().unwrap()),
                 (Outcome::Pass, vec![owned(args)]),
                 "{}",
                 step.name
@@ -438,7 +472,10 @@ fn inherits_no_stripped_variable() {
         };
 
         let version = step(Action::Cargo(&["--version"]));
-        assert_eq!(execute_with(&root, &version, quiet(cargo)), Outcome::Pass);
+        assert_eq!(
+            execute_with(&root, &version, &mut std::io::sink(), quiet(cargo)),
+            Outcome::Pass
+        );
 
         const UNKNOWN: &[&str] = &["no-such-subcommand", "--locked"];
         let status = cargo_command(OsStr::new(cargo), &root, UNKNOWN)
@@ -447,7 +484,12 @@ fn inherits_no_stripped_variable() {
             .status;
         assert!(!status.success(), "cargo must reject {UNKNOWN:?}");
         assert_eq!(
-            execute_with(&root, &step(Action::Cargo(UNKNOWN)), quiet(cargo)),
+            execute_with(
+                &root,
+                &step(Action::Cargo(UNKNOWN)),
+                &mut std::io::sink(),
+                quiet(cargo)
+            ),
             Outcome::Fail(format!(
                 "cargo no-such-subcommand --locked exited with {status}"
             ))
@@ -461,11 +503,21 @@ fn inherits_no_stripped_variable() {
             .status;
         assert_eq!(status.code(), Some(1), "cargo must exit 1 on {BAD_FLAG:?}");
         assert_eq!(
-            execute_with(&root, &step(Action::Cargo(BAD_FLAG)), quiet(cargo)),
+            execute_with(
+                &root,
+                &step(Action::Cargo(BAD_FLAG)),
+                &mut std::io::sink(),
+                quiet(cargo)
+            ),
             Outcome::Fail(format!("cargo --no-such-flag exited with {status}"))
         );
 
-        let missing = execute_with(&root, &version, quiet("no-such-cargo-program"));
+        let missing = execute_with(
+            &root,
+            &version,
+            &mut std::io::sink(),
+            quiet("no-such-cargo-program"),
+        );
         let Outcome::Fail(reason) = missing else {
             panic!("a program that does not exist must fail the step");
         };
@@ -473,13 +525,13 @@ fn inherits_no_stripped_variable() {
 
         for action in [Action::Policy, Action::Book] {
             assert_eq!(
-                execute_with(&root, &step(action), quiet(cargo)),
+                execute_with(&root, &step(action), &mut std::io::sink(), quiet(cargo)),
                 Outcome::Pass
             );
             let nowhere = root.join("no-such-workspace");
             assert!(
                 matches!(
-                    execute_with(&nowhere, &step(action), quiet(cargo)),
+                    execute_with(&nowhere, &step(action), &mut std::io::sink(), quiet(cargo)),
                     Outcome::Fail(_)
                 ),
                 "{action:?} must fail without a workspace"
@@ -514,7 +566,7 @@ fn inherits_no_stripped_variable() {
                 format!("# INT-0001 — X\n\n## Acceptance criteria\n{criteria}"),
             )
             .unwrap();
-            outcomes.push(execute_with(&root, &book, |_| {
+            outcomes.push(execute_with(&root, &book, &mut std::io::sink(), |_| {
                 panic!("the Book step runs no cargo")
             }));
         }
@@ -541,7 +593,11 @@ fn inherits_no_stripped_variable() {
             name: "policy",
             action: Action::Policy,
         };
-        let execute = || execute_with(&root, &policy, |_| panic!("the policy step runs no cargo"));
+        let execute = || {
+            execute_with(&root, &policy, &mut std::io::sink(), |_| {
+                panic!("the policy step runs no cargo")
+            })
+        };
         let mut outcomes = vec![execute()];
         fs::write(root.join(".gitattributes"), "* text=auto eol=lf\n").unwrap();
         outcomes.push(execute());
@@ -587,7 +643,7 @@ fn inherits_no_stripped_variable() {
         ];
         let mut ran = Vec::new();
         let mut out = Vec::new();
-        let failed = run_with(&steps, &mut out, |step| {
+        let failed = run_with(&steps, &mut out, |step, _| {
             ran.push(step.name);
             match step.name {
                 "two" => Outcome::Fail("could not run cargo-no-such-tool".to_owned()),
@@ -642,11 +698,36 @@ sprint 1
     /// compiled or which toolchain compiles it.
     #[test]
     fn test_step_removes_golden_create() {
+        // Every command a step runs: each cargo step's own, and every command
+        // the test step builds, its pre-build and each unit.
+        let mut commands: Vec<(&str, Command)> = Vec::new();
         for step in STEPS {
-            let Action::Cargo(args) = step.action else {
-                continue;
-            };
-            let command = cargo_command(OsStr::new("cargo"), Path::new("."), args);
+            if let Action::Cargo(args) = step.action {
+                commands.push((
+                    step.name,
+                    cargo_command(OsStr::new("cargo"), Path::new("."), args),
+                ));
+            }
+        }
+        let built = Mutex::new(Vec::new());
+        let units = crate::units::discover(&repo_root());
+        crate::units::execute(
+            &units,
+            4,
+            &mut std::io::sink(),
+            &|args| cargo_command(OsStr::new("cargo"), Path::new("."), args),
+            &|command| {
+                built.lock().unwrap().push(command);
+                crate::units::Ran {
+                    ok: true,
+                    output: String::new(),
+                }
+            },
+        );
+        let built = built.into_inner().unwrap();
+        assert_eq!(built.len(), units.len() + 1, "the pre-build and every unit");
+        commands.extend(built.into_iter().map(|command| ("test", command)));
+        for (step, command) in commands {
             for name in [
                 "PERI_GOLDEN_CREATE",
                 "PERI_WRITER_CHILD",
@@ -663,7 +744,7 @@ sprint 1
                 let removed = command
                     .get_envs()
                     .any(|(key, value)| key == OsStr::new(name) && value.is_none());
-                assert!(removed, "the {} step must not inherit {name}", step.name);
+                assert!(removed, "the {step} step must not inherit {name}");
             }
         }
     }
@@ -687,7 +768,11 @@ sprint 1
         )
         .unwrap();
         let child = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "ci::tests::run_passes_a_clean_workspace"])
+            .args([
+                "--exact",
+                "ci::tests::run_passes_a_clean_workspace",
+                "--nocapture",
+            ])
             .env("XTASK_CI_WORKSPACE", &root)
             .env("PERI_GOLDEN_CREATE", "1")
             .env("PROPTEST_CASES", "1")
@@ -705,7 +790,8 @@ sprint 1
         assert!(
             child.status.success()
                 && stdout.contains("test ci::tests::run_passes_a_clean_workspace ... ok")
-                && stdout.contains("test inherits_no_stripped_variable ... ok"),
+                && stdout.contains("test inherits_no_stripped_variable ... ok")
+                && stdout.contains("test probe_inherits_no_stripped_variable ... ok"),
             "{stdout}{}",
             String::from_utf8_lossy(&child.stderr)
         );
@@ -722,14 +808,35 @@ sprint 1
         };
         let mut out = Vec::new();
         let code = run(Path::new(&root), &mut out);
+        let out = String::from_utf8(out).unwrap();
+        // The test step's unit output, which now sits among the step lines,
+        // reaches the parent through this test's own output.
+        println!("{out}");
+        let steps: Vec<&str> = out
+            .lines()
+            .filter(|line| line.starts_with("PASS ") || line.starts_with("FAIL "))
+            .collect();
         assert_eq!(
-            (code, String::from_utf8(out).unwrap()),
+            (code, steps, out.lines().last()),
             (
                 0,
-                "PASS fmt\nPASS clippy\nPASS test\nPASS reach\nPASS policy\nPASS book\nci: all 6 steps passed\n"
-                    .to_owned()
+                vec![
+                    "PASS fmt",
+                    "PASS clippy",
+                    "PASS test",
+                    "PASS reach",
+                    "PASS policy",
+                    "PASS book"
+                ],
+                Some("ci: all 6 steps passed")
             )
         );
+        for test in [
+            "test inherits_no_stripped_variable ... ok",
+            "test probe_inherits_no_stripped_variable ... ok",
+        ] {
+            assert!(out.contains(test), "{test}");
+        }
     }
 
     #[test]

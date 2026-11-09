@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-003 (sprint 5) [intent: INT-0003, INT-0005]: Run test targets in parallel inside cargo ci — touches: crates/xtask/src/ci.rs, crates/xtask/src/units.rs, crates/xtask/src/main.rs
 - [ ] T-004 (sprint 5) [intent: INT-0003, INT-0004]: The CI workflow, its pin and its clause — touches: .github/workflows/ci.yml, crates/xtask/src/pins.rs, crates/xtask/src/workflow.rs, crates/xtask/src/ci.rs
 - [ ] T-005 (sprint 5) [intent: INT-0003]: README, credits and backlog — touches: README.md, docs/prior-art.md, crates/xtask/src/docs.rs, docs/work/tasks.md
 
