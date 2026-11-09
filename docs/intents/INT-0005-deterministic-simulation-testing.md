@@ -67,9 +67,14 @@ filesystem and clock simulation, the crash matrix and the determinism rules.
   Promoting the one entry alone let an older change to the same name reappear
   after a crash, an impossible state (Sprint 1 code review). Each pending entry
   change acts only on the file it was made for.
-- The matrix models whole-system crashes. A process crash with the system
-  still running (unsynced state visible to the next process) is not
-  simulated yet; it belongs with multi-process writers (INT-0007 AC-5).
+- The matrices model whole-system crashes, and since Sprint 4 process
+  crashes too. `sim::Processes` runs several simulated processes over one
+  filesystem, one at a time, switching at syscalls and named points by the
+  seed. A killed process stops at a boundary; its writes, synced or not,
+  stay visible to the others until a system crash settles them by the seed
+  (`docs/spec/simulation.md`). The four-writer matrix kills process 0
+  between its op's rename and its `ops/` sync while another process names
+  that op (INT-0007 AC-5).
 - Each durability measure needs its own probe: in Sprint 1 the matrix at
   first could not tell `put_object`'s sync from `commit_op`'s re-sync, because
   each masked the other. Acknowledged objects are now checked, and a
@@ -102,3 +107,4 @@ filesystem and clock simulation, the crash matrix and the determinism rules.
 - 2026-11-08: revised while `active` (Sprint 4 Plan, on the owner's proposal of dormant coded breakpoints collected in a table, and of regression runs that pass back through every earlier unit): AC-6 adds reach. Named points that are not syscalls, a registry of them, and a generated reach table make that triangle of runs × units checked evidence.
 - 2026-11-08: revised while `active` (Sprint 4 plan critique, round 1): AC-6 defines a unit; Consequences require a point for each new durable unit and record that points are scheduling boundaries under several processes.
 - 2026-11-08: revised while `active` (Sprint 4 plan critique, round 2, C-009): a unit may be a module as well as a function.
+- 2026-11-09: revised while `active` (Sprint 4 build, T-010): the Consequence on process crashes records the model built (several simulated processes, kills, the four-writer matrix) in place of "not simulated yet".

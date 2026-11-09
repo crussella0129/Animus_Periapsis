@@ -59,7 +59,7 @@ const OWNER_PARAGRAPHS: [&str; 2] = [
     "Visual Branding intent for the readme (and github pages if i go that route) - like general Radahn's sword, very crude yet mystical looking bent field lines and objects trajectories, emblazoned in stone, associated with 'gravity magick', bc the name of the product is Apsis, which is an orbit like term. Perhaps the Readme hero is like a figure doing a GFOB around a celestial body or something, emblazoned in the stone. ",
 ];
 
-const NO_FLAGS: &str = "`cargo ci`, `cargo policy` and `cargo book` take no flags.";
+const NO_FLAGS: &str = "`cargo ci`, `cargo policy`, `cargo book` and `cargo reach` take no flags.";
 
 /// Whether `text` names `name` as a whole word, with no ASCII letter or digit
 /// right before or after it, so that `JGit` does not credit Git.
@@ -127,6 +127,12 @@ fn readme_problems(readme: &str) -> Vec<String> {
     if !described {
         problems.push("README must say what `cargo policy` and `cargo book` do".to_owned());
     }
+    let reach = readme
+        .lines()
+        .any(|line| line.contains("`cargo reach`") && line.contains("reach table"));
+    if !reach {
+        problems.push("README must say what `cargo reach` does".to_owned());
+    }
     if !readme.lines().any(|line| line == NO_FLAGS) {
         problems.push(format!("README must say exactly: {NO_FLAGS}"));
     }
@@ -184,7 +190,7 @@ fn readme_keeps_statement_and_links_book() {
 
     let reworded = replace(
         &format!("{NO_FLAGS}\n"),
-        "`cargo ci` and `cargo policy` take no flags.\n",
+        "`cargo ci`, `cargo policy` and `cargo book` take no flags.\n",
     );
     assert_eq!(
         readme_problems(&reworded),
@@ -205,11 +211,12 @@ fn readme_must_document_each_command() {
     let ci = "README must show `cargo ci` as a command line";
     let deny = "README must show `cargo deny check` as a command line";
     let described = "README must say what `cargo policy` and `cargo book` do";
+    let reach = "README must say what `cargo reach` does";
 
     let (head, rest) = readme.split_once("Requires rustup").unwrap();
     let (_, tail) = rest.split_once("Designs borrowed").unwrap();
     let cut = format!("{head}{NO_FLAGS}\nNever run `cargo deny check`.\n\nDesigns borrowed{tail}");
-    assert_eq!(readme_problems(&cut), [ci, deny, described]);
+    assert_eq!(readme_problems(&cut), [ci, deny, described, reach]);
 
     let narrowed = replace(
         "```bash\ncargo deny check\n```",
@@ -225,4 +232,10 @@ fn readme_must_document_each_command() {
         "",
     );
     assert_eq!(readme_problems(&undescribed), [described]);
+    let unexplained = readme
+        .lines()
+        .filter(|line| !line.starts_with("`cargo reach` rewrites"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_eq!(readme_problems(&unexplained), [reach]);
 }

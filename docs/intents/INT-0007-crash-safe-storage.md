@@ -87,6 +87,14 @@ and referential integrity.
   parent. Both re-syncs share one negative control, exercised by a race of
   each kind.
 
+- Several writers need no lock. In the four-writer matrix (Sprint 4), four
+  simulated processes commit ops over one store, with a process killed
+  mid-commit and a system crash at every step: 44,836 cells, no violation.
+  Each process's re-sync of the parents it names is what keeps a later op
+  from surviving a crash that loses the op it names: without it
+  (`UnsyncedReferences`) the forced race loses closure. Several writers
+  leave several op heads, which the store derives correctly; merging them
+  is [INT-0010](INT-0010-lock-free-concurrency.md)'s.
 - Power loss on real hardware is out of scope: there is no power-cut rig, and
   the simulator's crash model (INT-0005), which assumes only what POSIX
   promises in strict mode, stands in for it (Sprint 4 plan critique, C-021).
@@ -104,3 +112,4 @@ and referential integrity.
 - 2026-11-07: revised while `active` (Sprint 2 code review, CR-11 and CR-14): references must also be of the kind they name (a view's heads and workspaces are changesets, a changeset's puts are blobs), and the closure Consequence rests on data-before-names and the shared `objects/` directory sync rather than on acknowledgement order alone.
 - 2026-11-07: evidence while `active` (Sprint 2 Loop): AC-1 to AC-4 hold again with closure through references and reference kinds (Sprint 2 test report). AC-5 (four writing processes) remains in backlog T-011.
 - 2026-11-08: revised while `active` (Sprint 4 plan critique, round 1): Consequences record that power loss on real hardware is out of scope and the crash model stands in.
+- 2026-11-09: revised while `active` (Sprint 4 build, T-010): Consequences record what four writers in separate simulated processes showed (no lock needed; the parent re-sync is load-bearing; several heads are derived correctly).

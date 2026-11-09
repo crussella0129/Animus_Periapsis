@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-description = "Project tooling behind the cargo ci and cargo policy aliases"
+description = "Project tooling behind the cargo ci, cargo policy and cargo reach aliases"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
