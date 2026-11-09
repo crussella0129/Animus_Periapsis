@@ -279,3 +279,11 @@
 - **Files modified:** README.md, docs/prior-art.md, docs/work/tasks.md
 - **Evidence:** README lists praps log, praps undo and praps restore OP, says what undo and restore keep and refuse, and updates the workspace and praps crate rows. docs/prior-art.md credits jj's operation log (op undo, op restore) and stale-working-copy recovery, and Microsoft's Naming Files, Paths, and Namespaces as a specification source; cargo policy credits passes. Backlog T-018 (log linear in the op log) records work found and not done; T-011, T-012, T-015, T-016 and T-017 stay. Book check 0 violations.
 - **Commit:** `63569fbcc7b501bb93aeb9836ba8f7db04bcecbe`
+
+## T-001 (sprint 4)
+- **Description:** Record the Sprint 3 checkpoint's GitHub Actions runs and owner sign-offs
+- **Intent:** [INT-0003](../intents/INT-0003-engineering-baseline.md), [INT-0004](../intents/INT-0004-windows-and-linux.md), [INT-0006](../intents/INT-0006-format-v1.md), [INT-0001](../intents/INT-0001-periapsis-charter.md), [INT-0002](../intents/INT-0002-typed-acceptance-criteria.md)
+- **Completed:** 2026-11-09T00:39:36Z
+- **Files modified:** docs/sprints/s4/sprint-tests/ci-sprint3.md, docs/intents/INT-0003-engineering-baseline.md, docs/intents/INT-0004-windows-and-linux.md, docs/intents/INT-0006-format-v1.md, docs/work/tasks.md
+- **Evidence:** ci-sprint3.md records runs 42443548089 (pull request) and 42443543930 (push) at 4f05dd1, 42536778981 (main push of merge 7b2fd59) and 42537492546 (dev push of 7b2fd59): every job success; rustc 1.99.1 on windows-2025-vs2026 and ubuntu-26.04; 407 tests on Windows and 408 on Linux in 46 binaries, equal to Sprint 3's local counts; ci: all 5 steps passed in every leg; cargo deny check (advisories, bans, licenses, sources ok) on Linux in every run, the half Sprint 3 deferred. No owner sign-off was given; they are carried forward in backlog T-020, which replaces T-017.
+- **Commit:** PENDING

@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-001 (sprint 4) [intent: INT-0001, INT-0002, INT-0003, INT-0004, INT-0006]: Record the Sprint 3 checkpoint's GitHub Actions runs and owner sign-offs (absorbs former backlog T-017) — touches: docs/sprints/s4/sprint-tests/ci-sprint3.md, docs/intents/, docs/work/tasks.md
 - [ ] T-002 (sprint 4) [intent: INT-0005]: A thread-safe SimFs, with the Sprint 3 digests asserted — touches: crates/sim/, crates/store/tests/, crates/workspace/tests/
 - [ ] T-003 (sprint 4) [intent: INT-0005]: Named points and the point registry — touches: crates/sim/, crates/workspace/tests/real_edits.rs
 - [ ] T-004 (sprint 4) [intent: INT-0005, INT-0003]: The points policy rule — touches: crates/xtask/src/policy.rs
@@ -14,3 +13,5 @@
 - [ ] T-015 (backlog) [intent: INT-0004]: Detect a directory's case sensitivity and name rules by probe (for example, create and look up a case variant of a temporary name) instead of from the platform, so case-sensitive NTFS directories are not over-reported and WSL drvfs mounts are protected (Sprint 3 plan critique, C-016) — touches: crates/sim/src/real.rs, crates/workspace/
 - [ ] T-016 (backlog) [intent: INT-0004, INT-0009]: Allow case-only renames (file and directory) on case-insensitive filesystems when restoring: write through a temporary name and rename, with a SimFs that models case-insensitive lookups and consistent recovery of case-variant entry changes (Sprint 3 plan critique, round 2, C-006) — touches: crates/sim/src/simfs.rs, crates/workspace/
 - [ ] T-018 (backlog) [intent: INT-0013, INT-0009]: Make `log` linear in the op log: it rebuilds each op's working-copy tree from its first-parent chain to count files, which is quadratic in history length; derive the counts incrementally or from cached derived data (Sprint 3 build, T-007) — touches: crates/workspace/
+
+- [ ] T-020 (backlog) [intent: INT-0001, INT-0002, INT-0003, INT-0004, INT-0006]: Record the Sprint 4 checkpoint's GitHub Actions runs and the owner's sign-offs still pending after Sprint 4 (INT-0001 AC-1, INT-0002 AC-1, INT-0003 AC-5, INT-0006 AC-6 for Sprint 0's frozen sections, INT-0004 AC-5) — touches: docs/sprints/, docs/intents/
