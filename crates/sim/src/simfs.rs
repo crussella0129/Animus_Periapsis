@@ -191,6 +191,20 @@ pub type Hook = Box<dyn FnMut(u64) + Send>;
 /// any other, as syscalls of the thread that reached the point.
 pub type Action = Arc<dyn Fn() + Send + Sync>;
 
+/// A boundary the scheduler of [`crate::Processes`] acts at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Boundary {
+    /// Just before a syscall.
+    Syscall,
+    /// At a named point, after it is counted and before its actions run.
+    Point(&'static str),
+}
+
+/// The scheduler's callback, run on the thread that reached a boundary with
+/// no lock held. It may block (a wait for the baton or on an ordering) or
+/// unwind (a kill).
+pub(crate) type Switch = Arc<dyn Fn(Boundary) + Send + Sync>;
+
 /// What the simulator keeps about named points ([`Fs::point`]), apart from
 /// the filesystem state: points are not syscalls.
 #[derive(Default)]
@@ -229,6 +243,7 @@ pub struct SimFs {
     state: Mutex<State>,
     hook: Mutex<Option<Hook>>,
     points: Mutex<Points>,
+    switch: Mutex<Option<Switch>>,
 }
 
 impl SimFs {
@@ -254,6 +269,23 @@ impl SimFs {
             .entry(name)
             .or_default()
             .push(Arc::new(action));
+    }
+
+    /// Sets or clears the scheduler's callback (see [`crate::Processes`]).
+    pub(crate) fn set_switch(&self, switch: Option<Switch>) {
+        *self.switch.lock().unwrap_or_else(PoisonError::into_inner) = switch;
+    }
+
+    /// Runs the scheduler's callback, if one is set, with no lock held.
+    fn switch_at(&self, at: Boundary) {
+        let switch = self
+            .switch
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(switch) = switch {
+            switch(at);
+        }
     }
 
     /// Removes every action attached to points.
@@ -384,6 +416,7 @@ impl SimFs {
             }),
             hook: Mutex::new(None),
             points: Mutex::new(Points::default()),
+            switch: Mutex::new(None),
         }
     }
 
@@ -676,11 +709,14 @@ impl SimFs {
             }),
             hook: Mutex::new(None),
             points: Mutex::new(Points::default()),
+            switch: Mutex::new(None),
         }
     }
 
     /// Counts and traces one syscall, failing it at and after the crash point.
     fn syscall(&self, op: &str, path: &Path) -> io::Result<()> {
+        // Several simulated processes switch here, before anything else.
+        self.switch_at(Boundary::Syscall);
         let next = {
             let st = self.lock();
             if st.crashed {
@@ -1000,11 +1036,18 @@ impl Fs for SimFs {
     fn point(&self, name: &'static str) {
         // Counted first, with no syscall, trace line or seed draw, so a point
         // changes nothing a single-process run does.
+        self.points()
+            .reach
+            .entry(name)
+            .and_modify(|n| *n += 1)
+            .or_insert(1);
+        // Under several simulated processes: a kill, then any ordering wait,
+        // happen here, after the count and before the actions.
+        self.switch_at(Boundary::Point(name));
         let crashed = self.lock().crashed;
         let me = thread::current().id();
         let actions = {
-            let mut points = self.points();
-            *points.reach.entry(name).or_insert(0) += 1;
+            let points = self.points();
             if crashed || points.running.contains(&(me, name)) {
                 return;
             }

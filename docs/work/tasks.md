@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-005 (sprint 4) [intent: INT-0005, INT-0007]: sim::Processes, the deterministic scheduler with orderings and kills — touches: crates/sim/
 - [ ] T-006 (sprint 4) [intent: INT-0005, INT-0007, INT-0014]: Plant and register points in store and workspace, and move the two-writer race to a named point — touches: crates/store/, crates/workspace/
 - [ ] T-007 (sprint 4) [intent: INT-0007, INT-0005]: The four-writer matrix and the four-process real-filesystem test (absorbs former backlog T-011) — touches: crates/store/tests/, crates/xtask/src/ci.rs
 - [ ] T-008 (sprint 4) [intent: INT-0005, INT-0003]: Reach recording, cargo reach, the reach step in cargo ci, and the simulation spec — touches: crates/sim/src/reach.rs, crates/store/tests/, crates/workspace/tests/, crates/xtask/, .cargo/config.toml, docs/reach.md, docs/spec/simulation.md, docs/SUMMARY.md
