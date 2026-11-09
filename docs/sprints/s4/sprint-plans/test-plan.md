@@ -12,7 +12,7 @@
 | [INT-0004](../../../intents/INT-0004-windows-and-linux.md) | AC-7 reported by every command that snapshots, on success and failure | T-009 | `snapshotting_commands_return_reports`, `failed_undo_carries_reports`, `praps_log_reports_skipped_names`, `praps_undo_reports_skipped_names`, `praps_restore_reports_skipped_names`, `praps_new_reports_skipped_names`, `praps_failed_undo_reports_skipped_names`, `praps_output_unchanged_without_reports` |
 | INT-0004 | AC-1 suite on both systems | every task | the integration run on Windows and in WSL; GitHub halves recorded by the next sprint |
 | [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md) | AC-1, 0 lost edits | T-006, T-009 | the Snapshot and Materialise matrices (digest constants), the edit corpora |
-| [INT-0003](../../../intents/INT-0003-engineering-baseline.md) | AC-9, AC-10 four flagless commands; AC-5 credits; policy rules | T-004, T-008, T-010 | `reach_rejects_arguments`, `reach_refuses_out_of_tree`, `cargo policy`, review of README and `docs/prior-art.md` |
+| [INT-0003](../../../intents/INT-0003-engineering-baseline.md) | AC-9, AC-10 four flagless commands; AC-5 credits; policy rules | T-004, T-008, T-010 | `reach_rejects_arguments`, `reach_refuses_out_of_tree`, `cargo policy`, `readme_problems` with the four-command sentence, review of README and `docs/prior-art.md` |
 | INT-0003, [INT-0006](../../../intents/INT-0006-format-v1.md), INT-0004, [INT-0001](../../../intents/INT-0001-periapsis-charter.md), [INT-0002](../../../intents/INT-0002-typed-acceptance-criteria.md) | Sprint 3's GitHub halves; sign-offs | T-001 | review of `ci-sprint3.md` against `gh run view` |
 
 ## Unit Tests
@@ -55,7 +55,10 @@
 - `processes_runs_are_deterministic`: three processes writing files, two runs per seed over 20 seeds: equal traces, states and results.
 - `processes_seeds_vary_interleavings`: at least two distinct traces over 20 seeds.
 - `orderings_hold_back_a_point`: with an ordering, B is never passed before A in 20 seeds.
-- `ordering_deadlock_is_reported`: crossed orderings end with the deadlock error naming both points.
+- `ordering_deadlock_is_reported`: crossed orderings between live processes end with the deadlock error naming both points.
+- `orderings_wait_on_a_process_end`: a `(p, End)` predecessor holds *q* until *p* returns.
+- `orderings_are_released_by_a_crash`: a process held by an ordering when the system crashes is released, and its next syscall fails with the crash.
+- `orderings_are_released_when_the_source_process_ends`: a process waiting on a point that a returned, killed or panicked process never reached is released.
 - `killed_process_state_stays_visible`: process 0 writes without syncing and is killed at a step. Process 1 reads its bytes. Process 0 made no further syscall and reports `Killed`.
 - `kill_at_a_point`: a kill on the *n*-th arrival at a named point stops the process there.
 - `kill_then_crash_settles_by_seed`: after a kill and a crash, `recover` keeps, drops or tears the pending data by the seed, the same in two runs.
@@ -79,6 +82,7 @@
 - `reach_is_idempotent`: two runs write identical bytes.
 - `reach_fails_on_an_unreached_point`, `reach_fails_on_a_missing_scenario`, `reach_fails_on_an_unregistered_point`: each fails, names the item, and writes nothing.
 - `reach_rejects_arguments`: `--check`, `-q` and `x` each exit 2.
+- `reach_drops_test_points`: a `test.`-prefixed name in a scenario's counts is dropped when recorded, and fails nothing.
 - `reach_refuses_out_of_tree`.
 - `ci_steps_are_ordered_and_locked` (extended): six steps in order, the reach directory cleared before `test`, and `PERI_WRITER_CHILD` scrubbed.
 - `reach_table_shows_the_triangle`: reads the committed `docs/reach.md`. The four-writer row has non-zero Sprint 1 `store::commit_op` and `store::put_object` cells. The Materialise row has non-zero Sprint 1 store cells and a non-zero Sprint 2 `workspace::snapshot` cell.
@@ -92,11 +96,12 @@
 ### The four-writer matrix
 - **Intents:** [INT-0007](../../../intents/INT-0007-crash-safe-storage.md), [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md)
 - `writers_matrix_finds_no_violations`: 40 seeds × 2 modes × every global crash step × {no kill, one kill}, with 0 violations. It prints the cell count, the killed-cell count and the wall time, and writes the reach file.
-- `writers_forced_race_runs`: in every odd seed's uncrashed run, process 2's second op names process 0's op while process 0 is held.
+- `writers_forced_race_runs`: in every odd seed's uncrashed run, process 2's second op names process 0's op while process 0 is held, and that op's name is not durable at process 2's listing.
+- `writers_retry_reaches_present`: process 1's second commit of the same op is acknowledged and reaches `store.commit_op.present_synced`.
 - `writers_overlap_in_some_even_seed`: at least one even seed overlaps two commits without orderings.
 - `writers_kills_happen`: every uncrashed kill run reports `Killed` for the chosen process.
-- `writers_catch_pointer_file`, `writers_catch_unsynced_objects`, `writers_catch_unsynced_init`, `writers_catch_write_in_place`, `writers_catch_unsynced_references`: strict mode, with the semantic kinds above and the counts printed.
-- `writers_matrix_is_reproducible`: two runs give equal cells, and the digest equals its constant on both systems.
+- `writers_catch_pointer_file`, `writers_catch_unsynced_objects`, `writers_catch_unsynced_init`, `writers_catch_write_in_place`, `writers_catch_unsynced_references`: strict mode, with the semantic kinds above and the counts printed. `writers_catch_unsynced_references` also requires a non-zero count of odd cells in which process 0's op is not durable at process 2's rename.
+- `writers_matrix_is_reproducible`: two runs (one shared with `writers_matrix_finds_no_violations`) give equal cells in canonical order, and the digest equals its constant on both systems.
 - Budget: the `writers` binary within 10 minutes wall-clock on the Windows host, with the measured time recorded.
 
 ### The existing matrices and corpora

@@ -35,7 +35,7 @@ filesystem and clock simulation, the crash matrix and the determinism rules.
 - **AC-5** `supporting` `empirical` — Network faults (partitions, reordering, a hostile peer) are simulated for sync with the same seed discipline (delivered with INT-0024).
 - **AC-6** `supporting` `empirical` — Reach: every named point registered in a boundary crate is reached by at least one simulation scenario, and the committed reach table (scenarios × units, each grouped by the sprint that built it) equals the one generated from the latest run.
   - Threshold: 100% of registered points reached; `cargo ci` fails on a stale table.
-  - Note: a *unit* is a function of a boundary crate that a point marks (`crate::function`); its sprint is the sprint whose build plan delivered it.
+  - Note: a *unit* is a function or module of a boundary crate that a point marks (`crate::name`); its sprint is the sprint whose build plan delivered it.
 
 ## Rationale
 - Deterministic simulation testing is the established method for storage and
@@ -101,3 +101,4 @@ filesystem and clock simulation, the crash matrix and the determinism rules.
 - 2026-11-07: revised while `active` (Sprint 2 Loop): Consequences record that an oracle must not read the state it checks, and the randomness routes not yet banned (T-014). AC-1 to AC-4 hold again for the new syscall and the Snapshot matrix; AC-5 (network faults) remains, so the chapter stays `active`.
 - 2026-11-08: revised while `active` (Sprint 4 Plan, on the owner's proposal of dormant coded breakpoints collected in a table, and of regression runs that pass back through every earlier unit): AC-6 adds reach. Named points that are not syscalls, a registry of them, and a generated reach table make that triangle of runs × units checked evidence.
 - 2026-11-08: revised while `active` (Sprint 4 plan critique, round 1): AC-6 defines a unit; Consequences require a point for each new durable unit and record that points are scheduling boundaries under several processes.
+- 2026-11-08: revised while `active` (Sprint 4 plan critique, round 2, C-009): a unit may be a module as well as a function.

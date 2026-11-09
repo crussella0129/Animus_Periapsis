@@ -14,7 +14,7 @@ Periapsis's own code is 100% Rust in one Cargo workspace. Crates have the
 simplest names that say what they do — single lowercase words such as `hash`,
 `codec`, `book` and `xtask`; the user-facing crate and its command are
 `praps`, short for periapsis. Project tooling is just as plain: `cargo ci`,
-`cargo policy` and `cargo book` are idempotent,
+`cargo policy`, `cargo book` and `cargo reach` are idempotent,
 so they take no flags. Every crate forbids `unsafe` code; the toolchain is
 pinned in `rust-toolchain.toml`; `Cargo.lock` is committed and CI builds
 `--locked`; dependency licences, advisories and bans are enforced with
@@ -110,3 +110,4 @@ and the independent mrustc bootstrap are C++, so that claim is not achievable
 - 2026-10-31: `planned` → `active` (Sprint 0 build, T-001 starts).
 - 2026-11-01: revised while `active`, on owner direction (no state change): the command and the user-facing crate are `praps`, short for periapsis, replacing `peri`, and a published library takes a `praps-` prefix. `praps` was free on crates.io when checked. The Intent, Boundaries, AC-7, Rationale and Consequences are reworded to match.
 - 2026-11-08: revised while `active` (Sprint 4 plan critique, round 1, C-012): `cargo reach`, which writes the reach table of [INT-0005](INT-0005-deterministic-simulation-testing.md) AC-6, joins AC-9 and AC-10 as a fourth flagless, idempotent project command; `cargo ci` checks the table in-process instead of through a flag.
+- 2026-11-08: revised while `active` (Sprint 4 plan critique, round 2, C-007): the Intent paragraph names `cargo reach` among the flagless project commands, matching AC-9 and AC-10.

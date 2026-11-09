@@ -97,7 +97,7 @@
   - The `Hook` keeps running only at syscall boundaries, as now.
   - An action's own syscalls are ordinary syscalls of the process that reached the point.
   - `sim::Point { name, unit, sprint }` is `const`-constructible. Its fields:
-    - `unit` is the function of a boundary crate the point marks, as `crate::function`;
+    - `unit` is the function or module of a boundary crate the point marks, as `crate::name`;
     - `sprint` is the sprint whose build plan delivered that unit (INT-0005 defines "unit").
 
 ### T-004: The `points` policy rule
@@ -136,7 +136,11 @@
       - its wait on an ordering.
     - the run **SHALL** return each process's result in input order: its value, `Killed`, or its panic.
   - **WHEN** two runs have the same seed, closures and `SimFs` seed, **THEN** their traces, final states and results **SHALL** be identical. **WHEN** 20 seeds are run, **THEN** at least two distinct interleavings **SHALL** appear.
-  - **WHEN** an ordering `((p, A, n), (q, B, m))` is given, **THEN** process *q*, on reaching its *m*-th point B, **SHALL** wait until process *p* has reached its *n*-th point A. A process counts as having reached a point as soon as it arrives there, even if it then waits. **WHEN** every live process is waiting, **THEN** the run **SHALL** stop with an ordering-deadlock error naming the waiting points.
+  - **WHEN** an ordering is given, **THEN** process *q*, on reaching its *m*-th point B, **SHALL** wait. The predecessor is either a point, `((p, A, n), (q, B, m))`, or the end of a process, `((p, End), (q, B, m))`:
+    - for a point, *q* waits until process *p* has reached its *n*-th point A. A process counts as having reached a point as soon as it arrives, even if it then waits there;
+    - for an end, *q* waits until process *p* has ended.
+  - **WHEN** the system has crashed, or the predecessor's process has ended (returned, killed or panicked) without reaching A, **THEN** the wait **SHALL** be released. After a crash the waiter's next syscall fails.
+  - **WHEN** every live process waits on a live process, **THEN** the run **SHALL** stop with an ordering-deadlock error naming the waiting points. This is a test bug, never a matrix outcome.
   - **WHEN** a kill is set for process *p*, either at its *k*-th boundary or at its *n*-th arrival at point A, **THEN** *p* **SHALL** stop there, make no further syscall, and report `Killed`. Its writes, synced or not, **SHALL** stay visible to the others. **WHEN** the system then crashes, **THEN** `recover` **SHALL** settle them by the seed like any pending state.
   - **WHEN** a process panics, **THEN** every other process **SHALL** be unwound at its next boundary with the kill marker. The run **SHALL** return the first panic after every thread has joined, with no deadlock.
   - **WHEN** a crash point is reached in an interleaved run, **THEN** every process's later syscalls **SHALL** fail with the simulated crash, and the run **SHALL** finish.
@@ -169,9 +173,16 @@
     Each point is a string literal at its call site.
   - **WHEN** the working copy is written or snapshotted, **THEN** `workspace` **SHALL** call:
     - `workspace.snapshot.scanned` and `workspace.snapshot.committed` (`workspace::snapshot`, 2);
-    - `workspace.record.written` and `workspace.record.dropped` (`workspace::record`, 3);
-    - `workspace.apply.path_written` and `workspace.apply.path_removed` (`workspace::apply`, 3);
+    - `workspace.record.written` and `workspace.record.dropped` (`workspace::record`, a module, 3);
+    - `workspace.apply.path_written` and `workspace.apply.path_removed` (`workspace::materialise`, a module, 3);
     - `workspace.resume.started` and `workspace.resume.dropped` (`workspace::resume`, 3).
+  - **WHEN** the plan is locked, **THEN** each registered point's expected scenario **SHALL** be as listed:
+    - store: every `store.*` point except `commit_op.present_synced`. ForkMerge reaches `put_object.present_synced`;
+    - four writers: `store.commit_op.present_synced`, through process 1's retry;
+    - Snapshot: `workspace.snapshot.*`;
+    - Materialise: `workspace.record.*`, `workspace.apply.*` and `workspace.resume.*`. `resume.dropped` is reached where a crash falls between the record's write and the target op's commit.
+
+    **WHEN** a build run finds a point unreached, **THEN** a new scenario **SHALL** be extended to reach it, or the point **SHALL** be removed. Either change is recorded in the build notes. No Sprint 3 scenario is changed, so its digest stays fixed.
   - **WHEN** `put_object` or `commit_op` writes a new file in the correct store, **THEN** it **SHALL** reach `temp_written`, `temp_synced`, `renamed` and `dir_synced` once each, in that order. **WHEN** the file is already present, **THEN** it **SHALL** reach only `present_synced`.
   - **WHEN** the two-writer scenario runs, **THEN** writer B **SHALL** be fired by an action on `store.put_object.renamed` (the view race) or `store.commit_op.renamed` (the parent race). The action re-checks that the target is visible and not durable, as `install_race` does now, and reads no trace. The point sits immediately after `rename` returns, with no syscall in between, so B's syscalls take the same numbers as before. The store digest **SHALL** equal its asserted constant.
   - **WHEN** all three Sprint 3 matrices run, **THEN** their asserted digests **SHALL** hold.
@@ -190,11 +201,14 @@
     - `init` and a base op, then four processes over one `SimFs`, each opening its own `Store` with its own seed.
     - Each process records a state of its own (distinct content) and commits a first op whose parent is the base.
     - Processes 2 and 3 then list the ops their store sees and commit a second op. Its parents are their own first op and every other op they listed that no listed op names as a parent.
+    - Process 1 commits its first op twice, as a retry after a lost acknowledgement would. The second commit takes the already-present path, so it reaches `store.commit_op.present_synced`.
     - In odd seeds, orderings force the parent race:
-      - (process 0's first `store.commit_op.renamed`) before (process 2's listing point);
+      - (process 1's end), (process 3's end) and (process 2's first `store.commit_op.dir_synced`) before (process 0's first `store.commit_op.temp_written`). So no other `open` or `ops/` sync can make process 0's op durable during the hold, and no second op of process 3 can take process 0's op out of the heads;
+      - (process 0's first `store.commit_op.renamed`) before (process 2's `test.writers.listing`);
       - (process 2's second `store.commit_op.renamed`) before (process 0's first `store.commit_op.renamed`).
 
-      So process 0 is held between its op's rename and its `ops/` sync while process 2 names that op. The listing point is test-local (`test.writers.listing`) and not registered.
+      So process 0 is held between its op's rename and its `ops/` sync while process 2 lists and names that op. In the correct store, process 2's parent re-sync then makes the op durable. `UnsyncedReferences` skips that re-sync, so a crash between process 2's rename and its `ops/` sync can keep process 2's op and lose process 0's.
+    - The listing point uses the reserved `test.` prefix. Points with that prefix are never registered and are dropped when reach is recorded.
     - Even seeds use no orderings.
   - **The log.**
     - It lives outside the process threads and survives kills.
@@ -210,12 +224,18 @@
     - In even seeds, the killed process and its step *k* are drawn from the seed. *k* lies within that process's boundary count in the seed's uncrashed run.
     - In odd seeds, process 0 is killed on arrival at its held `store.commit_op.renamed`. A later process then sees the dead one's unsynced op.
     - **WHEN** a kill run is uncrashed, **THEN** it **SHALL** report `Killed` for the chosen process. The number of cells that killed a process **SHALL** be printed.
-  - **WHEN** an odd seed's uncrashed run is examined in the correct store, **THEN** process 2's second op **SHALL** name process 0's op, and the forced race **SHALL** have run. **WHEN** any even seed's uncrashed run is examined, **THEN** at least one of them **SHALL** show two commits overlapping.
+  - **WHEN** an odd seed's uncrashed run is examined in the correct store, **THEN**:
+    - process 2's second op **SHALL** name process 0's op;
+    - process 0's op name **SHALL NOT** be durable when process 2 reaches `test.writers.listing`;
+    - the number of odd cells in which it is still not durable at process 2's second `renamed` **SHALL** be printed per variant, and **SHALL** be non-zero for `UnsyncedReferences`. **WHEN** any even seed's uncrashed run is examined, **THEN** at least one of them **SHALL** show two commits overlapping.
   - **WHEN** each store variant runs the matrix in strict mode, **THEN** it **SHALL** produce semantic violations (closure, durability, heads or atomicity), as Sprints 1 to 3 required:
     - `PointerFile`, `UnsyncedObjects`, `UnsyncedInit`, `WriteInPlace`: at least one;
     - `UnsyncedObjects`: durability > 0 and torn > 0;
     - `UnsyncedReferences`: closure > 0 in the odd-seed (forced-race) cells.
-  - **WHEN** the correct matrix runs twice, **THEN** every cell's recovered state, trace and outcome **SHALL** be equal. One digest over all cells **SHALL** be printed, compared across Windows and Linux, and recorded as an asserted constant in T-008.
+  - **WHEN** the correct matrix runs twice, **THEN** every cell's recovered state, trace and outcome **SHALL** be equal:
+    - one of the two runs is the one `writers_matrix_finds_no_violations` uses, shared through a once-initialised cache, so the matrix runs twice, not three times;
+    - cells **SHALL** be ordered canonically by (mode, seed, kill setting, crash step) before digesting, whatever order they ran in;
+    - one digest over all cells **SHALL** be printed, compared across Windows and Linux, and asserted as a constant in T-008.
   - **The real filesystem.** The test binary re-runs itself as four child processes, each committing 25 ops of its own distinct content to one temporary store; each op's parents are its own previous op and the base.
     - The child mode needs both an exact test-name argument and the variable `PERI_WRITER_CHILD`. `cargo ci` scrubs that variable as it scrubs `PERI_GOLDEN_CREATE`.
     - Each child prints the ids and parents of its acknowledged ops.
@@ -232,6 +252,7 @@
     2. reuse process threads across cells;
     3. stop a variant's run once its required violation kinds are all found, which still records that they were found.
   - The seed count never drops below INT-0005 AC-2's 40.
+  - The budget is recorded, not asserted. If all three controls still miss it, the budget is raised to the measured time, and the raise is recorded in the test report and the test critique's responses.
 
 ### T-008: Reach recording, `cargo reach`, the `reach` step in `cargo ci`, and the simulation spec
 - **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0003](../../../intents/INT-0003-engineering-baseline.md)
@@ -247,7 +268,11 @@
     - Materialise (`materialise_matrix_finds_no_violations`, Unix rules).
 
     **WHEN** that test finishes, **THEN** it **SHALL** write the scenario's name, the sprint that added it, and the point counts summed over its cells to `$CARGO_TARGET_TMPDIR/reach/<scenario>.txt`, through a temporary file and a rename.
-  - **Which runs count.** The scenario's own run, and the next command it models on the recovered filesystem (the `open` that resumes, in the Snapshot and Materialise scenarios). The oracle's checks (`fsck`, inspection, its own `init` or `open`) do not count.
+  - **Which runs count:**
+    - reach is read from the scenario's own `SimFs` after its run;
+    - for a scenario that models a next command on the recovered filesystem, reach is also read from that copy right after the command returns, before the oracle runs any check. The command is `init` and `snapshot` for Snapshot, and the resuming `open` for Materialise. Store, two writers and four writers model none;
+    - the oracle's checks (`fsck`, inspection, its own `init`, `open` or `snapshot`) never count;
+    - names with the reserved `test.` prefix are dropped (`reach_drops_test_points`).
   - **WHEN** `cargo reach` runs, **THEN** it **SHALL** take no arguments and write `docs/reach.md`:
     - one row per scenario, ordered by sprint;
     - one column per unit, grouped and ordered by the sprint that built it;
@@ -288,7 +313,7 @@
 
 ### T-010: Consequences, credits, README and backlog
 - **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0003](../../../intents/INT-0003-engineering-baseline.md), [INT-0007](../../../intents/INT-0007-crash-safe-storage.md)
-- **Touches:** docs/intents/INT-0005-deterministic-simulation-testing.md, docs/intents/INT-0007-crash-safe-storage.md, docs/prior-art.md, docs/work/tasks.md, README.md
+- **Touches:** docs/intents/INT-0005-deterministic-simulation-testing.md, docs/intents/INT-0007-crash-safe-storage.md, docs/prior-art.md, docs/work/tasks.md, README.md, crates/xtask/src/docs.rs, crates/xtask/Cargo.toml
 - **Depends on:** T-001 to T-009
 - **Acceptance criterion:** INT-0003 AC-5 and AC-10; INT-0005 and INT-0007 Consequences.
 - **Success criterion (EARS):**
@@ -296,7 +321,8 @@
     - `docs/prior-art.md` **SHALL** credit fail-rs, RocksDB sync points, FoundationDB BUGGIFY, and shuttle with PCT (Burckhardt et al., ASPLOS 2010), and **SHALL** record the owner's proposal of coded breakpoints and the run × unit triangle;
     - INT-0005's Consequences **SHALL** replace "a process crash is not simulated yet" with the model built;
     - INT-0007's Consequences **SHALL** record what several writers showed;
-    - the README **SHALL** document `cargo reach` among the four flagless project commands.
+    - the README **SHALL** document `cargo reach` among the four flagless project commands. Its no-flags sentence becomes "`cargo ci`, `cargo policy`, `cargo book` and `cargo reach` take no flags." `readme_problems` in `crates/xtask/src/docs.rs` **SHALL** require that sentence and a description of `cargo reach`;
+    - the `xtask` crate's description and its row in the README's crate table **SHALL** name all four commands.
   - **WHEN** the backlog is updated, **THEN**:
     - T-011 and T-019 **SHALL** move to completed;
     - new tasks **SHALL** record test selection from the reach table, and the move of the remaining trace-text hooks (`crates/workspace/tests/workspace.rs`, `materialise.rs`) to named points (critique C-020);
