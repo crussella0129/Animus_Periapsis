@@ -1,21 +1,24 @@
 # Sprint 5 Unit Test Results
 
-**Tested head:** `3289008` (`32890088d62beed6d6fec059ff4a65b27bb307f2`), which carries T-001 to T-005.
+**Tested head:** `87df514` (`87df51441b731bf1ebf21983ef765f6655106546`). It carries T-001 to T-005 and the [code review](code-review.md) fixes, committed as `1ebb35e`. `87df514` itself changes only this directory's result files.
+
+**An earlier round.** The same tests first ran at `3289008`, the build's last commit, before the code review: 496 tests on Windows and 497 in WSL, all passing. Its GitHub samples are recorded in [e2e-tests.md](e2e-tests.md).
 
 **Run by:** `cargo ci` on Windows 11 (NTFS) in the working checkout, and twice in a fresh WSL Ubuntu clone (ext4), rustc 1.99.1. Every test named here printed `... ok` in the Windows run's log. The WSL runs passed the same tests and one more, `real_symlinked_directories_are_not_followed`, which is Unix only.
 
-| System | `test:` total line | `ci:` line |
+| System | `test:` lines | `ci:` line |
 |---|---|---|
-| Windows | `test: 36 units, 496 passed, 0 failed, 0 ignored` | `ci: all 6 steps passed` |
-| WSL, run 1 | `test: 36 units, 497 passed, 0 failed, 0 ignored` | `ci: all 6 steps passed` |
-| WSL, run 2 | `test: 36 units, 497 passed, 0 failed, 0 ignored` | `ci: all 6 steps passed` |
+| Windows | `test: 45 test executables built, 45 run`; `test: 36 units, 500 passed, 0 failed, 0 ignored` | `ci: all 6 steps passed` |
+| WSL, run 1 | `test: 45 test executables built, 45 run`; `test: 36 units, 501 passed, 0 failed, 0 ignored` | `ci: all 6 steps passed` |
+| WSL, run 2 | `test: 45 test executables built, 45 run`; `test: 36 units, 501 passed, 0 failed, 0 ignored` | `ci: all 6 steps passed` |
 
-Sprint 4's GitHub legs ran 478 tests on Windows and 479 on Linux. This sprint adds 18:
+Sprint 4's GitHub legs ran 478 tests on Windows and 479 on Linux. This sprint adds 22:
 - `optimised_test_profile_is_the_reviewed_one` (T-002);
 - `a_reservation_on_the_error_path_is_measured` (T-002);
-- the 16 tests in `crates/xtask/src/units.rs` (T-003).
+- the 16 tests in `crates/xtask/src/units.rs` (T-003);
+- 4 more from the code review: `a_build_that_reports_nothing_fails_the_step`, `an_executable_the_build_did_not_report_fails_the_step`, `each_unit_is_announced_when_it_starts` and `run_command_keeps_the_streams_in_order`.
 
-478 + 18 = 496, and 479 + 18 = 497. No test was removed.
+478 + 22 = 500, and 479 + 22 = 501. No test was removed.
 
 ## By build task
 
@@ -49,7 +52,7 @@ All in `crates/xtask/src/units.rs` unless noted.
 - **Commands:**
   - `test_step_builds_once_then_runs_each_unit`: the first command is `test --workspace --locked --no-run`, and every unit's command starts `test --workspace --locked --no-fail-fast`.
   - `a_failed_build_runs_no_unit`: only the pre-build runs, and its output is printed.
-  - `the_step_sets_cargo_terminal_settings`: the pre-build and both unit commands carry `CARGO_TERM_QUIET=false`, `CARGO_TERM_VERBOSE=false` and `CARGO_TERM_COLOR=never`.
+  - `the_step_sets_cargo_terminal_settings`: the pre-build and both unit commands carry `CARGO_TERM_QUIET=false`, `CARGO_TERM_VERBOSE=false`, `CARGO_TERM_COLOR=never` and, since CR-08, `CARGO_TERM_PROGRESS_WHEN=never`.
 - **Running units:**
   - `units_never_exceed_the_slots`: 12 units under 3 slots. At most 3 ran at once, and all 12 ran.
   - `unit_output_is_never_interleaved`: 8 units with 50 marker lines each, under 4 slots. Each unit's markers are contiguous, directly under its header.
@@ -68,20 +71,39 @@ All in `crates/xtask/src/units.rs` unless noted.
   - `test_step_clears_the_recorded_reach`.
   - `test_step_removes_golden_create`: now covers the pre-build and all 36 unit commands of this repository, and none inherits a scrubbed variable.
   - `hostile_variables_never_reach_a_step`: the child `cargo ci` printed both `test inherits_no_stripped_variable ... ok` and `test probe_inherits_no_stripped_variable ... ok`. So a `--lib --bins` unit and a `--test probe` unit both ran under the scrubbed environment.
-  - `run_passes_a_clean_workspace`;
+  - `run_passes_a_clean_workspace`: since CR-04, it also asserts `test: 2 test executables built, 2 run`. So the real pre-build's `Executable` lines were parsed, and the probe library's executable and `tests/probe.rs`'s both ran.
   - `steps_execute_for_real`;
   - `ci_failures_do_not_stop_later_steps`.
+
+### The code review fixes
+These are in `crates/xtask/src/units.rs` unless noted ([code-review.md](code-review.md)).
+- `a_build_that_reports_nothing_fails_the_step` (CR-04): with test units to run and no `Executable` line, the step fails.
+- `an_executable_the_build_did_not_report_fails_the_step` (CR-04): a unit that ran `b-9`, which the build did not report, fails the step.
+- `each_unit_is_announced_when_it_starts` (CR-05): `---- unit <name>: started` comes before each unit's result block.
+- `run_command_keeps_the_streams_in_order` (CR-06):
+  - `cargo --version` passes with its output;
+  - `cargo --no-such-flag` fails with its error;
+  - a missing program fails as "could not run cargo".
 
 ### T-004: The workflow
 - `workflow_matches_ci_contract` (`crates/xtask/src/ci.rs`). The committed workflow has no problems, and each of the following mutants is caught.
 
-  **39 mutants:**
+  **47 mutants:** 39 from the build and 8 from the code review.
   - triggers (7): `push` on `[dev, main]`, `['**']` and `[develop]`; `push` without branches; `push` removed; `pull_request_target`; `workflow_dispatch` removed;
   - concurrency (4): removed; constant group; group without `github.sha`; `cancel-in-progress: true`;
   - the suite (5): `ci` on `ubuntu-latest` only; `cargo ci` moved out of its job; `cargo ci` with `if: false`; a matrix `exclude`; `continue-on-error`;
   - lint (8): one platform; `runs-on: ubuntu-latest`; job `if: false`; Clippy removed; fmt removed; no `-D warnings`; a matrix `include`; Clippy with `if: false`;
   - deny (9): install removed; install moved to `lint`; install after the check; the Embark action; another tool installed; install with `if: false`; check with `if: false`; job with `if: false`; deny on Windows with an unrelated job added;
-  - shell (6): five `||` forms and `set +e`.
+  - shell (6): five `||` forms and `set +e`;
+  - code review (8):
+    - the `lint` job removed and its steps put into `ci` (CR-01);
+    - a group in which every push to `main` shares one group (CR-02);
+    - a cancelling job-level `concurrency` (CR-02);
+    - `shell: cat {0}` on `cargo ci` (CR-03);
+    - job `defaults` with a `shell` (CR-03);
+    - `working-directory` on Clippy (CR-03);
+    - `checksum: false` (CR-07);
+    - `tool: cargo-deny-unrelated` (CR-07).
 
   **The loops:**
   - 8 narrowed deny commands, including `cargo deny fetch` and `fetch && echo check`;
