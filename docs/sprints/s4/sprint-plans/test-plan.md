@@ -3,88 +3,123 @@
 ## Intent Traceability
 | Intent | Acceptance criterion | Build task / EARS clause | Verification |
 |--------|----------------------|--------------------------|--------------|
-| [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md) | AC-1 determinism, with points and interleavings | T-002 / a point is not a syscall, traced or seeded; T-004 / same seed gives the same run; T-005 / digests unchanged; T-006 / the four-writer digest is reproducible | `points_are_not_syscalls`, `points_do_not_change_traces`, `processes_runs_are_deterministic`, `processes_seeds_vary_interleavings`, the store, Snapshot and Materialise digest tests, `writers_matrix_is_reproducible` |
-| INT-0005 | AC-2 crash matrix with several writers and a process crash | T-004 / kill; T-006 / every cell | `killed_process_state_stays_visible`, `kill_then_crash_settles_by_seed`, `crash_in_interleaved_run_stops_every_process`, `writers_matrix_finds_no_violations` |
-| INT-0005 | AC-3 negative controls under four writers | T-006 / each variant caught | `writers_matrix_catches_every_variant` |
-| INT-0005 | AC-6 reach: every point reached; the table regenerated and checked | T-002 / reach counted; T-003 / the registry complete; T-007 / the table, the unreached-point failure, `--check` | `reach_counts_points`, `policy_points_rule` (fixtures), `reach_table_is_generated`, `reach_fails_on_an_unreached_point`, `reach_fails_on_a_missing_scenario`, `reach_check_fails_on_a_stale_table`, `cargo reach --check` in `cargo ci` |
-| [INT-0007](../../../intents/INT-0007-crash-safe-storage.md) | AC-5: four processes, no corrupt record, no lost op, under crash injection | T-006 | `writers_matrix_finds_no_violations`, `writers_overlap_in_some_seed`, E2E `real_four_processes_lose_nothing` (NTFS, ext4) |
-| INT-0007 | AC-1 to AC-3 with several writers; the two-writer race preserved | T-005, T-006 | `two_writer_race_fires_at_the_named_point`, the store matrix digest, `writers_matrix_finds_no_violations` |
-| [INT-0004](../../../intents/INT-0004-windows-and-linux.md) | AC-7 reported by every command that snapshots | T-008 | `undo_restore_and_new_return_reports`, `praps_undo_reports_skipped_names`, `praps_restore_reports_skipped_names`, `praps_new_reports_skipped_names`, `praps_output_unchanged_without_reports` |
+| [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md) | AC-1 determinism, with points and interleavings | T-002 / Sprint 3 digests asserted; T-003 / a point is not a syscall, traced or seeded; T-005 / same seed gives the same run; T-007 and T-008 / the four-writer digest reproducible and asserted | `matrix_runs_are_reproducible`, `snapshot_matrix_is_reproducible`, `materialise_matrix_is_reproducible` (each asserting its constant), `points_are_not_syscalls`, `points_do_not_change_traces`, `processes_runs_are_deterministic`, `processes_seeds_vary_interleavings`, `writers_matrix_is_reproducible` |
+| INT-0005 | AC-2 crash matrix with several writers and a process crash | T-005 / kills; T-007 / every cell, forced race, bounded kills | `killed_process_state_stays_visible`, `kill_at_a_point`, `kill_then_crash_settles_by_seed`, `crash_in_interleaved_run_stops_every_process`, `writers_matrix_finds_no_violations`, `writers_forced_race_runs`, `writers_overlap_in_some_even_seed`, `writers_kills_happen` |
+| INT-0005 | AC-3 negative controls under four writers, semantic violations in strict mode | T-007 | `writers_catch_pointer_file`, `writers_catch_unsynced_objects` (durability and torn), `writers_catch_unsynced_init`, `writers_catch_write_in_place`, `writers_catch_unsynced_references` (closure in forced-race cells) |
+| INT-0005 | AC-6 reach: every point reached; the table regenerated and checked | T-003 / reach counted; T-004 / the registry complete; T-006 / the points planted; T-008 / the table, failures, the `reach` step | `reach_counts_points`, `policy_points_rule`, `store_points_mark_each_stage`, `workspace_points_mark_each_stage`, `reach_table_is_generated`, `reach_is_idempotent`, `reach_fails_on_an_unreached_point`, `reach_fails_on_a_missing_scenario`, `reach_fails_on_an_unregistered_point`, `reach_rejects_arguments`, `reach_table_shows_the_triangle`, `ci_steps_are_ordered_and_locked` (extended), the `reach` step of `cargo ci` |
+| [INT-0007](../../../intents/INT-0007-crash-safe-storage.md) | AC-5: four processes, no corrupt record, no lost op, under crash injection | T-007 | `writers_matrix_finds_no_violations`, E2E `real_four_processes_lose_nothing` (NTFS, ext4) |
+| INT-0007 | AC-1 to AC-3 with several writers; the two-writer race preserved | T-006, T-007 | `two_writer_race_fires_at_the_named_point`, the store digest constant, `writers_matrix_finds_no_violations` (closure, acknowledged ⊆ present ⊆ acknowledged ∪ in-flight, objects, heads from the log, `fsck`) |
+| [INT-0004](../../../intents/INT-0004-windows-and-linux.md) | AC-7 reported by every command that snapshots, on success and failure | T-009 | `snapshotting_commands_return_reports`, `failed_undo_carries_reports`, `praps_log_reports_skipped_names`, `praps_undo_reports_skipped_names`, `praps_restore_reports_skipped_names`, `praps_new_reports_skipped_names`, `praps_failed_undo_reports_skipped_names`, `praps_output_unchanged_without_reports` |
 | INT-0004 | AC-1 suite on both systems | every task | the integration run on Windows and in WSL; GitHub halves recorded by the next sprint |
-| [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md) | AC-1, 0 lost edits | T-005, T-008 | the Snapshot and Materialise matrices (digests unchanged), the edit corpora |
-| [INT-0003](../../../intents/INT-0003-engineering-baseline.md) | AC-5 credits; policy rules | T-003, T-009 | `cargo policy`; review of `docs/prior-art.md` |
+| [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md) | AC-1, 0 lost edits | T-006, T-009 | the Snapshot and Materialise matrices (digest constants), the edit corpora |
+| [INT-0003](../../../intents/INT-0003-engineering-baseline.md) | AC-9, AC-10 four flagless commands; AC-5 credits; policy rules | T-004, T-008, T-010 | `reach_rejects_arguments`, `reach_refuses_out_of_tree`, `cargo policy`, review of README and `docs/prior-art.md` |
 | INT-0003, [INT-0006](../../../intents/INT-0006-format-v1.md), INT-0004, [INT-0001](../../../intents/INT-0001-periapsis-charter.md), [INT-0002](../../../intents/INT-0002-typed-acceptance-criteria.md) | Sprint 3's GitHub halves; sign-offs | T-001 | review of `ci-sprint3.md` against `gh run view` |
 
 ## Unit Tests
 ### T-002 unit tests
 - **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md)
-- `points_are_not_syscalls`: points before, between and after syscalls leave `syscalls()`, the trace and every crash outcome as without them, for every syscall kind.
-- `points_do_not_change_traces`: the contract scenario with and without points, over 40 seeds × 2 modes: equal traces and states.
-- `reach_counts_points`: `reach()` returns each name with its call count, sorted by name.
-- `on_point_actions_run_in_order`: two actions on one name run in the order attached, and none on other names.
-- `points_count_but_do_not_act_after_a_crash`.
-- `real_fs_point_is_a_no_op`: `RealFs::point` changes nothing on disk.
 - `simfs_is_send_and_sync`: a compile-time assertion, and `Arc<SimFs>` used from two threads.
+- `poisoned_state_is_recovered`: a thread panicking inside a hook while holding no lock, and one panicking with the state locked (by a test-only path), leave later calls working.
+- The three reproducibility tests, now asserting their Sprint 3 digest constants.
 
 ### T-003 unit tests
-- **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0003](../../../intents/INT-0003-engineering-baseline.md)
-- `policy_points_rule`: fixtures for an unregistered point, an unused registration, a duplicate, a malformed name, a non-literal argument (each fails and names the point and file), and the clean fixture (passes).
+- **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md)
+- `points_are_not_syscalls`: points before, between and after syscalls leave `syscalls()`, the trace and every crash outcome as without them, for every syscall kind.
+- `points_do_not_change_traces`: the contract scenario with and without points over 40 seeds × 2 modes gives equal traces and states.
+- `reach_counts_points`: `reach()` returns each name with its call count, sorted.
+- `on_point_actions_run_in_order`: two actions on one name run in the order attached, and none run on other names.
+- `on_point_action_is_not_reentered`: an action that reaches its own point on the same thread is not entered again, and the point is still counted.
+- `points_count_but_do_not_act_after_a_crash`.
+- `recover_drops_actions_and_reach`.
+- `points_reach_through_every_forwarder`: `&SimFs`, `Rc<SimFs>` and `Arc<SimFs>` each count a point.
+- `real_fs_point_is_a_no_op`.
 
 ### T-004 unit tests
-- **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0007](../../../intents/INT-0007-crash-safe-storage.md)
-- `processes_run_one_at_a_time`: a shared counter shows no two processes inside a step together.
-- `processes_runs_are_deterministic`: three processes writing files, run twice per seed over 20 seeds: equal traces, states and results.
-- `processes_seeds_vary_interleavings`: at least two distinct traces over 20 seeds.
-- `orderings_hold_back_a_point`: with `(A, B)`, B is never passed before A in 20 seeds.
-- `ordering_deadlock_is_reported`: `(A, B)` and `(B, A)` across two processes end with the deadlock error naming both points.
-- `killed_process_state_stays_visible`: process 0 writes without syncing and is killed. Process 1 reads its bytes. It made no further syscall and reports `Killed`.
-- `kill_then_crash_settles_by_seed`: after a kill and a crash, `recover` keeps, drops or tears the killed process's pending data by the seed, the same in two runs.
-- `crash_in_interleaved_run_stops_every_process`: every process's syscalls after the crash point fail, and the run returns.
-- `panic_in_a_process_ends_the_run`: the panic reaches the caller after every thread has joined, with no deadlock and a timeout guard.
+- **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0003](../../../intents/INT-0003-engineering-baseline.md)
+- `policy_points_rule`, with fixtures that each fail and name the point and file:
+  - an unregistered point;
+  - an unused registration;
+  - a duplicate;
+  - a malformed name;
+  - a wrong crate prefix;
+  - a non-literal argument;
+  - an unrecognised registry entry;
+  - a sprint out of range.
+
+  Fixtures that must pass: a commented-out and a rustdoc `.point("…")` (neither counts), a literal on the line after `.point(`, and the clean fixture.
 
 ### T-005 unit tests
 - **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0007](../../../intents/INT-0007-crash-safe-storage.md)
-- `store_points_mark_each_stage`: `put_object` and `commit_op` on `SimFs` reach their stage points in order, each once per call.
-- `workspace_points_mark_each_stage`: snapshot, record write and remove, materialise and resume reach their points.
-- `two_writer_race_fires_at_the_named_point`: every seed races, as before, with no trace inspection.
-- The existing digest tests: the store, Snapshot and Materialise matrices with unchanged digests.
+- `processes_run_one_at_a_time`: a shared counter shows no two processes inside a step together, including before their first boundary.
+- `processes_return_results_in_input_order`: values, `Killed` and a panic, in input order.
+- `processes_runs_are_deterministic`: three processes writing files, two runs per seed over 20 seeds: equal traces, states and results.
+- `processes_seeds_vary_interleavings`: at least two distinct traces over 20 seeds.
+- `orderings_hold_back_a_point`: with an ordering, B is never passed before A in 20 seeds.
+- `ordering_deadlock_is_reported`: crossed orderings end with the deadlock error naming both points.
+- `killed_process_state_stays_visible`: process 0 writes without syncing and is killed at a step. Process 1 reads its bytes. Process 0 made no further syscall and reports `Killed`.
+- `kill_at_a_point`: a kill on the *n*-th arrival at a named point stops the process there.
+- `kill_then_crash_settles_by_seed`: after a kill and a crash, `recover` keeps, drops or tears the pending data by the seed, the same in two runs.
+- `crash_in_interleaved_run_stops_every_process`.
+- `panic_in_a_process_ends_the_run`: the first panic reaches the caller after every thread has joined, under a timeout guard.
 
-### T-007 unit tests
-- **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md)
-- `reach_table_is_generated`: fixture registries and scenario files give the expected Markdown, with rows by sprint and columns grouped by sprint.
-- `reach_fails_on_an_unreached_point`, `reach_fails_on_a_missing_scenario`, `reach_check_fails_on_a_stale_table`, `reach_rejects_extra_arguments`.
+### T-006 unit tests
+- **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0007](../../../intents/INT-0007-crash-safe-storage.md)
+- `store_points_mark_each_stage`:
+  - a fresh `put_object` and `commit_op` reach `temp_written`, `temp_synced`, `renamed` and `dir_synced` once each, in order;
+  - an object already present reaches only `present_synced`;
+  - `init` reaches `layout_created` then `sync_layout.synced`;
+  - `open` reaches `sync_layout.synced`;
+  - `commit_op` with parents reaches `references_resynced`.
+- `workspace_points_mark_each_stage`: a snapshot, an `undo` (record written, paths written and removed, record dropped) and a resume after a crash each reach their points.
+- `two_writer_race_fires_at_the_named_point`: every seed races, as before, with no trace inspection, and the store digest constant holds.
 
 ### T-008 unit tests
+- **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0003](../../../intents/INT-0003-engineering-baseline.md)
+- `reach_table_is_generated`: fixture registries and scenario files give the expected Markdown, with rows by sprint and columns grouped by sprint.
+- `reach_is_idempotent`: two runs write identical bytes.
+- `reach_fails_on_an_unreached_point`, `reach_fails_on_a_missing_scenario`, `reach_fails_on_an_unregistered_point`: each fails, names the item, and writes nothing.
+- `reach_rejects_arguments`: `--check`, `-q` and `x` each exit 2.
+- `reach_refuses_out_of_tree`.
+- `ci_steps_are_ordered_and_locked` (extended): six steps in order, the reach directory cleared before `test`, and `PERI_WRITER_CHILD` scrubbed.
+- `reach_table_shows_the_triangle`: reads the committed `docs/reach.md`. The four-writer row has non-zero Sprint 1 `store::commit_op` and `store::put_object` cells. The Materialise row has non-zero Sprint 1 store cells and a non-zero Sprint 2 `workspace::snapshot` cell.
+
+### T-009 unit tests
 - **Intent:** [INT-0004](../../../intents/INT-0004-windows-and-linux.md)
-- `undo_restore_and_new_return_reports`: on `SimFs` with a raw name, each command returns the reported entry, sorted as `status` returns it.
+- `snapshotting_commands_return_reports`: on `SimFs` with a raw name, `log`, `undo`, `restore` and `new_change` each return the entry once, sorted as `status` returns it.
+- `failed_undo_carries_reports`: `undo` on the root op returns `NothingToUndo` carrying the entry.
 
 ## Integration Tests
 ### The four-writer matrix
 - **Intents:** [INT-0007](../../../intents/INT-0007-crash-safe-storage.md), [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md)
-- `writers_matrix_finds_no_violations`: 40 seeds × 2 modes × every global crash step × {no kill, one kill}, 0 violations, with the cell count printed.
-- `writers_overlap_in_some_seed`: at least one uncrashed seed overlaps two commits.
-- `writers_matrix_catches_every_variant`: each of the five variants produces at least one violation, with the counts printed.
-- `writers_matrix_is_reproducible`: equal digests in two runs, and a printed digest compared across Windows and Linux.
+- `writers_matrix_finds_no_violations`: 40 seeds × 2 modes × every global crash step × {no kill, one kill}, with 0 violations. It prints the cell count, the killed-cell count and the wall time, and writes the reach file.
+- `writers_forced_race_runs`: in every odd seed's uncrashed run, process 2's second op names process 0's op while process 0 is held.
+- `writers_overlap_in_some_even_seed`: at least one even seed overlaps two commits without orderings.
+- `writers_kills_happen`: every uncrashed kill run reports `Killed` for the chosen process.
+- `writers_catch_pointer_file`, `writers_catch_unsynced_objects`, `writers_catch_unsynced_init`, `writers_catch_write_in_place`, `writers_catch_unsynced_references`: strict mode, with the semantic kinds above and the counts printed.
+- `writers_matrix_is_reproducible`: two runs give equal cells, and the digest equals its constant on both systems.
+- Budget: the `writers` binary within 10 minutes wall-clock on the Windows host, with the measured time recorded.
 
 ### The existing matrices and corpora
 - **Intents:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md)
-- The store, two-writer, Snapshot and Materialise matrices and the edit, ignore, hazard and reversibility corpora: unchanged results, and digests equal to Sprint 3's.
+- The store, two-writer, Snapshot and Materialise matrices, with their digest constants asserted. The edit, ignore, hazard and reversibility corpora, with unchanged results.
 
 ### Reach and CI
-- **Intents:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md)
-- `cargo ci` with six steps (fmt, clippy, test, reach, policy, book) on Windows, and in a fresh WSL ext4 clone.
+- **Intents:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0003](../../../intents/INT-0003-engineering-baseline.md)
+- `cargo ci` with six steps (fmt, clippy, test, reach, policy, book) on Windows, and in a fresh WSL ext4 clone. The `reach` step passes on both, so the committed `docs/reach.md` is the same when generated on either system.
 - `cargo deny check` on both systems, with cargo-deny installed in WSL.
-- `docs/reach.md` the same when generated on either system.
 
 ## End-to-End Tests
 - **Status:** possible
-- `real_four_processes_lose_nothing`:
-  - four child processes, each committing 25 ops to one store;
-  - on NTFS (Windows) and ext4 (WSL);
-  - pass: every acknowledged op present and valid, `fsck` clean, and heads derived from all ops.
-- `praps_undo_reports_skipped_names`, `praps_restore_reports_skipped_names`, `praps_new_reports_skipped_names`: on ext4 with a non-UTF-8 name, and on NTFS with an unpaired surrogate. The command prints the name in `status`'s format and keeps exit 0.
+- `real_four_processes_lose_nothing`: four child processes each commit 25 ops of distinct content to one store, on NTFS (Windows) and ext4 (WSL). It passes when:
+  - every op a child reports is present and valid;
+  - `fsck` is clean;
+  - `store.heads()` equals the heads computed from the children's reports.
+- The `praps` skipped-name tests:
+  - `praps_log_reports_skipped_names`, `praps_undo_reports_skipped_names`, `praps_restore_reports_skipped_names`, `praps_new_reports_skipped_names` and `praps_failed_undo_reports_skipped_names`;
+  - run on ext4 with a non-UTF-8 name and on NTFS with an unpaired surrogate;
+  - each prints the name in `status`'s format and keeps its exit code.
 - `praps_output_unchanged_without_reports`: Sprint 3's CLI outputs unchanged.
 - **Not yet possible:**
-  - power loss (no hardware rig);
-  - Nighthawk (Tailscale approval pending, INT-0004 AC-6);
-  - several workspaces (INT-0014 AC-3, after INT-0010's merge).
+  - power loss: out of scope by INT-0007's Consequences; the simulator's crash model stands in;
+  - Nighthawk: Tailscale approval pending, INT-0004 AC-6;
+  - several workspaces: INT-0014 AC-3, after INT-0010's merge.

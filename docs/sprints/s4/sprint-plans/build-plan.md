@@ -2,38 +2,40 @@
 
 ## Intents
 - [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md) — state: active; acceptance criteria covered:
-  - AC-1, determinism: points and the scheduler included, and the three existing matrix digests unchanged;
+  - AC-1, determinism: with points and interleavings, and the three Sprint 3 digests asserted unchanged;
   - AC-2, the crash matrix: extended to four writers and a process crash;
   - AC-3, negative controls under four writers;
-  - AC-6 (new this sprint), reach: every named point reached, and the reach table regenerated and checked.
+  - AC-6 (new), reach: every registered point reached; the reach table regenerated and checked.
 
   AC-5 (network faults) waits for sync.
 - [INT-0007](../../../intents/INT-0007-crash-safe-storage.md) — state: active; acceptance criteria covered:
-  - AC-5: four writers committing ops concurrently, with no corrupt record and no lost op, under crash injection and a process crash. This is checked in simulation and on NTFS and ext4.
-  - AC-1 to AC-3 re-established with several writers.
+  - AC-5: four writers committing ops concurrently, with no corrupt record and no lost op, under crash injection and a process crash. Checked in simulation, and on NTFS and ext4;
+  - AC-1 to AC-3 with several writers.
 - [INT-0004](../../../intents/INT-0004-windows-and-linux.md) — state: active; acceptance criteria covered:
-  - AC-7's report: `undo`, `restore` and `new` report names with no UTF-8 form (backlog T-019);
+  - AC-7's report: every command that snapshots reports names with no UTF-8 form (backlog T-019);
   - AC-1 for this sprint's code.
-- [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md) — state: active; acceptance criteria covered: AC-1 kept through T-005's planted points and T-008's changed results.
-- [INT-0003](../../../intents/INT-0003-engineering-baseline.md), [INT-0006](../../../intents/INT-0006-format-v1.md), [INT-0001](../../../intents/INT-0001-periapsis-charter.md), [INT-0002](../../../intents/INT-0002-typed-acceptance-criteria.md) — through T-001 (backlog T-017), T-003 (a policy rule) and T-009 (credits) only.
+- [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md) — state: active; acceptance criteria covered: AC-1, kept through the planted points and the changed results.
+- [INT-0003](../../../intents/INT-0003-engineering-baseline.md) — state: active; acceptance criteria covered: AC-9 and AC-10, now with `cargo reach` as the fourth flagless project command; AC-5 credits.
+- [INT-0006](../../../intents/INT-0006-format-v1.md), [INT-0001](../../../intents/INT-0001-periapsis-charter.md), [INT-0002](../../../intents/INT-0002-typed-acceptance-criteria.md) — through T-001 (backlog T-017) only.
 
 ## Schema Tree
 - Sprint Goal: several writers coordinated by named points, and a checked table of what each scenario reaches
   - Carried forward
     - T-001: Record the Sprint 3 checkpoint's GitHub Actions runs and owner sign-offs (backlog T-017)
   - Simulation
-    - T-002: Named points, the point registry and a thread-safe `SimFs`
-    - T-003: The `points` policy rule
-    - T-004: `sim::Processes`, the deterministic scheduler with process kills
+    - T-002: A thread-safe `SimFs`, with the Sprint 3 digests asserted
+    - T-003: Named points and the point registry
+    - T-004: The `points` policy rule
+    - T-005: `sim::Processes`, the deterministic scheduler with orderings and kills
   - Storage and working copy
-    - T-005: Plant and register points in `store` and `workspace`, and move the two-writer race to a named point
-    - T-006: The four-writer matrix and the four-process real-filesystem test
+    - T-006: Plant and register points in `store` and `workspace`, and move the two-writer race to a named point
+    - T-007: The four-writer matrix and the four-process real-filesystem test
   - Reach
-    - T-007: Reach recording, `cargo reach`, and the simulation spec
+    - T-008: Reach recording, `cargo reach`, the `reach` step in `cargo ci`, and the simulation spec
   - Working copy
-    - T-008: Report skipped names from `undo`, `restore` and `new` (backlog T-019)
+    - T-009: Report skipped names from every command that snapshots (backlog T-019)
   - Documentation
-    - T-009: INT-0005 Consequences, credits and backlog
+    - T-010: Consequences, credits, README and backlog
 
 ## Execution Sequence
 
@@ -46,54 +48,79 @@
   - owner sign-offs: INT-0001 AC-1, INT-0002 AC-1, INT-0003 AC-5, INT-0006 AC-6, INT-0004 AC-5.
 - **Success criterion (EARS):**
   - **WHEN** the record is written, **THEN** `ci-sprint3.md` **SHALL** name each of the following, all taken from `gh run view` output:
-    - for every workflow run of PR #5's head and of the `main` merge commit `7b2fd59`: head SHA, event, conclusion;
+    - for every workflow run of PR #5's last head `4f05dd1` and of the `main` merge commit `7b2fd59`: head SHA, event, conclusion;
     - every job, with its conclusion and runner OS;
     - the `rustc` version, the test count of each `cargo ci` leg, and the `cargo deny` result.
   - **WHEN** an owner sign-off has not been given in the conversation, **THEN** the record **SHALL** say it is pending, and backlog T-017 **SHALL** be replaced by a carried-forward task. No sign-off **SHALL** be recorded without the owner's words.
 
-### T-002: Named points, the point registry and a thread-safe `SimFs`
+### T-002: A thread-safe `SimFs`, with the Sprint 3 digests asserted
 - **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md)
-- **Touches:** crates/sim/src/fs.rs, crates/sim/src/simfs.rs, crates/sim/src/lib.rs, crates/sim/src/point.rs, crates/sim/tests/contract.rs, crates/sim/tests/points.rs, test code that captures `Rc<SimFs>` in a hook (crates/store/tests/common/matrix.rs, crates/workspace/tests/)
+- **Touches:** crates/sim/src/simfs.rs, crates/sim/src/fs.rs, crates/sim/tests/contract.rs, crates/store/tests/crash.rs, crates/store/tests/common/matrix.rs, crates/workspace/tests/crash.rs, crates/workspace/tests/materialise_crash.rs, other tests that capture `Rc<SimFs>` in a hook
 - **Depends on:** (none)
-- **Acceptance criterion:**
-  - INT-0005 AC-1: determinism, including points;
-  - INT-0005 AC-2: the crash model unchanged by points;
-  - INT-0005 AC-6: reach is recorded per point.
+- **Acceptance criterion:** INT-0005 AC-1, determinism unchanged by the refactor (critique C-008, C-018).
 - **Success criterion (EARS):**
-  - **WHEN** code calls `Fs::point(name)` on `RealFs`, **THEN** it **SHALL** do nothing and make no syscall.
-  - **WHEN** code calls `point(name)` on a `SimFs`:
-    - **THEN** the call **SHALL NOT** be counted as a syscall, traced, or consume the seed;
-    - `SimFs::reach()` **SHALL** report the name with its count;
-    - every action attached with `SimFs::on_point(name, action)` **SHALL** run, in the order attached.
-  - **WHEN** a crash has happened, **THEN** `point` **SHALL** still count, and **SHALL NOT** run actions.
-  - **WHEN** the store, Snapshot and Materialise matrices run after this task, **THEN** their digests **SHALL** equal Sprint 3's:
-    - `blake3:d36b8c9c…ae812`;
-    - `blake3:c1e39cb1…13ea3`;
-    - `blake3:6274344b…a1ac`.
-  - **WHEN** a `SimFs` is shared through `Arc` by several threads, **THEN** it **SHALL** be `Send + Sync`. Its hook and point actions **SHALL** be `Send`, and `Fs` **SHALL** be implemented for `Arc<T>`.
+  - **WHEN** a `SimFs` is shared through `Arc` by several threads, **THEN**:
+    - it **SHALL** be `Send + Sync`;
+    - its `Hook` **SHALL** be `Send`;
+    - `Fs` **SHALL** be implemented for `Arc<T>`.
+  - **WHEN** a thread panics while it holds the state lock, **THEN** later lock calls **SHALL** recover the state, not panic on the poison, so the first panic is the one reported.
+  - **WHEN** the reproducibility tests run, **THEN** they **SHALL** assert the full Sprint 3 digests as constants, not only print them:
+    - store `blake3:d36b8c9c77744d485a362ef3d94cebe40dcb67ca7260eb409f5430c2a13ae812` over 32,840 cells;
+    - Snapshot `blake3:c1e39cb10607ff208e0f2774eee8770659aad590dbc8c71abd76522b69013ea3` over 25,360 cells;
+    - Materialise `blake3:6274344b358b15cb24d182a681c592ccad66a82564fd40c5cf45e4fcb666a1ac` over 40,960 cells.
 - **Notes:**
-  - `sim::Point { name, unit, sprint }` is a plain `const`-constructible struct.
-  - `sprint` is the sprint that built the code the point marks, not the sprint that planted it, so the reach table's columns follow the units as they were built.
-  - The `Mutex` is never held while a hook, action or switch callback runs.
+  - State moves from `RefCell` to `Mutex`. The lock is never held while a hook runs.
+  - The hook stays taken out of its slot while it runs, so its own syscalls do not run it again.
+  - No behaviour changes. This task's only evidence is the three asserted digests.
 
-### T-003: The `points` policy rule
+### T-003: Named points and the point registry
+- **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md)
+- **Touches:** crates/sim/src/fs.rs, crates/sim/src/simfs.rs, crates/sim/src/real.rs, crates/sim/src/point.rs, crates/sim/src/lib.rs, crates/sim/tests/points.rs, crates/workspace/tests/real_edits.rs (its `Under` wrapper)
+- **Depends on:** T-002
+- **Acceptance criterion:**
+  - INT-0005 AC-1 and AC-2: points change neither determinism nor the crash model;
+  - INT-0005 AC-6: reach is counted per point.
+- **Success criterion (EARS):**
+  - **WHEN** `Fs` is implemented, **THEN** `point(&self, name: &'static str)` **SHALL** have no default body, so every implementation and forwarder states what it does (critique C-007):
+    - `RealFs` and test wrappers do nothing;
+    - `&T`, `Rc<T>` and `Arc<T>` forward.
+  - **WHEN** code calls `point(name)` on a `SimFs`, **THEN**:
+    - the call **SHALL NOT** be counted as a syscall, traced, or consume the seed;
+    - `SimFs::reach()` **SHALL** report the name with its count, sorted by name;
+    - each action attached with `SimFs::on_point(name, action)` **SHALL** run, in the order attached.
+  - **WHEN** an action for a name is running on a thread and code on that thread reaches the same name again, **THEN** the point **SHALL** be counted and its actions **SHALL NOT** run again.
+  - **WHEN** a crash has happened, **THEN** `point` **SHALL** count and **SHALL NOT** run actions.
+  - **WHEN** `recover()` builds the restarted filesystem, **THEN** it **SHALL** have no hook, no actions, no switch callback and zero reach.
+  - **WHEN** the three Sprint 3 matrices run after this task, **THEN** their asserted digests **SHALL** still hold.
+- **Notes:**
+  - Actions are `Fn + Send + Sync` in an `Arc`. Any state they keep (such as a "fired" flag) is atomic.
+  - The `Hook` keeps running only at syscall boundaries, as now.
+  - An action's own syscalls are ordinary syscalls of the process that reached the point.
+  - `sim::Point { name, unit, sprint }` is `const`-constructible. Its fields:
+    - `unit` is the function of a boundary crate the point marks, as `crate::function`;
+    - `sprint` is the sprint whose build plan delivered that unit (INT-0005 defines "unit").
+
+### T-004: The `points` policy rule
 - **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0003](../../../intents/INT-0003-engineering-baseline.md)
 - **Touches:** crates/xtask/src/policy.rs
-- **Depends on:** T-002
+- **Depends on:** T-003
 - **Acceptance criterion:** INT-0005 AC-6: the registry is the complete table of points.
 - **Success criterion (EARS):**
-  - **WHEN** `cargo policy` runs, **THEN** the `points` rule **SHALL** fail and name the point and file in each of these cases, in the non-test sources of the boundary crates:
-    - a `.point("…")` literal whose name no `POINTS` registry declares;
-    - a registered name that no `.point("…")` literal uses;
+  - **WHEN** `cargo policy` runs, **THEN** the `points` rule **SHALL** read the `src/` files of the boundary crates other than `sim`, with comments removed, so a point in a comment or in rustdoc does not count. The trait and its forwarders live in `sim`.
+  - **WHEN** it reads them, **THEN** it **SHALL** fail and name the point and file in each of these cases:
+    - a `.point("…")` literal (whitespace and line breaks inside the parentheses allowed) whose name no registry declares;
+    - a registered name that no literal uses;
     - a name registered twice;
-    - a name that is not of the form `crate.function.stage`, in lowercase ASCII with `_`;
-    - a `.point(` call whose argument is not a string literal.
+    - a name not of the form `crate.function.stage`, in lowercase ASCII with `_`, whose first segment is not the crate's name;
+    - a `.point(` call whose argument is not a string literal;
+    - a registry entry not of the one accepted form, `Point { name: "…", unit: "…", sprint: N }`, inside `pub const POINTS: &[Point] = &[…];` in the crate's `src/points.rs`;
+    - a `sprint` greater than the highest `docs/sprints/sN` or less than 1.
   - **WHEN** the clean fixture and the real workspace are checked, **THEN** the rule **SHALL** pass.
 
-### T-004: `sim::Processes`, the deterministic scheduler with process kills
+### T-005: `sim::Processes`, the deterministic scheduler with orderings and kills
 - **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0007](../../../intents/INT-0007-crash-safe-storage.md)
 - **Touches:** crates/sim/src/processes.rs, crates/sim/src/simfs.rs, crates/sim/src/lib.rs, crates/sim/tests/processes.rs
-- **Depends on:** T-002
+- **Depends on:** T-003
 - **Acceptance criterion:**
   - INT-0005 AC-1 for interleaved runs;
   - INT-0005's process-crash Consequence: a killed process's unsynced state stays visible to the others;
@@ -101,114 +128,176 @@
 - **Success criterion (EARS):**
   - **WHEN** `Processes::run(fs, seed, closures)` runs N closures, **THEN**:
     - exactly one **SHALL** execute at any time;
-    - at every syscall and point boundary of the running process, the next runner **SHALL** be drawn from the seed among the processes that are able to run;
-    - the run **SHALL** return each process's result, in input order.
-  - **WHEN** two runs have the same seed, closures and `SimFs` seed, **THEN** their traces, final states and results **SHALL** be identical. **WHEN** runs over 20 seeds are compared, **THEN** at least two distinct interleavings **SHALL** appear.
-  - **WHEN** an ordering `(A, B)` is given and a process reaches point B before any process has passed point A, **THEN** that process **SHALL** wait until some process passes A. **WHEN** every live process is waiting, **THEN** the run **SHALL** stop and return an ordering-deadlock error naming the waiting points.
-  - **WHEN** `kill(p, k)` is set, **THEN** process *p* **SHALL** stop at its *k*-th boundary, make no further syscall, and report `Killed`. Its writes, synced or not, **SHALL** stay visible to the other processes. **WHEN** the system then crashes, **THEN** `recover` **SHALL** settle them by the seed like any pending state.
-  - **WHEN** a process panics, **THEN** the run **SHALL** end without deadlock, and return that panic to the caller after every thread has joined.
+    - each thread **SHALL** start only once it holds the baton;
+    - the next runner **SHALL** be drawn from the seed among the processes able to run. A draw happens at each of these:
+      - every syscall boundary and point boundary of the running process;
+      - its return;
+      - its kill;
+      - its wait on an ordering.
+    - the run **SHALL** return each process's result in input order: its value, `Killed`, or its panic.
+  - **WHEN** two runs have the same seed, closures and `SimFs` seed, **THEN** their traces, final states and results **SHALL** be identical. **WHEN** 20 seeds are run, **THEN** at least two distinct interleavings **SHALL** appear.
+  - **WHEN** an ordering `((p, A, n), (q, B, m))` is given, **THEN** process *q*, on reaching its *m*-th point B, **SHALL** wait until process *p* has reached its *n*-th point A. A process counts as having reached a point as soon as it arrives there, even if it then waits. **WHEN** every live process is waiting, **THEN** the run **SHALL** stop with an ordering-deadlock error naming the waiting points.
+  - **WHEN** a kill is set for process *p*, either at its *k*-th boundary or at its *n*-th arrival at point A, **THEN** *p* **SHALL** stop there, make no further syscall, and report `Killed`. Its writes, synced or not, **SHALL** stay visible to the others. **WHEN** the system then crashes, **THEN** `recover` **SHALL** settle them by the seed like any pending state.
+  - **WHEN** a process panics, **THEN** every other process **SHALL** be unwound at its next boundary with the kill marker. The run **SHALL** return the first panic after every thread has joined, with no deadlock.
   - **WHEN** a crash point is reached in an interleaved run, **THEN** every process's later syscalls **SHALL** fail with the simulated crash, and the run **SHALL** finish.
 - **Notes:**
-  - Each process is an OS thread, and a baton (`Mutex` and `Condvar`) lets exactly one run at a time.
-  - `SimFs` calls a shared switch callback at every syscall and point boundary. It is held in an `Arc`, so several threads can be inside it, never taken out of a slot.
-  - A kill unwinds the thread with `resume_unwind` and a private marker, which the runner catches.
+  - Each process is an OS thread. A baton (`Mutex` and `Condvar`) lets exactly one run at a time.
+  - `SimFs` calls a shared switch callback, held in an `Arc`, at every syscall and point boundary.
+  - Kills and unwinds use `resume_unwind` with a private marker, caught by the runner.
+  - Point orderings are the RocksDB `LoadDependency` form, keyed by process and occurrence, so a code change elsewhere cannot shift them.
 
-### T-005: Plant and register points in `store` and `workspace`, and move the two-writer race to a named point
+### T-006: Plant and register points in `store` and `workspace`, and move the two-writer race to a named point
 - **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0007](../../../intents/INT-0007-crash-safe-storage.md), [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md)
-- **Touches:** crates/store/src/lib.rs, crates/store/src/points.rs, crates/workspace/src/lib.rs, crates/workspace/src/points.rs, crates/store/tests/common/matrix.rs
-- **Depends on:** T-002, T-003
+- **Touches:** crates/store/src/lib.rs, crates/store/src/points.rs, crates/store/tests/store.rs, crates/store/tests/common/matrix.rs, crates/workspace/src/lib.rs, crates/workspace/src/materialise.rs, crates/workspace/src/record.rs, crates/workspace/src/points.rs, crates/workspace/tests/workspace.rs
+- **Depends on:** T-003, T-004
 - **Acceptance criterion:**
-  - INT-0005 AC-1: the digests are unchanged by planting points;
+  - INT-0005 AC-1: digests unchanged by planting points;
   - INT-0005 AC-6: the points exist and are registered;
-  - INT-0007 AC-1 to AC-3: the two-writer race is preserved.
+  - INT-0007 AC-1 to AC-3: the two-writer race preserved.
 - **Success criterion (EARS):**
-  - **WHEN** `put_object`, `commit_op` or `init` reaches a stage, **THEN** it **SHALL** call the registered point. The stages are: temporary file written, data synced, renamed into place, directory synced, and cross-directory re-sync done.
-  - **WHEN** a snapshot commits, a working-copy record is written or removed, a path is materialised, or resume starts, **THEN** `workspace` **SHALL** call the registered point.
-  - **WHEN** the two-writer scenario runs, **THEN** writer B **SHALL** be fired by `on_point` at A's `rename` point, with no inspection of the trace. The store matrix digest **SHALL** equal Sprint 3's.
-  - **WHEN** all three existing matrices run, **THEN** their digests **SHALL** be unchanged.
-  - **WHEN** `cargo policy` runs, **THEN** the `points` rule **SHALL** pass, with every planted point registered under its unit and building sprint: store points sprint 1, snapshot points sprint 2, materialise and resume points sprint 3.
+  - **WHEN** the store runs, **THEN** it **SHALL** call these points (unit and building sprint in brackets):
+    - `store.init.layout_created`, after `init` creates its directories (`store::init`, 1);
+    - `store.sync_layout.synced`, after the layout sync that `init` and `open` share (`store::sync_layout`, 1);
+    - `store.commit_op.references_resynced`, after `commit_op`'s re-sync of the view and parents (`store::commit_op`, 1);
+    - inside the shared `write_file`, with the name chosen by whether it writes an object or an op (`store::put_object` and `store::commit_op`, 1):
+      - `store.put_object.present_synced` and `store.commit_op.present_synced`, after a file already present is synced again;
+      - `….temp_written`, after the data is written to the temporary file;
+      - `….temp_synced`, after it is synced;
+      - `….renamed`, after the rename;
+      - `….dir_synced`, after the directory sync.
 
-### T-006: The four-writer matrix and the four-process real-filesystem test
+    Each point is a string literal at its call site.
+  - **WHEN** the working copy is written or snapshotted, **THEN** `workspace` **SHALL** call:
+    - `workspace.snapshot.scanned` and `workspace.snapshot.committed` (`workspace::snapshot`, 2);
+    - `workspace.record.written` and `workspace.record.dropped` (`workspace::record`, 3);
+    - `workspace.apply.path_written` and `workspace.apply.path_removed` (`workspace::apply`, 3);
+    - `workspace.resume.started` and `workspace.resume.dropped` (`workspace::resume`, 3).
+  - **WHEN** `put_object` or `commit_op` writes a new file in the correct store, **THEN** it **SHALL** reach `temp_written`, `temp_synced`, `renamed` and `dir_synced` once each, in that order. **WHEN** the file is already present, **THEN** it **SHALL** reach only `present_synced`.
+  - **WHEN** the two-writer scenario runs, **THEN** writer B **SHALL** be fired by an action on `store.put_object.renamed` (the view race) or `store.commit_op.renamed` (the parent race). The action re-checks that the target is visible and not durable, as `install_race` does now, and reads no trace. The point sits immediately after `rename` returns, with no syscall in between, so B's syscalls take the same numbers as before. The store digest **SHALL** equal its asserted constant.
+  - **WHEN** all three Sprint 3 matrices run, **THEN** their asserted digests **SHALL** hold.
+  - **WHEN** `cargo policy` runs, **THEN** the `points` rule **SHALL** pass.
+
+### T-007: The four-writer matrix and the four-process real-filesystem test
 - **Intent:** [INT-0007](../../../intents/INT-0007-crash-safe-storage.md), [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md)
-- **Touches:** crates/store/tests/common/writers.rs, crates/store/tests/writers.rs, crates/store/tests/real_writers.rs
-- **Depends on:** T-004, T-005
+- **Touches:** crates/store/tests/common/writers.rs, crates/store/tests/writers.rs, crates/store/tests/real_writers.rs, crates/xtask/src/ci.rs
+- **Depends on:** T-005, T-006
 - **Acceptance criterion:**
   - INT-0007 AC-5: at least four processes, no corrupt records, no lost ops, under crash injection;
   - INT-0007 AC-1 to AC-3 with several writers;
   - INT-0005 AC-2 and AC-3.
 - **Success criterion (EARS):**
-  - **WHEN** the scenario runs:
-    - `init` is followed by a base op;
-    - then four processes, each with its own `Store` and seed, each record a state and commit two ops;
-    - each process's first op has the base as parent;
-    - each second op has as parents the process's own first op and every other first op that its store lists at that moment.
-  - **THEN** every cell of 40 seeds × 2 modes × every global crash step × {no kill, one kill} **SHALL** satisfy:
+  - **The scenario.**
+    - `init` and a base op, then four processes over one `SimFs`, each opening its own `Store` with its own seed.
+    - Each process records a state of its own (distinct content) and commits a first op whose parent is the base.
+    - Processes 2 and 3 then list the ops their store sees and commit a second op. Its parents are their own first op and every other op they listed that no listed op names as a parent.
+    - In odd seeds, orderings force the parent race:
+      - (process 0's first `store.commit_op.renamed`) before (process 2's listing point);
+      - (process 2's second `store.commit_op.renamed`) before (process 0's first `store.commit_op.renamed`).
+
+      So process 0 is held between its op's rename and its `ops/` sync while process 2 names that op. The listing point is test-local (`test.writers.listing`) and not registered.
+    - Even seeds use no orderings.
+  - **The log.**
+    - It lives outside the process threads and survives kills.
+    - An op is *attempted* when a process logs it before calling `commit_op`, and *acknowledged* when `commit_op` returned `Ok`. Objects are logged the same way.
+    - The *in-flight* ops are those attempted but not acknowledged, in any process, including a killed one.
+  - **WHEN** a cell runs, over 40 seeds × 2 modes × every global crash step × {no kill, one kill}, **THEN** the recovered store **SHALL** satisfy:
     - closure;
-    - survival of every op acknowledged to any process, killed or not;
-    - absence or full validity of every unacknowledged op;
-    - recovered heads equal to the heads of the acknowledged ops, extended only by in-flight ops;
-    - `fsck` with no fault.
+    - acknowledged ⊆ present ⊆ acknowledged ∪ in-flight (plus the base);
+    - every acknowledged object present and valid;
+    - `store.heads()` equal to the heads computed from the logged ops (ids and parents) restricted to those present;
+    - `fsck` with no fault, where leftovers are allowed.
+  - **The kill.**
+    - In even seeds, the killed process and its step *k* are drawn from the seed. *k* lies within that process's boundary count in the seed's uncrashed run.
+    - In odd seeds, process 0 is killed on arrival at its held `store.commit_op.renamed`. A later process then sees the dead one's unsynced op.
+    - **WHEN** a kill run is uncrashed, **THEN** it **SHALL** report `Killed` for the chosen process. The number of cells that killed a process **SHALL** be printed.
+  - **WHEN** an odd seed's uncrashed run is examined in the correct store, **THEN** process 2's second op **SHALL** name process 0's op, and the forced race **SHALL** have run. **WHEN** any even seed's uncrashed run is examined, **THEN** at least one of them **SHALL** show two commits overlapping.
+  - **WHEN** each store variant runs the matrix in strict mode, **THEN** it **SHALL** produce semantic violations (closure, durability, heads or atomicity), as Sprints 1 to 3 required:
+    - `PointerFile`, `UnsyncedObjects`, `UnsyncedInit`, `WriteInPlace`: at least one;
+    - `UnsyncedObjects`: durability > 0 and torn > 0;
+    - `UnsyncedReferences`: closure > 0 in the odd-seed (forced-race) cells.
+  - **WHEN** the correct matrix runs twice, **THEN** every cell's recovered state, trace and outcome **SHALL** be equal. One digest over all cells **SHALL** be printed, compared across Windows and Linux, and recorded as an asserted constant in T-008.
+  - **The real filesystem.** The test binary re-runs itself as four child processes, each committing 25 ops of its own distinct content to one temporary store; each op's parents are its own previous op and the base.
+    - The child mode needs both an exact test-name argument and the variable `PERI_WRITER_CHILD`. `cargo ci` scrubs that variable as it scrubs `PERI_GOLDEN_CREATE`.
+    - Each child prints the ids and parents of its acknowledged ops.
+    - **WHEN** every child has exited, **THEN**:
+      - every reported op **SHALL** be present and valid;
+      - `fsck` **SHALL** report no fault;
+      - `store.heads()` **SHALL** equal the heads computed from the children's reports.
+    - Children share no object, so no file is renamed over one another reads. A sharing error is a test failure, not retried.
+- **Notes (cost, critique C-001):**
+  - About 200 syscalls a run. 40 seeds × 2 modes × about 200 steps × 2 kill settings ≈ 32,000 correct cells, run twice. The five variants run strict only, about 16,000 cells each.
+  - The budget is 10 minutes wall-clock for the `writers` test binary on the Windows host, recorded in the test evidence.
+  - If it is exceeded, these controls apply in order:
+    1. run seeds in parallel threads within a test, each with its own `SimFs`;
+    2. reuse process threads across cells;
+    3. stop a variant's run once its required violation kinds are all found, which still records that they were found.
+  - The seed count never drops below INT-0005 AC-2's 40.
 
-    The killed process and its step are drawn from the seed.
-  - **WHEN** an uncrashed four-writer run is examined, **THEN** at least one seed **SHALL** show an interleaving in which two processes' commits overlap: one renames between another's rename and directory sync.
-  - **WHEN** each of the five store variants (`PointerFile`, `UnsyncedObjects`, `UnsyncedInit`, `WriteInPlace`, `NoResync`) runs the four-writer matrix, **THEN** each **SHALL** produce at least one violation.
-  - **WHEN** the matrix runs twice, **THEN** the digest of every cell's recovered state, trace and outcome **SHALL** be equal. The digest **SHALL** be equal on Windows and Linux.
-  - **WHEN** the real test launches four OS processes (the test binary re-run as a child), each committing 25 ops to one temporary store on the real filesystem, **THEN**:
-    - every op a child reports as acknowledged **SHALL** be present and valid;
-    - `fsck` **SHALL** report no fault;
-    - heads **SHALL** equal those derived from all ops.
-- **Notes:**
-  - The counts are fixed here, before any measurement: 40 seeds, 2 modes, 2 kill settings.
-  - If the run exceeds 10 minutes on either system, the seed count is reduced only by a recorded change to this plan's critique responses, never silently.
-
-### T-007: Reach recording, `cargo reach`, and the simulation spec
-- **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md)
-- **Touches:** crates/sim/src/point.rs, crates/store/tests/common/, crates/workspace/tests/, crates/xtask/src/reach.rs, crates/xtask/src/main.rs, crates/xtask/src/ci.rs, .cargo/config.toml, docs/reach.md, docs/spec/simulation.md, docs/SUMMARY.md
-- **Depends on:** T-005, T-006
-- **Acceptance criterion:** INT-0005 AC-6.
+### T-008: Reach recording, `cargo reach`, the `reach` step in `cargo ci`, and the simulation spec
+- **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0003](../../../intents/INT-0003-engineering-baseline.md)
+- **Touches:** crates/store/tests/, crates/workspace/tests/, crates/xtask/src/reach.rs, crates/xtask/src/main.rs, crates/xtask/src/ci.rs, .cargo/config.toml, docs/reach.md, docs/spec/simulation.md, docs/SUMMARY.md
+- **Depends on:** T-006, T-007
+- **Acceptance criterion:** INT-0005 AC-6; INT-0003 AC-9.
 - **Success criterion (EARS):**
-  - **WHEN** a matrix finishes, **THEN** it **SHALL** write its scenario name, the sprint that added the scenario, and the summed point counts over all its cells to `$CARGO_TARGET_TMPDIR/reach/<scenario>.txt`. The scenarios are: store, two writers, four writers, Snapshot, Materialise.
-  - **WHEN** `cargo reach` runs after the tests, **THEN** it **SHALL** write `docs/reach.md`:
+  - **What a scenario records.** Each scenario's reach file comes from one designated test, which runs the correct store only:
+    - store (`crash_matrix_finds_no_violations`);
+    - two writers (the same test, as its own scenario);
+    - four writers (`writers_matrix_finds_no_violations`);
+    - Snapshot (`snapshot_matrix_finds_no_violations`);
+    - Materialise (`materialise_matrix_finds_no_violations`, Unix rules).
+
+    **WHEN** that test finishes, **THEN** it **SHALL** write the scenario's name, the sprint that added it, and the point counts summed over its cells to `$CARGO_TARGET_TMPDIR/reach/<scenario>.txt`, through a temporary file and a rename.
+  - **Which runs count.** The scenario's own run, and the next command it models on the recovered filesystem (the `open` that resumes, in the Snapshot and Materialise scenarios). The oracle's checks (`fsck`, inspection, its own `init` or `open`) do not count.
+  - **WHEN** `cargo reach` runs, **THEN** it **SHALL** take no arguments and write `docs/reach.md`:
     - one row per scenario, ordered by sprint;
     - one column per unit, grouped and ordered by the sprint that built it;
     - each cell holding the number of point hits;
     - a final list of every point with its total.
-  - **WHEN** a registered point has no hits in any scenario, **THEN** `cargo reach` **SHALL** fail and name it.
-  - **WHEN** a scenario's file is missing, **THEN** `cargo reach` **SHALL** fail and name it.
-  - **WHEN** `docs/reach.md` differs from what would be generated, **THEN** `cargo reach --check` **SHALL** fail.
+
+    Two runs over the same files **SHALL** write identical bytes. Like `ci`, it **SHALL** refuse to run out of tree.
+  - **WHEN** any of these holds, **THEN** `cargo reach` **SHALL** fail and name it, writing nothing:
+    - a registered point has no hits;
+    - a scenario's file is missing;
+    - a file names an unregistered point.
   - **WHEN** `cargo ci` runs, **THEN** it **SHALL**:
     - clear the reach directory before `test`;
-    - run `reach --check` as a sixth step after `test`.
-  - **WHEN** the generated table is read, **THEN** the Sprint 4 four-writer row **SHALL** reach the Sprint 1 store units, and the Sprint 3 Materialise row **SHALL** reach the Sprint 1 store and Sprint 2 snapshot units.
+    - after `test`, run a `reach` step that generates the table in memory, compares it with `docs/reach.md`, fails on any difference, and writes nothing;
+    - have six steps: fmt, clippy, test, reach, policy, book.
+  - **WHEN** `docs/reach.md` is read by `reach_table_shows_the_triangle`, **THEN**:
+    - the four-writer row **SHALL** have non-zero hits in the Sprint 1 `store::commit_op` and `store::put_object` columns;
+    - the Materialise row **SHALL** have non-zero hits in the Sprint 1 store columns and the Sprint 2 `workspace::snapshot` column.
   - **WHEN** the spec is written, **THEN** `docs/spec/simulation.md` **SHALL** state:
-    - what a point is and is not (not a syscall);
+    - what a point is and is not;
     - the registry and its policy rule;
-    - the scheduler's switching, orderings and kills;
+    - the scheduler's draws, orderings and kills;
     - the process-crash model;
+    - that adding a point changes multi-process interleavings, and so the four-writer digest, but no single-process digest, with the expected response (critique C-015);
     - how the reach table is generated and checked.
-- **Notes:** `cargo reach` takes no flags except `--check`. Like `ci` and `policy`, it is an xtask alias, not a `praps` command.
+  - **WHEN** the four-writer digest is known on both systems, **THEN** it **SHALL** be asserted as a constant in `writers_matrix_is_reproducible`.
 
-### T-008: Report skipped names from `undo`, `restore` and `new` (backlog T-019)
+### T-009: Report skipped names from every command that snapshots (backlog T-019)
 - **Intent:** [INT-0004](../../../intents/INT-0004-windows-and-linux.md), [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md)
-- **Touches:** crates/workspace/src/lib.rs, crates/praps/src/main.rs, crates/praps/tests/cli.rs, crates/workspace/tests/
-- **Depends on:** T-005
+- **Touches:** crates/workspace/src/lib.rs, crates/praps/src/main.rs, crates/praps/tests/cli.rs, crates/workspace/tests/history.rs
+- **Depends on:** T-006
 - **Acceptance criterion:** INT-0004 AC-7: a name with no UTF-8 form is never "skipped without a report".
 - **Success criterion (EARS):**
-  - **WHEN** `undo`, `restore` or `new_change` snapshots a working copy holding entries it reports and leaves alone, **THEN** it **SHALL** return those entries with its result, in the same sorted form `status` returns.
-  - **WHEN** `praps undo`, `praps restore OP` or `praps new` runs over such an entry, **THEN** it **SHALL** print each one in `status`'s format, after its own line, and keep its exit code.
-  - **WHEN** no entry is reported, **THEN** the output **SHALL** be unchanged from Sprint 3.
+  - **WHEN** `log`, `undo`, `restore` or `new_change` snapshots a working copy holding entries it reports and leaves alone, **THEN** it **SHALL** return them with its result, in `status`'s sorted form. They come from the command's first snapshot only, so `undo`'s second snapshot in `restore_view` adds no duplicate.
+  - **WHEN** such a command fails after its snapshot (`NothingToUndo`, hazards, a blocking entry, an unknown op), **THEN** its error **SHALL** carry the same entries.
+  - **WHEN** `praps log`, `praps undo`, `praps restore OP` or `praps new` runs over such an entry, **THEN** it **SHALL** print each one to stdout in `status`'s format, after its own output, on success and on failure, and keep its exit code.
+  - **WHEN** no entry is reported, **THEN** every command's output **SHALL** be unchanged from Sprint 3.
 
-### T-009: INT-0005 Consequences, credits and backlog
+### T-010: Consequences, credits, README and backlog
 - **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0003](../../../intents/INT-0003-engineering-baseline.md), [INT-0007](../../../intents/INT-0007-crash-safe-storage.md)
 - **Touches:** docs/intents/INT-0005-deterministic-simulation-testing.md, docs/intents/INT-0007-crash-safe-storage.md, docs/prior-art.md, docs/work/tasks.md, README.md
-- **Depends on:** T-001 to T-008
-- **Acceptance criterion:** INT-0003 AC-5 (credits); INT-0005 and INT-0007 Consequences.
+- **Depends on:** T-001 to T-009
+- **Acceptance criterion:** INT-0003 AC-5 and AC-10; INT-0005 and INT-0007 Consequences.
 - **Success criterion (EARS):**
-  - **WHEN** the docs are updated:
-    - **THEN** `docs/prior-art.md` **SHALL** credit fail-rs, RocksDB sync points, FoundationDB BUGGIFY, and shuttle with PCT (Burckhardt et al., 2010), and record the owner's proposal of coded breakpoints and the run × unit triangle.
-    - INT-0005's Consequences **SHALL** replace "a process crash is not simulated yet" with the model built.
-    - INT-0007's Consequences **SHALL** record what several writers showed.
+  - **WHEN** the docs are updated, **THEN**:
+    - `docs/prior-art.md` **SHALL** credit fail-rs, RocksDB sync points, FoundationDB BUGGIFY, and shuttle with PCT (Burckhardt et al., ASPLOS 2010), and **SHALL** record the owner's proposal of coded breakpoints and the run × unit triangle;
+    - INT-0005's Consequences **SHALL** replace "a process crash is not simulated yet" with the model built;
+    - INT-0007's Consequences **SHALL** record what several writers showed;
+    - the README **SHALL** document `cargo reach` among the four flagless project commands.
   - **WHEN** the backlog is updated, **THEN**:
     - T-011 and T-019 **SHALL** move to completed;
-    - a new task **SHALL** record test selection from the reach table;
+    - new tasks **SHALL** record test selection from the reach table, and the move of the remaining trace-text hooks (`crates/workspace/tests/workspace.rs`, `materialise.rs`) to named points (critique C-020);
     - T-017 **SHALL** be replaced by its carried-forward successor.
