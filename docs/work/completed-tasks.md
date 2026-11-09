@@ -374,4 +374,4 @@
 - **Completed:** 2026-11-09T20:51:32Z
 - **Files modified:** Cargo.toml, crates/xtask/src/pins.rs, crates/codec/tests/alloc.rs
 - **Evidence:** Cargo.toml gains [profile.dev] opt-level = 1 and [profile.dev.package."*"] opt-level = 3, nothing else; optimised_test_profile_is_the_reviewed_one (pins.rs) reads the profile table with toml_edit and requires exactly those two settings, catching eight mutants (either table removed, [profile.test], overflow-checks or debug-assertions off, a codec override, build-override, a release entry). a_reservation_on_the_error_path_is_measured (codec/tests/alloc.rs), with no optimisation barrier, measures a reserve-then-fail decode at >= COUNT x 8 bytes under opt-level 1, so the codec override was not needed. cargo ci at this state on Windows: all 6 steps passed in 667 s (Sprint 4: 2,060 s), 480 tests, including matrix_runs_are_reproducible, writers_matrix_is_reproducible, snapshot_matrix_is_reproducible and materialise_matrix_is_reproducible (the four asserted digests), every finds_no_violations test, and the reach step against docs/reach.md.
-- **Commit:** PENDING
+- **Commit:** `3861b540285d650fdf0eb439bc3cee4eea69861e`
