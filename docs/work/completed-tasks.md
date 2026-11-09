@@ -366,4 +366,4 @@
 - **Completed:** 2026-11-09T20:35:48Z
 - **Files modified:** docs/sprints/s5/sprint-tests/ci-sprint4.md, docs/intents/INT-0001-periapsis-charter.md, docs/intents/INT-0002-typed-acceptance-criteria.md, docs/intents/INT-0003-engineering-baseline.md, docs/intents/INT-0004-windows-and-linux.md, docs/intents/INT-0006-format-v1.md, docs/intents/INT-0007-crash-safe-storage.md, docs/work/tasks.md
 - **Evidence:** ci-sprint4.md records runs 42580616158 and 42580625889 (bf40f24), 42580692694 and 42580699028 (ed14283) with both attempts, and 42681766482 (main merge f0910e6): every job's conclusion, attempt and times; images windows-2025-vs2026 20261103.629 and ubuntu-26.04 20261028.624; rustc 1.99.1; 478 Windows and 479 Linux tests per cargo ci leg, each printing ci: all 6 steps passed; the three deny failures (gzip: invalid magic while downloading cargo-deny 0.20.2), two re-run to success and one superseded. Sign-offs recorded as pending; T-020 replaced by T-024. INT-0007 moved active -> realized: all five criteria hold with local and CI evidence and none is asserted.
-- **Commit:** PENDING
+- **Commit:** `03b14327b679badd4b67c274bf54192c3e23244c`
