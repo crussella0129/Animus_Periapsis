@@ -286,4 +286,4 @@
 - **Completed:** 2026-11-09T00:39:36Z
 - **Files modified:** docs/sprints/s4/sprint-tests/ci-sprint3.md, docs/intents/INT-0003-engineering-baseline.md, docs/intents/INT-0004-windows-and-linux.md, docs/intents/INT-0006-format-v1.md, docs/work/tasks.md
 - **Evidence:** ci-sprint3.md records runs 42443548089 (pull request) and 42443543930 (push) at 4f05dd1, 42536778981 (main push of merge 7b2fd59) and 42537492546 (dev push of 7b2fd59): every job success; rustc 1.99.1 on windows-2025-vs2026 and ubuntu-26.04; 407 tests on Windows and 408 on Linux in 46 binaries, equal to Sprint 3's local counts; ci: all 5 steps passed in every leg; cargo deny check (advisories, bans, licenses, sources ok) on Linux in every run, the half Sprint 3 deferred. No owner sign-off was given; they are carried forward in backlog T-020, which replaces T-017.
-- **Commit:** PENDING
+- **Commit:** `03fbd28e752d5b37788e05919bc93d0303c2bc62`
