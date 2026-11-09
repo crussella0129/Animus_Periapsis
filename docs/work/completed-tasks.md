@@ -398,4 +398,4 @@
 - **Completed:** 2026-11-09T21:01:34Z
 - **Files modified:** README.md, docs/prior-art.md, crates/xtask/src/docs.rs, docs/work/tasks.md
 - **Evidence:** README's Build and test section says tests build optimised, the suite builds every test executable once and runs the test files in parallel, failing if any executable Cargo built goes unrun; that GitHub Actions runs on every pull request, every push to main and on demand, with fmt and Clippy, the suite and cargo-deny as separate checks, and a newer push to a pull request cancelling the run it replaces. docs/prior-art.md credits nextest's execution model (Apache-2.0 OR MIT), written from scratch with no code taken; nextest joins CREDITED in docs.rs (37 names). Backlog: T-025 added (record a workflow_dispatch run on dev once the workflow is on main); T-024 already replaced T-020 in T-001. readme_keeps_statement_and_links_book, readme_must_document_each_command and prior_art_credits_every_listed_system pass.
-- **Commit:** PENDING
+- **Commit:** `d0bb931188230bc49f0aff0ad32ddce9392462bd`
