@@ -547,10 +547,17 @@ fn materialise_matrix_is_reproducible() {
         all.extend_from_slice(&a.state.to_bytes());
         all.extend_from_slice(&a.trace.to_bytes());
     }
+    let digest = HashAlg::Blake3.hash(&all);
     println!(
-        "materialise matrix digest over {} cells: {}",
-        first.cells.len(),
-        HashAlg::Blake3.hash(&all)
+        "materialise matrix digest over {} cells: {digest}",
+        first.cells.len()
+    );
+    // Asserted, not only printed, so a change that moves any cell fails
+    // here on every system (Sprint 4 plan critique, C-008).
+    assert_eq!(first.cells.len(), 40_960);
+    assert_eq!(
+        digest.to_string(),
+        "blake3:6274344b358b15cb24d182a681c592ccad66a82564fd40c5cf45e4fcb666a1ac"
     );
 }
 

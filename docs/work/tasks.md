@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-002 (sprint 4) [intent: INT-0005]: A thread-safe SimFs, with the Sprint 3 digests asserted — touches: crates/sim/, crates/store/tests/, crates/workspace/tests/
 - [ ] T-003 (sprint 4) [intent: INT-0005]: Named points and the point registry — touches: crates/sim/, crates/workspace/tests/real_edits.rs
 - [ ] T-004 (sprint 4) [intent: INT-0005, INT-0003]: The points policy rule — touches: crates/xtask/src/policy.rs
 - [ ] T-005 (sprint 4) [intent: INT-0005, INT-0007]: sim::Processes, the deterministic scheduler with orderings and kills — touches: crates/sim/

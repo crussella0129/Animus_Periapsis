@@ -69,10 +69,14 @@ fn matrix_runs_are_reproducible() {
         all.extend_from_slice(&outcome.state.to_bytes());
         all.extend_from_slice(&outcome.trace.to_bytes());
     }
-    println!(
-        "matrix digest over {} cells: {}",
-        first.len(),
-        HashAlg::Blake3.hash(&all)
+    let digest = HashAlg::Blake3.hash(&all);
+    println!("matrix digest over {} cells: {digest}", first.len());
+    // Asserted, not only printed, so a change that moves any cell fails
+    // here on every system (Sprint 4 plan critique, C-008).
+    assert_eq!(first.len(), 32_840);
+    assert_eq!(
+        digest.to_string(),
+        "blake3:d36b8c9c77744d485a362ef3d94cebe40dcb67ca7260eb409f5430c2a13ae812"
     );
 }
 

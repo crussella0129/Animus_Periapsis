@@ -377,10 +377,17 @@ fn snapshot_matrix_is_reproducible() {
         all.extend_from_slice(&a.state.to_bytes());
         all.extend_from_slice(&a.trace.to_bytes());
     }
+    let digest = HashAlg::Blake3.hash(&all);
     println!(
-        "snapshot matrix digest over {} cells: {}",
-        first.len(),
-        HashAlg::Blake3.hash(&all)
+        "snapshot matrix digest over {} cells: {digest}",
+        first.len()
+    );
+    // Asserted, not only printed, so a change that moves any cell fails
+    // here on every system (Sprint 4 plan critique, C-008).
+    assert_eq!(first.len(), 25_360);
+    assert_eq!(
+        digest.to_string(),
+        "blake3:c1e39cb10607ff208e0f2774eee8770659aad590dbc8c71abd76522b69013ea3"
     );
 }
 

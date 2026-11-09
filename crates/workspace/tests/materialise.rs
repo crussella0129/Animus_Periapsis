@@ -8,7 +8,7 @@ mod common;
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use codec::RepoPath;
 use common::{ROOT, delete, files_on_disk, put, writes};
@@ -19,11 +19,11 @@ use workspace::record::{self, Record};
 use workspace::tree::Tree;
 use workspace::{Error, Workspace};
 
-type Ws = Workspace<Rc<SimFs>>;
+type Ws = Workspace<Arc<SimFs>>;
 
-fn fresh(seed: u64) -> (Ws, Rc<SimFs>) {
-    let fs = Rc::new(SimFs::new(seed, DirMode::Strict));
-    let ws = Workspace::init(Rc::clone(&fs), Path::new(ROOT), seed)
+fn fresh(seed: u64) -> (Ws, Arc<SimFs>) {
+    let fs = Arc::new(SimFs::new(seed, DirMode::Strict));
+    let ws = Workspace::init(Arc::clone(&fs), Path::new(ROOT), seed)
         .unwrap()
         .0;
     (ws, fs)
@@ -309,7 +309,7 @@ fn make_durable(fs: &SimFs) {
 }
 
 /// Two views whose working copies differ in every way, on a fresh fs.
-fn swap_setup(seed: u64) -> (Ws, Rc<SimFs>, HashRef) {
+fn swap_setup(seed: u64) -> (Ws, Arc<SimFs>, HashRef) {
     let (mut ws, fs) = fresh(seed);
     put(&fs, "a", b"file");
     put(&fs, "keep", b"1");
@@ -439,7 +439,7 @@ fn resume_drops_a_record_whose_target_is_not_the_head() {
     )
     .unwrap();
     let before = files_on_disk(&*fs);
-    let ws = Workspace::open(Rc::clone(&fs), Path::new(ROOT), 70).unwrap();
+    let ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 70).unwrap();
     assert_eq!(ws.notes().len(), 1, "{:?}", ws.notes());
     assert!(ws.notes()[0].contains("no longer the only head"));
     assert_eq!(files_on_disk(&*fs), before);
@@ -466,7 +466,7 @@ fn resume_with_a_target_that_is_not_the_head_removes_temporaries() {
         },
     )
     .unwrap();
-    let ws = Workspace::open(Rc::clone(&fs), Path::new(ROOT), 71).unwrap();
+    let ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 71).unwrap();
     assert_eq!(ws.notes().len(), 1);
     assert_eq!(files_on_disk(&*fs), expect(&[("a", "2", false)]));
 }
@@ -543,7 +543,7 @@ fn materialise_without_an_executable_bit_compares_bytes_only() {
 fn corrupt_record_is_an_error() {
     let (_, fs) = fresh(91);
     put(&fs, ".praps/working-copy", b"from nothing\n");
-    match Workspace::open(Rc::clone(&fs), Path::new(ROOT), 91) {
+    match Workspace::open(Arc::clone(&fs), Path::new(ROOT), 91) {
         Err(Error::Corrupt(what)) => assert!(what.contains("working-copy"), "{what}"),
         other => panic!("{:?}", other.err()),
     }
@@ -568,9 +568,9 @@ fn init_never_resumes() {
     )
     .unwrap();
     let before = fs.snapshot();
-    Workspace::init(Rc::clone(&fs), Path::new(ROOT), 92).unwrap();
+    Workspace::init(Arc::clone(&fs), Path::new(ROOT), 92).unwrap();
     assert_eq!(fs.snapshot(), before, "a repeated init writes nothing");
-    Workspace::open(Rc::clone(&fs), Path::new(ROOT), 92).unwrap();
+    Workspace::open(Arc::clone(&fs), Path::new(ROOT), 92).unwrap();
     assert!(!fs.snapshot().contains_key("repo/.praps/working-copy"));
 }
 
@@ -645,7 +645,7 @@ fn resume_keeps_a_tracked_file_at_a_temporary_name() {
     // the head without writing a file, and the record naming it.
     let view = ws.store().ops().unwrap()[&old_op].view;
     let mut store = store::Store::open(
-        Rc::clone(&fs),
+        Arc::clone(&fs),
         &Path::new(ROOT).join(".praps/store"),
         hash::HashAlg::DEFAULT,
         1,
@@ -666,7 +666,7 @@ fn resume_keeps_a_tracked_file_at_a_temporary_name() {
         },
     )
     .unwrap();
-    let ws = Workspace::open(Rc::clone(&fs), Path::new(ROOT), 101).unwrap();
+    let ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 101).unwrap();
     assert_eq!(files_on_disk(&*fs)[".praps-tmp-0"].0, b"tracked");
     // `a` (diff index 0) has `.praps-tmp-0` as its temporary name: skipped.
     assert!(
@@ -711,22 +711,22 @@ fn edits_during_the_write_are_kept() {
     put(&fs, "b", b"2");
     put(&fs, "c", b"2");
     checkpoint(&mut ws);
-    let hook_fs = Rc::clone(&fs);
-    let done = Rc::new(std::cell::Cell::new((false, false)));
-    let flags = Rc::clone(&done);
+    let hook_fs = Arc::clone(&fs);
+    let done = Arc::new(std::sync::Mutex::new((false, false)));
+    let flags = Arc::clone(&done);
     fs.set_hook(Some(Box::new(move |_| {
         let last = hook_fs.trace().last().cloned().unwrap_or_default();
-        let (c_done, a_done) = flags.get();
+        let (c_done, a_done) = *flags.lock().unwrap();
         // After the op is written, before step 1 re-checks `c`.
         if !c_done && last.starts_with("create_new repo/.praps/store/ops/") {
-            flags.set((true, a_done));
+            *flags.lock().unwrap() = (true, a_done);
             hook_fs
                 .overwrite(&Path::new(ROOT).join("c"), b"saved by the user")
                 .unwrap();
         }
         // After `a`'s temporary file is synced, before it replaces `a`.
         if !a_done && last == "sync_file repo/.praps-tmp-0" {
-            flags.set((flags.get().0, true));
+            flags.lock().unwrap().1 = true;
             hook_fs
                 .overwrite(&Path::new(ROOT).join("a"), b"saved too")
                 .unwrap();
@@ -734,7 +734,7 @@ fn edits_during_the_write_are_kept() {
     })));
     ws.restore_view(&target).unwrap();
     fs.set_hook(None);
-    assert_eq!(done.get(), (true, true));
+    assert_eq!(*done.lock().unwrap(), (true, true));
     let on_disk = files_on_disk(&*fs);
     assert_eq!(on_disk["a"].0, b"saved too");
     assert_eq!(on_disk["b"].0, b"1");
