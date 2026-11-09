@@ -192,7 +192,10 @@ fn points_reach_through_every_forwarder() {
     let fs = Arc::new(SimFs::new(1, Mode::Strict));
     mark(&*fs);
     mark(Arc::clone(&fs));
-    mark(&Arc::clone(&fs));
+    // The `&T` forwarder over an `Arc`.
+    let arc = Arc::clone(&fs);
+    let by_ref: &Arc<SimFs> = &arc;
+    mark(by_ref);
     let rc = Rc::new(SimFs::new(1, Mode::Strict));
     mark(Rc::clone(&rc));
     mark(&*rc);
@@ -202,11 +205,15 @@ fn points_reach_through_every_forwarder() {
 
 #[test]
 fn real_fs_point_is_a_no_op() {
+    fn mark(fs: impl Fs) {
+        fs.point("a.x.y");
+    }
     let dir = std::env::temp_dir().join(format!("praps-point-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let before = std::fs::read_dir(&dir).unwrap().count();
+    RealFs.create_dir(&dir).unwrap();
     RealFs.point("a.x.y");
-    (&RealFs).point("a.x.y");
-    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), before);
-    std::fs::remove_dir_all(&dir).unwrap();
+    mark(RealFs);
+    let by_ref: &RealFs = &RealFs;
+    mark(by_ref);
+    assert!(RealFs.list(&dir).unwrap().is_empty());
+    RealFs.remove_dir(&dir).unwrap();
 }
