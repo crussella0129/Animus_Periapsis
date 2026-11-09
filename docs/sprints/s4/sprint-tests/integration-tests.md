@@ -1,6 +1,10 @@
 # Sprint 4 Integration Test Results
 
-These are the results at tested head `5dfb418`, which holds the [code review](code-review.md) fixes. Every run is in [test-matrix-log.md](test-matrix-log.md), under the section named here. The two legs ran at the same time on one 24-thread host, which slowed both; the durations below are under that load.
+These are the results at tested head `9fa59fb`, which holds the [code review](code-review.md) fixes and the [round-1 test critique](critique-round1.md) fixes. Every run is in [test-matrix-log.md](test-matrix-log.md), under the section named here.
+
+**Two rounds.** Both legs ran first at `5dfb418` (recorded in commit `bd8dc8e`), and again in full at `9fa59fb` after the round-1 fixes. Only the `9fa59fb` runs are recorded here and in the log. Every matrix count and all four digests are the same in both rounds. The round-1 fixes changed tests and `cargo reach`'s checks, not the code under test.
+
+The two legs ran at the same time on one 24-thread host, which slowed both; the durations below are under that load.
 
 ### Canonical runner on the Windows host and in WSL
 - **Intents:**
@@ -11,11 +15,13 @@ These are the results at tested head `5dfb418`, which holds the [code review](co
 
 | Run | System | Result |
 |---|---|---|
-| `int_ci_windows` | Windows 11 Pro 10.0.26300, NTFS working checkout, rustc 1.99.1 | `cargo ci`: PASS for fmt, clippy, test, reach, policy and book; exit 0 in 2,142 s; 473 tests passed; 0 tracked files changed |
-| `e2e fresh_clone_ci` | Ubuntu 26.04.1 (WSL2), fresh ext4 clone, rustc 1.99.1 | cold `cargo ci`: all six steps PASS, exit 0 in 1,351 s; 474 tests passed; 0 tracked files changed |
-| `int_reach_windows`, `int_reach_linux` | both | `cargo reach` after the test run rewrote `docs/reach.md` byte for byte: 0 changes on either system. The same table is therefore generated on both, and the `reach` step of `cargo ci` passed on both. All five scenario files were present after `cargo ci`. |
+| `int_ci_windows` | Windows 11 Pro 10.0.26300, NTFS working checkout, rustc 1.99.1 | `cargo ci`: PASS for fmt, clippy, test, reach, policy and book; exit 0 in 2,060 s; 477 tests passed; 0 tracked files changed |
+| `e2e fresh_clone_ci` | Ubuntu 26.04.1 (WSL2), fresh ext4 clone, rustc 1.99.1 | cold `cargo ci`: all six steps PASS, exit 0 in 1,342 s; 478 tests passed; 0 tracked files changed |
+| `int_reach_windows`, `int_reach_linux` | both | `cargo reach` after the test run rewrote `docs/reach.md` byte for byte: 0 changes on either system. The same table is therefore generated on both. The `reach` step of `cargo ci` passed on both, and since C-011 it also checks that every scenario still reaches each point it is expected to (`reach::EXPECTED`). All five scenario files were present after `cargo ci`. |
 | `int_deny_windows`, `int_deny_linux` | both, cargo-deny 0.20.2 | advisories, bans, licenses and sources ok, exit 0. cargo-deny was installed in WSL this sprint, which closes Sprint 3's critique C-003. No dependency was added. |
 | `cargo policy` (inside `cargo ci`) | both | every rule PASS, including the new `points` rule |
+
+Windows counts one test fewer than Linux, as in Sprint 3: `real_symlinked_directories_are_not_followed` (workspace `real_hazards.rs`) runs on Unix only.
 
 ### The four-writer matrix
 - **Intents:**
@@ -35,7 +41,7 @@ These are the results at tested head `5dfb418`, which holds the [code review](co
 - **Even seeds run without orderings.** The seed alone interleaves them.
 
 **Cells.** 40 seeds × 2 modes × every global crash step × {no kill, one kill}. Kills:
-- in odd seeds, process 0 is killed at its held rename;
+- in odd seeds, process 0 is killed at its held rename. Process 2 still sees its unsynced op and names it, so these cells are the process crash with several writers that INT-0007 AC-5 asks for. `writers_kills_happen` asserts it in every odd seed (C-007);
 - in even seeds, a seeded process is killed at a seeded step within its counted steps.
 
 **The oracle, per cell:**
@@ -61,8 +67,8 @@ Each count above is the number of violations, summed over cells; one cell can ho
 - `writers_matrix_finds_no_violations`;
 - `writers_forced_race_runs`: every odd seed in both modes;
 - `writers_overlap_in_some_even_seed`: since CR-01, the overlap is read from the trace;
-- `writers_kills_happen`;
-- `writers_retry_reaches_present`: 196 cells crashed during the retry, and the op stayed acknowledged and present;
+- `writers_kills_happen`: the killed process in every seed, and in odd seeds process 2 naming the killed op, visible and not durable at its listing;
+- `writers_retry_reaches_present`: over seeds 0 to 3, both modes and no kill, 196 cells crashed during the retry. In each, process 1's op, acknowledged by its first commit, was present after recovery. Since C-009 the outcome, the log and the recovered ops come from one run;
 - `writers_catch_*`, the five controls above;
 - `writers_matrix_is_reproducible`: digest `blake3:253b1eabc4054f7aebfb6edd2e907fdaccbc76549158410a47fedc610ba0855c` over 44,836 cells, asserted, and equal on both systems.
 
@@ -70,12 +76,14 @@ Each count above is the number of violations, summed over cells; one cell can ho
 
 | System | Binary wall time | Correct matrix alone |
 |---|---:|---:|
-| Windows | 133 s | 96 s |
-| Linux | 176 s | 123 s |
+| Windows | 133 s | 95 s |
+| Linux | 197 s | 140 s |
 
 Both are well inside the budget, even with the other leg running. Seeds run in parallel worker threads, and cells are sorted into canonical order before the digest.
 
 **What a pass shows, and what it does not.** The `UnsyncedReferences` control loses closure in the forced-race cells, which its test requires. So the parent re-sync in `commit_op` is load-bearing for several writers, and the odd-seed orderings are what reach it on purpose. INT-0007's Consequences record this. The test does not split the 12 losses by seed parity, so nothing here claims the even seeds found none.
+
+The four-writer oracle counts torn records and closure, but it does not compute atomicity: that check lives in the store matrix, which still runs (C-004, deferred; see the [test report](test-report.md)).
 
 The matrix shows the store is safe for four writers on one store, through a simulated `SimFs`. On a real filesystem it is evidenced by `real_four_processes_lose_nothing` ([e2e-tests.md](e2e-tests.md)), which is not reproducible.
 
@@ -102,6 +110,7 @@ The matrix shows the store is safe for four writers on one store, through a simu
 - **What it is:** `docs/reach.md`, generated from the five scenario files the matrices wrote during `cargo ci`'s test step.
 - **Result:**
   - All 21 registered points are reached.
+  - Each scenario reaches every point `reach::EXPECTED` lists for it, which the `reach` step now checks (C-011). The expected sets are exactly the registered points, which `expectations_are_real` asserts.
   - Each later scenario reaches every earlier unit it calls into. This is the runs × units triangle:
 
 | Scenario | Reaches |
@@ -116,9 +125,9 @@ The four-writer row reaches no workspace unit, as expected: it drives the store 
 - **Probes:**
   - **Unregistered point:** the Windows probe planted an unregistered point, and `cargo policy` exited 1.
   - **Target directory outside the checkout:** the WSL probe ran `cargo reach` with `CARGO_TARGET_DIR` outside the checkout. It exited 1, saying that `xtask` was not inside the checkout's target directory.
-  - **Stale table:** this is not a probe. It is the unit test `reach_check_fails_on_a_stale_table`, which replaced a probe that would have rerun all of `cargo ci`.
+  - **Stale table, missed point, missed expectation:** these are not probes. They are the unit tests `reach_check_fails_on_a_stale_table`, `reach_fails_on_an_unreached_point`, `reach_fails_on_an_unregistered_point` and `reach_fails_on_an_expected_point_missed`. Since C-010 the last three go through `run()`, and assert exit 1 with no table written.
 
 ### The `sim` tests
 - **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md)
 - **Where:** sections `int_sim_points_and_processes_*`.
-- **Result:** `points.rs` (10), `processes.rs` (16) and `threads.rs` (3) passed on both systems.
+- **Result:** `points.rs` (10), `processes.rs` (18) and `threads.rs` (3) passed on both systems. Since C-001 to C-003, every `processes.rs` run is under a deadlock watchdog, and the scheduler tests check the order of events over 10 or 20 seeds each, not one.

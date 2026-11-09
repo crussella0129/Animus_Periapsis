@@ -1,6 +1,6 @@
 # Sprint 4 End-to-End Test Results
 
-- **Status:** possible, and run at tested head `5dfb418` ([test-matrix-log.md](test-matrix-log.md)).
+- **Status:** possible, and run at tested head `9fa59fb` ([test-matrix-log.md](test-matrix-log.md)). The tests ran first at `5dfb418` and again at `9fa59fb`, after the round-1 test critique fixes; only the second round is recorded ([integration-tests.md](integration-tests.md)).
 
 ### real_four_processes_lose_nothing
 - **Intents:**
@@ -21,7 +21,7 @@
 
   | System | Filesystem | Section | Result | Time |
   |---|---|---|---|---:|
-  | Windows | NTFS | `e2e real_four_processes_lose_nothing (NTFS)` | passed | 2.30 s |
+  | Windows | NTFS | `e2e real_four_processes_lose_nothing (NTFS)` | passed | 4.40 s |
   | Linux (WSL) | ext4 | `e2e real_four_processes_lose_nothing (ext4)` | passed | 0.05 s |
 
   It also passed in every `cargo ci` run on both systems, and three times on NTFS during the build. The ext4 time is short, but it is not a skip: the test fails unless 100 acknowledged ops come back from four child processes.
@@ -36,10 +36,10 @@
   - on NTFS, an unpaired surrogate, `q\u{d800}`;
   - on ext4, byte `0xff`, `q\xff`.
 - **Steps:**
-  1. `praps undo` with nothing to undo exits 1, and its stdout is only `skipped <name> (name is not UTF-8)`.
+  1. `praps undo` with nothing to undo exits 1, and its stdout is only `skipped <name> (name is not UTF-8)`. So does `praps restore 0000000000000000`, an op that does not exist, and its stderr says `no op matches` (C-006).
   2. `new`, `log`, `undo` and `restore <prefix>` each exit 0 and print their own lines first, then the report line, once.
   3. The file is byte for byte untouched.
-- **Result:** passed on Windows (section `e2e praps skipped-name reports and Sprint 3 CLI (NTFS)`) and on Linux (in `cargo ci`'s test step, section `e2e fresh_clone_ci`).
+- **Result:** passed on Windows (section `e2e praps skipped-name reports and Sprint 3 CLI (NTFS)`) and on Linux (section `e2e praps skipped-name reports and Sprint 3 CLI (ext4)`, and in `cargo ci`'s test step).
 
   Sprint 3's CLI tests ran unchanged and passed: 22 in `cli.rs` and the 4 other `e2e.rs` tests, `praps_end_to_end` and `praps_history_end_to_end` among them. So a command whose snapshot skips nothing prints what it printed before.
 
@@ -47,10 +47,10 @@
 - **Intents:**
   - [INT-0003](../../../intents/INT-0003-engineering-baseline.md) AC-2 to AC-4
   - [INT-0004](../../../intents/INT-0004-windows-and-linux.md) AC-1
-- **Run:** a fresh clone of `dev` at `5dfb418` into the WSL ext4 home directory. Then a cold `cargo ci`, with every override variable unset.
+- **Run:** a fresh clone of `dev` at `9fa59fb` into the WSL ext4 home directory. Then a cold `cargo ci`, with every override variable unset.
 - **Result:**
-  - all six steps PASS, exit 0 in 1,351 s;
-  - 474 tests;
+  - all six steps PASS, exit 0 in 1,342 s;
+  - 478 tests;
   - five reach files written;
   - 0 tracked files changed;
   - `cargo reach` afterwards changed nothing.
