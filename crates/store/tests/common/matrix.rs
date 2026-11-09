@@ -15,6 +15,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use codec::{
     Changeset, Entry, Mode as FileMode, ObjectKind, Operation, RepoPath, View, blob,
@@ -306,45 +307,49 @@ fn run(
                 record(&mut a, &x, log)?;
                 commit(&mut a, &child, log)
             })();
-            fs.set_hook(None);
+            fs.clear_points();
             result
         }
     }
 }
 
-/// Fires B once, at the first syscall boundary right after A renamed
-/// `target` into place while its name is not yet durable.
+/// Fires B once, at A's named point right after it renamed `target` into
+/// place (`store.put_object.renamed` for the view race,
+/// `store.commit_op.renamed` for the parent race), while the name is not yet
+/// durable. The point sits immediately after `rename` returns, with no
+/// syscall between, so B's syscalls take the numbers they took when this was
+/// a hook matching the trace (Sprint 4 T-006; plan critique C-008).
 fn install_race(
     fs: &Arc<SimFs>,
     log: &Arc<Mutex<Log>>,
     race: Race,
     target: PathBuf,
-    mut b: Store<Arc<SimFs>>,
+    b: Store<Arc<SimFs>>,
     b_op: Operation,
 ) {
-    let (hook_fs, hook_log) = (Arc::clone(fs), Arc::clone(log));
+    let point = match race {
+        Race::View => "store.put_object.renamed",
+        Race::Parent => "store.commit_op.renamed",
+    };
+    let (action_fs, action_log) = (Arc::clone(fs), Arc::clone(log));
     let shown = target.to_string_lossy().replace('\\', "/");
-    let mut fired = false;
-    fs.set_hook(Some(Box::new(move |_next| {
-        if fired {
-            return;
-        }
+    let b = Mutex::new(b);
+    let fired = AtomicBool::new(false);
+    fs.on_point(point, move || {
         // None of these checks is a syscall, so none moves the crash point.
-        let after_rename = hook_fs
-            .trace()
-            .last()
-            .is_some_and(|line| line.starts_with("rename "));
-        if !after_rename || !hook_fs.snapshot().contains_key(&shown) || hook_fs.is_durable(&target)
+        if fired.load(Ordering::SeqCst)
+            || !action_fs.snapshot().contains_key(&shown)
+            || action_fs.is_durable(&target)
         {
             return;
         }
-        fired = true;
+        fired.store(true, Ordering::SeqCst);
         // B's commit may fail (the crash); the log shows whether it was
         // acknowledged.
-        if commit(&mut b, &b_op, &hook_log).is_ok() {
-            hook_log.lock().unwrap().raced = Some(race);
+        if commit(&mut b.lock().unwrap(), &b_op, &action_log).is_ok() {
+            action_log.lock().unwrap().raced = Some(race);
         }
-    })));
+    });
 }
 
 /// The syscalls a run makes when nothing crashes.

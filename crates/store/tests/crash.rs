@@ -136,3 +136,16 @@ fn unsynced_init_variant_is_caught() {
 fn write_in_place_variant_is_caught() {
     caught(Variant::WriteInPlace);
 }
+
+/// The two-writer race fires from a named point, with no trace inspection,
+/// in every seed of both modes (Sprint 4 T-006). `syscalls` asserts that
+/// each uncrashed correct run raced; the digest test shows the cells are
+/// unchanged from when a hook matched the trace.
+#[test]
+fn two_writer_race_fires_at_the_named_point() {
+    for mode in [Mode::Lenient, Mode::Strict] {
+        for seed in 0..common::matrix::SEEDS {
+            common::matrix::syscalls(Variant::Correct, Scenario::TwoWriters, mode, seed);
+        }
+    }
+}

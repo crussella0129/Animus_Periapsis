@@ -773,3 +773,89 @@ fn resume_skips_a_directory_at_a_temporary_name() {
     assert!(fs.snapshot().contains_key("repo/.praps-tmp-2"));
     assert!(!fs.snapshot().contains_key("repo/.praps/working-copy"));
 }
+
+/// Each stage of the working copy marks its named point (Sprint 4 T-006):
+/// a snapshot, a write of the working copy, and both ways a resume ends.
+#[test]
+fn workspace_points_mark_each_stage() {
+    use std::sync::Mutex;
+    let watch = |fs: &SimFs| {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        for point in workspace::points::POINTS {
+            let seen = Arc::clone(&seen);
+            fs.on_point(point.name, move || seen.lock().unwrap().push(point.name));
+        }
+        seen
+    };
+    let take = |seen: &Arc<Mutex<Vec<&'static str>>>| std::mem::take(&mut *seen.lock().unwrap());
+
+    let (mut ws, fs) = fresh(105);
+    let seen = watch(&fs);
+    put(&fs, "a", b"1");
+    let target = checkpoint(&mut ws);
+    assert_eq!(
+        take(&seen),
+        ["workspace.snapshot.scanned", "workspace.snapshot.committed"]
+    );
+    delete(&fs, "a");
+    put(&fs, "b", b"2");
+    checkpoint(&mut ws);
+    take(&seen);
+    ws.restore_view(&target).unwrap();
+    let marked = take(&seen);
+    for stage in [
+        "workspace.record.written",
+        "workspace.apply.path_written",
+        "workspace.apply.path_removed",
+        "workspace.record.dropped",
+    ] {
+        assert!(marked.contains(&stage), "{stage} not in {marked:?}");
+    }
+    assert_eq!(marked.first(), Some(&"workspace.snapshot.scanned"));
+    fs.clear_points();
+
+    // A crash right after the record is written, before the target op: the
+    // next open drops the record.
+    for (finish, expected) in [
+        (false, "workspace.resume.dropped"),
+        (true, "workspace.apply.path_written"),
+    ] {
+        // Two paths, so a crash after the first is written leaves the second
+        // for resume.
+        let (mut ws, fs) = fresh(106);
+        put(&fs, "a", b"1");
+        put(&fs, "b", b"1");
+        let target = checkpoint(&mut ws);
+        put(&fs, "a", b"2");
+        put(&fs, "b", b"2");
+        // Durable, so the crash keeps the user's files as they were.
+        for name in ["a", "b"] {
+            fs.sync_file(&Path::new(ROOT).join(name)).unwrap();
+        }
+        fs.sync_dir(Path::new(ROOT)).unwrap();
+        checkpoint(&mut ws);
+        let crash_fs = Arc::clone(&fs);
+        let crash_on = if finish {
+            "workspace.apply.path_written"
+        } else {
+            "workspace.record.written"
+        };
+        fs.on_point(crash_on, move || {
+            crash_fs.set_crash_at(Some(crash_fs.syscalls() + 1));
+        });
+        assert!(ws.restore_view(&target).is_err());
+        fs.clear_points();
+        drop(ws);
+        let restarted = Arc::new(fs.recover());
+        let seen = watch(&restarted);
+        Workspace::open(Arc::clone(&restarted), Path::new(ROOT), 7).unwrap();
+        let marked = take(&seen);
+        assert_eq!(
+            marked.first(),
+            Some(&"workspace.resume.started"),
+            "{marked:?}"
+        );
+        assert!(marked.contains(&expected), "{expected} not in {marked:?}");
+        restarted.clear_points();
+    }
+}

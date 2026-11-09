@@ -17,6 +17,7 @@
 pub mod hazard;
 mod ignore;
 pub mod materialise;
+pub mod points;
 pub mod record;
 pub mod tree;
 #[cfg(feature = "variants")]
@@ -566,10 +567,12 @@ impl<F: Fs> Workspace<F> {
                 return Err(corrupt(format!("{PRAPS_DIR}/{}: {why}", record::RECORD)));
             }
         };
+        self.store.fs().point("workspace.resume.started");
         let ops = self.store.ops()?;
         let Some(target_op) = ops.get(&record.target) else {
             // The target op never landed, so no file was touched.
             record::drop_record(self.store.fs(), &praps)?;
+            self.store.fs().point("workspace.resume.dropped");
             return Ok(());
         };
         let from_op = ops.get(&record.from).ok_or_else(|| {
@@ -803,6 +806,7 @@ impl<F: Fs> Workspace<F> {
             contents,
             reported,
         } = self.scan(&loaded.wc_tree, &loaded.parent_tree, &known)?;
+        self.store.fs().point("workspace.snapshot.scanned");
         if tree == loaded.wc_tree {
             return Ok(Snapshot { op: None, reported });
         }
@@ -818,6 +822,7 @@ impl<F: Fs> Workspace<F> {
             description: loaded.wc.description.clone(),
         };
         let op = self.replace_working_copy(&loaded, &changeset)?;
+        self.store.fs().point("workspace.snapshot.committed");
         Ok(Snapshot {
             op: Some(op),
             reported,
