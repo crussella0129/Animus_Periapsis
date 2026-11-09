@@ -16,6 +16,7 @@ use toml_edit::{DocumentMut, Item, Value};
 
 use crate::attributes;
 use crate::manifest::{dependency_tables, is_true, load, lookup, read_text, strings};
+use crate::points;
 use crate::workspace::members;
 
 /// A rule: given the workspace root and its member crate directories, the
@@ -23,7 +24,7 @@ use crate::workspace::members;
 type Rule = fn(&Path, &[PathBuf]) -> Vec<String>;
 
 /// The rules, in the order they are reported.
-pub const RULES: [(&str, Rule); 12] = [
+pub const RULES: [(&str, Rule); 13] = [
     ("lints", lints),
     ("unsafe", forbid_unsafe),
     ("toolchain", toolchain),
@@ -33,6 +34,7 @@ pub const RULES: [(&str, Rule); 12] = [
     ("credits", credits),
     ("clippy", clippy),
     ("fs-boundary", fs_boundary),
+    ("points", points),
     ("names", names),
     ("spec", spec),
     ("golden", golden),
@@ -1188,6 +1190,97 @@ fn relative(root: &Path, path: &Path) -> String {
     }
 }
 
+/// Named points (INT-0005 AC-6). In the `src/` of each point crate:
+/// - every `.point("…")` marks a name registered exactly once in the crate's
+///   `src/points.rs`, and every registered name is marked somewhere;
+/// - every argument is a single string literal;
+/// - names are `crate.function.stage` and units `crate::name`, in lowercase
+///   ASCII with `_`;
+/// - each sprint lies between 1 and the latest `docs/sprints/sN`.
+///
+/// Comments are removed first, so a point in a comment or rustdoc is not a
+/// use. `sim` is not checked: its forwarders pass names on.
+fn points(root: &Path, members: &[PathBuf]) -> Vec<String> {
+    let (registries, mut problems) = points::registries(members);
+    let latest = points::latest_sprint(root);
+    for member in members {
+        let Some(krate) = member.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some(registered) = registries.get(krate) else {
+            continue;
+        };
+        let registry = format!("{krate}/src/points.rs");
+        let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+        for entry in registered {
+            *counts.entry(&entry.name).or_default() += 1;
+            if !points::well_formed(&entry.name, krate) {
+                problems.push(format!(
+                    "{registry}: point `{}` is not `{krate}.function.stage` in lowercase ASCII with `_`",
+                    entry.name
+                ));
+            }
+            let unit_ok = entry
+                .unit
+                .strip_prefix(&format!("{krate}::"))
+                .is_some_and(|rest| {
+                    !rest.is_empty()
+                        && rest
+                            .bytes()
+                            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+                });
+            if !unit_ok {
+                problems.push(format!(
+                    "{registry}: point `{}` has unit `{}`, not `{krate}::name`",
+                    entry.name, entry.unit
+                ));
+            }
+            if entry.sprint < 1 || entry.sprint > latest {
+                problems.push(format!(
+                    "{registry}: point `{}` names sprint {}, outside 1 to {latest}",
+                    entry.name, entry.sprint
+                ));
+            }
+        }
+        for (name, count) in &counts {
+            if *count > 1 {
+                problems.push(format!(
+                    "{registry}: point `{name}` is registered {count} times"
+                ));
+            }
+        }
+        let mut used: BTreeSet<String> = BTreeSet::new();
+        for file in rust_files(&member.join("src")) {
+            if file.ends_with("src/points.rs") {
+                continue;
+            }
+            let shown = relative(root, &file);
+            let (names, bad) = points::uses(&read(&file));
+            for call in bad {
+                problems.push(format!(
+                    "{shown}: `{call}` does not name its point with one string literal"
+                ));
+            }
+            for name in names {
+                if !counts.contains_key(name.as_str()) {
+                    problems.push(format!(
+                        "{shown}: point `{name}` is not registered in {registry}"
+                    ));
+                }
+                used.insert(name);
+            }
+        }
+        for name in counts.keys() {
+            if !used.contains(*name) {
+                problems.push(format!(
+                    "{registry}: point `{name}` is registered but marked nowhere"
+                ));
+            }
+        }
+    }
+    problems
+}
+
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
@@ -1202,6 +1295,118 @@ mod tests {
 ## Objects\n### Object kinds\n| id | kind | status |\n|---|---|---|\n| `0x01` | `blob` | defined |\n\
 ### Object identity\n## Worked examples\n| name | value | hex |\n|---|---|---|\n| `bool-true` | true | `01` |\n\
 ## Signatures (reserved)\n## Decoder requirements\n## Change control\n";
+
+    /// A small tree with one point crate, for the `points` rule alone.
+    fn point_tree(name: &str, lib: &str, registry: &str) -> (PathBuf, Vec<String>) {
+        let root = std::env::temp_dir().join(format!("xtask-points-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("crates/store/src")).unwrap();
+        fs::create_dir_all(root.join("docs/sprints/s1")).unwrap();
+        fs::write(root.join("crates/store/src/lib.rs"), lib).unwrap();
+        fs::write(root.join("crates/store/src/points.rs"), registry).unwrap();
+        let problems = super::points(&root, &[root.join("crates/store")]);
+        let _ = fs::remove_dir_all(&root);
+        (root, problems)
+    }
+
+    fn registry_of(entries: &[(&str, &str, u32)]) -> String {
+        let body: String = entries
+            .iter()
+            .map(|(name, unit, sprint)| {
+                format!("    Point {{ name: \"{name}\", unit: \"{unit}\", sprint: {sprint} }},\n")
+            })
+            .collect();
+        format!("use sim::Point;\n\npub const POINTS: &[Point] = &[\n{body}];\n")
+    }
+
+    #[test]
+    fn policy_points_rule() {
+        let one = registry_of(&[("store.a.b", "store::a", 1)]);
+        let passes = [
+            ("clean", "fn f(fs: &impl Fs) { fs.point(\"store.a.b\"); }\n"),
+            (
+                "comments",
+                "// fs.point(\"store.x.y\")\n/// fs.point(\"store.x.z\")\n\
+                 fn f(fs: &impl Fs) { fs.point(\"store.a.b\"); }\n",
+            ),
+            (
+                "next-line",
+                "fn f(fs: &impl Fs) {\n    fs.point(\n        \"store.a.b\",\n    );\n}\n",
+            ),
+        ];
+        for (name, lib) in passes {
+            let (_, problems) = point_tree(name, lib, &one);
+            assert!(problems.is_empty(), "{name}: {problems:?}");
+        }
+        let used = "fn f(fs: &impl Fs) { fs.point(\"store.a.b\"); }\n";
+        let fails: [(&str, &str, String, &str); 8] = [
+            (
+                "unregistered",
+                "fn f(fs: &impl Fs) { fs.point(\"store.a.b\"); fs.point(\"store.c.d\"); }\n",
+                one.clone(),
+                "point `store.c.d` is not registered",
+            ),
+            (
+                "unused",
+                used,
+                registry_of(&[("store.a.b", "store::a", 1), ("store.e.f", "store::e", 1)]),
+                "point `store.e.f` is registered but marked nowhere",
+            ),
+            (
+                "duplicate",
+                used,
+                registry_of(&[("store.a.b", "store::a", 1), ("store.a.b", "store::a", 1)]),
+                "point `store.a.b` is registered 2 times",
+            ),
+            (
+                "malformed",
+                "fn f(fs: &impl Fs) { fs.point(\"store.A.b\"); }\n",
+                registry_of(&[("store.A.b", "store::a", 1)]),
+                "is not `store.function.stage`",
+            ),
+            (
+                "prefix",
+                "fn f(fs: &impl Fs) { fs.point(\"workspace.a.b\"); }\n",
+                registry_of(&[("workspace.a.b", "workspace::a", 1)]),
+                "is not `store.function.stage`",
+            ),
+            (
+                "non-literal",
+                "fn f(fs: &impl Fs) { fs.point(\"store.a.b\"); fs.point(NAME); }\n",
+                one.clone(),
+                "does not name its point with one string literal",
+            ),
+            (
+                "entry",
+                used,
+                "use sim::Point;\npub const POINTS: &[Point] = &[\n    Point { name: \"store.a.b\", unit: \"store::a\" },\n];\n"
+                    .to_owned(),
+                "an entry not of the form",
+            ),
+            (
+                "sprint",
+                used,
+                registry_of(&[("store.a.b", "store::a", 2)]),
+                "names sprint 2, outside 1 to 1",
+            ),
+        ];
+        for (name, lib, registry, expected) in fails {
+            let (_, problems) = point_tree(name, lib, &registry);
+            assert!(
+                problems.iter().any(|problem| problem.contains(expected)),
+                "{name}: expected {expected:?} in {problems:?}"
+            );
+        }
+        let (_, problems) = point_tree(
+            "sprint-zero",
+            used,
+            &registry_of(&[("store.a.b", "store::a", 0)]),
+        );
+        assert!(
+            problems.iter().any(|p| p.contains("names sprint 0")),
+            "{problems:?}"
+        );
+    }
 
     /// The clean fixture's root manifest.
     const WORKSPACE: &str = "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\npublish = false\n\n\
@@ -2638,7 +2843,8 @@ mod tests {
 
     /// The command itself, not only the rules: "`cargo policy` SHALL fail
     /// with the new rule `golden`" (T-005). It prints one line per rule, in
-    /// the order the T-001, T-002 and T-005 clauses add them, a `FAIL` line
+    /// the order the T-001, T-002 and T-005 clauses (and Sprint 4's `points`)
+    /// add them, a `FAIL` line
     /// for each problem, nothing on stderr, and exits 1.
     #[test]
     fn policy_command_fails_naming_each_failing_rule() {
@@ -2648,7 +2854,7 @@ mod tests {
         fixture.write(".gitattributes", "* text=auto eol=lf\n");
         let report = format!(
             "PASS lints\nPASS unsafe\nPASS toolchain\nPASS lockfile\nPASS publish\nPASS deps\n\
-             PASS credits\nPASS clippy\nPASS fs-boundary\nPASS names\nPASS spec\n{GOLDEN}"
+             PASS credits\nPASS clippy\nPASS fs-boundary\nPASS points\nPASS names\nPASS spec\n{GOLDEN}"
         );
         assert_eq!(fixture.command(), (1, report, String::new()));
 
@@ -2656,7 +2862,7 @@ mod tests {
         fs::remove_file(fixture.0.join("Cargo.lock")).unwrap();
         let report = format!(
             "PASS lints\nPASS unsafe\nPASS toolchain\nFAIL lockfile: Cargo.lock is missing\n\
-             PASS publish\nPASS deps\nPASS credits\nPASS clippy\nPASS fs-boundary\nPASS names\nPASS spec\n{GOLDEN}"
+             PASS publish\nPASS deps\nPASS credits\nPASS clippy\nPASS fs-boundary\nPASS points\nPASS names\nPASS spec\n{GOLDEN}"
         );
         assert_eq!(fixture.command(), (1, report, String::new()));
 
@@ -2665,7 +2871,7 @@ mod tests {
         fixture.write(".gitattributes", "* text=auto eol=lf\n*.bin filter=lfs\n");
         let report = format!(
             "PASS lints\nPASS unsafe\nPASS toolchain\nPASS lockfile\nPASS publish\nPASS deps\n\
-             PASS credits\nPASS clippy\nPASS fs-boundary\nPASS names\nPASS spec\n\
+             PASS credits\nPASS clippy\nPASS fs-boundary\nPASS points\nPASS names\nPASS spec\n\
              FAIL golden: 1 *.bin paths are not binary: the .gitattributes files give \
              crates/codec/tests/golden/v1/probe.bin `filter: lfs`\n{GOLDEN}"
         );

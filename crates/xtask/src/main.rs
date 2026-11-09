@@ -12,6 +12,7 @@ mod docs;
 mod manifest;
 #[cfg(test)]
 mod pins;
+mod points;
 mod policy;
 #[cfg(test)]
 mod workflow;
