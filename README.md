@@ -62,7 +62,12 @@ cargo ci
 
 `cargo ci` runs formatting, Clippy, the test suite, the reach check, the
 workspace policy and the Book check, the same way on Windows, Linux and GitHub
-Actions.
+Actions. Tests build optimised. The suite builds every test executable once,
+then runs the test files in parallel. It fails if any executable Cargo built
+goes unrun.
+GitHub Actions runs on every pull request, on every push to `main`, and on
+demand. Formatting and Clippy, the suite and cargo-deny show as separate
+checks, and a newer push to a pull request cancels the run it replaces.
 `cargo policy` and `cargo book` run those last two checks on their own.
 `cargo reach` rewrites the reach table, [`docs/reach.md`](docs/reach.md), from the points the latest test run recorded; `cargo ci` fails when it is stale.
 `cargo ci`, `cargo policy`, `cargo book` and `cargo reach` take no flags.
