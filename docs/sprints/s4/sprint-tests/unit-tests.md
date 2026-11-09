@@ -212,4 +212,16 @@ Every test the [test plan](../sprint-plans/test-plan.md) names exists and passed
   | `praps_output_unchanged_without_reports` | Sprint 3's 22 `cli.rs` tests and the 4 other `e2e.rs` tests, unchanged and passing |
 
   It ran on NTFS, with an unpaired surrogate, and on ext4, with byte `0xff`.
-- `snapshot` clears the report first, so an early failure reports nothing stale (CR-07).
+- `snapshot` clears the report first, so an early failure reports nothing stale (CR-07). Its regression test, `a_failed_snapshot_reports_nothing_stale`, came after the tested head (round-2 critique C-001; see below).
+
+## After the tested head
+
+The round-2 [test critique](critique.md) found that CR-07's fix had no test (C-001). Commit `6665913` adds one test and changes nothing else:
+- **`a_failed_snapshot_reports_nothing_stale`** (`workspace/tests/history.rs`). On one `Workspace`:
+  1. `status` reports a raw name.
+  2. A second store handle commits two ops on the head.
+  3. The next `status` fails with `SeveralHeads`, before its scan, and `reported()` is then empty.
+- **Mutation check:** with `self.reported.clear()` removed from `snapshot`, the test fails, at `history.rs:637`.
+- **Runs:** `cargo test -p workspace --test history` at `6665913` passed 15 of 15 on Windows (3.45 s) and in a fresh WSL ext4 clone (2.95 s). See section `after the tested head` in [test-matrix-log.md](test-matrix-log.md). Clippy and `cargo fmt --check` are clean.
+- **Counts at `6665913`:** 71 new tests, and `history.rs` has 15. The full suite was not re-run, so the totals above stay those measured at `9fa59fb`.
+

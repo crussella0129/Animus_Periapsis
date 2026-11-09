@@ -279,3 +279,23 @@ xtask: /home/charles/periapsis-outside-target/debug/xtask is not inside /home/ch
 ==== done
 leg exit 0
 ```
+
+## After the tested head
+
+`cargo test -p workspace --test history` at `6665913`, which adds only `a_failed_snapshot_reports_nothing_stale` (round-2 test critique C-001).
+
+```text
+==== after the tested head (Windows, NTFS working checkout)
+running 15 tests
+...............
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.45s
+
+==== after the tested head (WSL, fresh ext4 clone)
+6665913 sprint-4: test - CR-07 regression test (round-2 critique C-001)
+Linux 6.6.114.1-microsoft-standard-WSL2
+running 15 tests
+...............
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.95s
+removed
+```
+

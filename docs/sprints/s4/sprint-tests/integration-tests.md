@@ -83,7 +83,7 @@ Both are well inside the budget, even with the other leg running. Seeds run in p
 
 **What a pass shows, and what it does not.** The `UnsyncedReferences` control loses closure in the forced-race cells, which its test requires. So the parent re-sync in `commit_op` is load-bearing for several writers, and the odd-seed orderings are what reach it on purpose. INT-0007's Consequences record this. The test does not split the 12 losses by seed parity, so nothing here claims the even seeds found none.
 
-The four-writer oracle counts torn records and closure, but it does not compute atomicity: that check lives in the store matrix, which still runs (C-004, deferred; see the [test report](test-report.md)).
+The four-writer oracle counts torn records and closure, but it does not compute atomicity, so the `atomicity 0` in its summary lines is not a result. The store matrix's atomicity check runs one writer only and says nothing about four. Under four writers, closure stands in for it: each process's ops form a chain of at most two, the second naming the first, so a recovered op whose predecessor is missing is a closure violation. Closure is 0 in every correct cell (C-004, deferred; see the [test report](test-report.md)).
 
 The matrix shows the store is safe for four writers on one store, through a simulated `SimFs`. On a real filesystem it is evidenced by `real_four_processes_lose_nothing` ([e2e-tests.md](e2e-tests.md)), which is not reproducible.
 
@@ -130,4 +130,4 @@ The four-writer row reaches no workspace unit, as expected: it drives the store 
 ### The `sim` tests
 - **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md)
 - **Where:** sections `int_sim_points_and_processes_*`.
-- **Result:** `points.rs` (10), `processes.rs` (18) and `threads.rs` (3) passed on both systems. Since C-001 to C-003, every `processes.rs` run is under a deadlock watchdog, and the scheduler tests check the order of events over 10 or 20 seeds each, not one.
+- **Result:** `points.rs` (10), `processes.rs` (18) and `threads.rs` (3) passed on both systems. Since C-001 to C-003, the three tests that could hang run under a deadlock watchdog: `panic_in_a_process_ends_the_run`, `orderings_are_released_when_the_source_process_ends` and `a_kill_comes_before_an_ordering_wait`. Those three, `a_point_alone_lets_another_process_run` and `point_events_are_ordered` run over 10 or 20 seeds and require the interleaving they need in at least one. Other scheduler tests, such as `ordering_deadlock_is_reported` and `kill_at_a_point`, still use one seed.

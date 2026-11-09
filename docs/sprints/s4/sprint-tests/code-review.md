@@ -11,7 +11,7 @@ A read-only subagent reviewer read `git diff 7b2fd59..HEAD -- crates/ .cargo/`: 
 - the re-entry guard works;
 - runs are deterministic with seeds in parallel cells.
 
-The findings are condensed here; each is answered at the end, and every fix has a test.
+The findings are condensed here; each is answered at the end. Every fix that changes behaviour has a test; CR-07's was added after the round-2 test critique.
 
 ## Findings
 
@@ -64,6 +64,6 @@ The findings are condensed here; each is answered at the end, and every fix has 
 | CR-04 | **Fixed, both ways.** The `points` rule requires one sprint per unit (the `unit-sprints` fixture), and the reach table filters each cell by unit and sprint. The committed table is unchanged. |
 | CR-05 | **Fixed.** `point` and its own doc comment now sit above `name_rules`'s doc block. |
 | CR-06 | **Fixed.** A drop guard puts the hook back when it returns or unwinds, unless a new hook was set meanwhile. A comment says that a hook used under `Processes` should make no syscall of its own. Tested by `a_hook_that_unwinds_is_put_back`. |
-| CR-07 | **Fixed.** `snapshot` clears `reported` before it loads, so a snapshot that fails early reports nothing stale. A command keeps the latest snapshot's report, not the first's. The plan's "first snapshot only" was meant to keep `undo`'s second snapshot from adding duplicates. It still adds none: the field is replaced, and both snapshots scan the same files. |
+| CR-07 | **Fixed.** `snapshot` clears `reported` before it loads, so a snapshot that fails early reports nothing stale. A command keeps the latest snapshot's report, not the first's. The plan's "first snapshot only" was meant to keep `undo`'s second snapshot from adding duplicates. It still adds none: the field is replaced, and both snapshots scan the same files. Its regression test, `a_failed_snapshot_reports_nothing_stale`, was added in `6665913` after the round-2 test critique found none (C-001). |
 
 Also added while answering: `reach_check_fails_on_a_stale_table`. It shows that the `reach` step of `cargo ci` passes on the table `cargo reach` wrote, fails on a stale or missing table, and writes nothing. This replaces a Windows-leg probe that would have rerun all of `cargo ci`.
