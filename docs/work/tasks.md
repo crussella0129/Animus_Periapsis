@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-008 (sprint 4) [intent: INT-0005, INT-0003]: Reach recording, cargo reach, the reach step in cargo ci, and the simulation spec — touches: crates/sim/src/reach.rs, crates/store/tests/, crates/workspace/tests/, crates/xtask/, .cargo/config.toml, docs/reach.md, docs/spec/simulation.md, docs/SUMMARY.md
 - [ ] T-009 (sprint 4) [intent: INT-0004, INT-0014]: Report skipped names from every command that snapshots (absorbs former backlog T-019) — touches: crates/workspace/, crates/praps/
 - [ ] T-010 (sprint 4) [intent: INT-0005, INT-0003, INT-0007]: Consequences, credits, README and backlog — touches: docs/intents/, docs/prior-art.md, docs/work/tasks.md, README.md, crates/xtask/src/docs.rs, crates/xtask/Cargo.toml
 - [ ] T-012 (backlog) [intent: INT-0006]: Give the provisional `operation`, `changeset` and `view` bodies the fields INT-0006 names for them that they still lack: the operation's actor, advisory wall clock and signature (INT-0016); the changeset's author, intent references, renames and conflict terms (INT-0011, INT-0012, INT-0017); the view's named pointers. Sprint 2 gave the operation its view hash. Due before the Phase 1 exit gate freezes format v1 — touches: docs/spec/format-v1.md, crates/codec/
