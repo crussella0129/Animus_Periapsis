@@ -8,7 +8,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
-use crate::policy;
+use crate::{policy, reach};
 
 /// What a step does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,6 +19,9 @@ pub enum Action {
     Policy,
     /// Checks the Book in-process.
     Book,
+    /// Checks in-process that the committed reach table is the one the
+    /// test step's run records (INT-0005 AC-6). Writes nothing.
+    Reach,
 }
 
 /// One named step of the suite.
@@ -29,7 +32,7 @@ pub struct Step {
 }
 
 /// The suite, in order.
-pub const STEPS: [Step; 5] = [
+pub const STEPS: [Step; 6] = [
     Step {
         name: "fmt",
         action: Action::Cargo(&["fmt", "--all", "--check"]),
@@ -51,6 +54,10 @@ pub const STEPS: [Step; 5] = [
         action: Action::Cargo(&["test", "--workspace", "--locked"]),
     },
     Step {
+        name: "reach",
+        action: Action::Reach,
+    },
+    Step {
         name: "policy",
         action: Action::Policy,
     },
@@ -64,6 +71,12 @@ pub const STEPS: [Step; 5] = [
 /// needs it, and the test step must never see it, so a variable left set in
 /// the shell cannot create golden files.
 const GOLDEN_CREATE: &str = "PERI_GOLDEN_CREATE";
+
+/// The child mode of the four-process store test
+/// (`crates/store/tests/real_writers.rs`). The test step must never see it,
+/// so a variable left set in the shell cannot turn the no-op child test into
+/// a writer (Sprint 4 T-007).
+const WRITER_CHILD: &str = "PERI_WRITER_CHILD";
 
 /// proptest reads `PROPTEST_*` variables, and `PROPTEST_CASES` replaces even an
 /// explicit case count, so no step inherits them: the property tests run the
@@ -122,6 +135,7 @@ pub fn finish(failed: &[&str], out: &mut dyn Write) -> u8 {
 pub fn run(root: &Path, out: &mut dyn Write) -> u8 {
     let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
     let failed = run_with(&STEPS, out, |step| {
+        prepare(root, step);
         execute_with(root, step, |args| cargo_command(&cargo, root, args))
     });
     finish(&failed, out)
@@ -140,8 +154,9 @@ pub fn cargo_command(program: &OsStr, root: &Path, args: &[&str]) -> Command {
 /// Variables a cargo step never inherits, set or not: golden-file create
 /// mode, the proptest case count, and those that change what Clippy denies,
 /// how code is compiled or which toolchain compiles it.
-const ALWAYS_SCRUBBED: [&str; 10] = [
+const ALWAYS_SCRUBBED: [&str; 11] = [
     GOLDEN_CREATE,
+    WRITER_CHILD,
     "PROPTEST_CASES",
     CLIPPY_CONF_DIR,
     "RUSTFLAGS",
@@ -181,6 +196,16 @@ fn scrubbed(set: impl IntoIterator<Item = OsString>) -> BTreeSet<OsString> {
     names
 }
 
+/// What `cargo ci` does before a step: before `test`, it clears the recorded
+/// reach, so a scenario that no longer records cannot leave a file behind
+/// for the `reach` step (INT-0005 AC-6). Kept apart from `execute_with`, so
+/// tests that run a step's command at the real root clear nothing.
+fn prepare(root: &Path, step: &Step) {
+    if step.action == Action::Cargo(&["test", "--workspace", "--locked"]) {
+        reach::clear(root);
+    }
+}
+
 /// Runs one step at `root`. A cargo step runs the command `cargo` builds from
 /// the step's arguments: `cargo_command` with the cargo that started
 /// `cargo ci` (or `cargo` from the path), or whatever a test builds.
@@ -190,6 +215,10 @@ fn execute_with(root: &Path, step: &Step, cargo: impl Fn(&[&str]) -> Command) ->
             Ok(status) if status.success() => Outcome::Pass,
             Ok(status) => Outcome::Fail(format!("cargo {} exited with {status}", args.join(" "))),
             Err(error) => Outcome::Fail(format!("could not run cargo: {error}")),
+        },
+        Action::Reach => match reach::check(root) {
+            Ok(()) => Outcome::Pass,
+            Err(why) => Outcome::Fail(why),
         },
         Action::Policy => {
             let problems: usize = policy::check(root)
@@ -222,7 +251,8 @@ mod tests {
     use std::process::{Command, Stdio};
 
     use super::{
-        Action, Outcome, STEPS, Step, cargo_command, execute_with, finish, run, run_with, scrubbed,
+        Action, Outcome, STEPS, Step, cargo_command, execute_with, finish, prepare, run, run_with,
+        scrubbed,
     };
     use crate::workflow;
 
@@ -250,6 +280,7 @@ mod tests {
 fn inherits_no_stripped_variable() {
     for name in [
         "PERI_GOLDEN_CREATE",
+        "PERI_WRITER_CHILD",
         "PROPTEST_CASES",
         "PROPTEST_RNG_SEED",
         "CLIPPY_CONF_DIR",
@@ -332,6 +363,10 @@ fn inherits_no_stripped_variable() {
             Step {
                 name: "test",
                 action: Action::Cargo(&["test", "--workspace", "--locked"]),
+            },
+            Step {
+                name: "reach",
+                action: Action::Reach,
             },
             Step {
                 name: "policy",
@@ -574,7 +609,32 @@ fn inherits_no_stripped_variable() {
         );
         let mut out = Vec::new();
         assert_eq!(finish(&[], &mut out), 0);
-        assert_eq!(String::from_utf8(out).unwrap(), "ci: all 5 steps passed\n");
+        assert_eq!(String::from_utf8(out).unwrap(), "ci: all 6 steps passed\n");
+    }
+
+    /// The test step clears the recorded reach before it runs, so a
+    /// scenario that stopped recording cannot leave a stale file
+    /// (Sprint 4 T-008).
+    #[test]
+    fn test_step_clears_the_recorded_reach() {
+        let root = std::env::temp_dir().join(format!("xtask-reach-clear-{}", std::process::id()));
+        let dir = crate::reach::reach_dir(&root);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("store.txt"),
+            "scenario store
+sprint 1
+",
+        )
+        .unwrap();
+        for step in STEPS.iter().filter(|step| step.name != "test") {
+            prepare(&root, step);
+            assert!(dir.exists(), "{} cleared the reach", step.name);
+        }
+        let test = STEPS.iter().find(|step| step.name == "test").unwrap();
+        prepare(&root, test);
+        assert!(!dir.exists());
+        let _ = fs::remove_dir_all(&root);
     }
 
     /// No cargo step inherits a variable that creates golden files, cuts
@@ -589,6 +649,7 @@ fn inherits_no_stripped_variable() {
             let command = cargo_command(OsStr::new("cargo"), Path::new("."), args);
             for name in [
                 "PERI_GOLDEN_CREATE",
+                "PERI_WRITER_CHILD",
                 "PROPTEST_CASES",
                 "CLIPPY_CONF_DIR",
                 "RUSTFLAGS",
@@ -665,7 +726,7 @@ fn inherits_no_stripped_variable() {
             (code, String::from_utf8(out).unwrap()),
             (
                 0,
-                "PASS fmt\nPASS clippy\nPASS test\nPASS policy\nPASS book\nci: all 5 steps passed\n"
+                "PASS fmt\nPASS clippy\nPASS test\nPASS reach\nPASS policy\nPASS book\nci: all 6 steps passed\n"
                     .to_owned()
             )
         );
@@ -692,6 +753,7 @@ fn inherits_no_stripped_variable() {
         let names: BTreeSet<OsString> = [
             "CLIPPY_CONF_DIR",
             "PERI_GOLDEN_CREATE",
+            "PERI_WRITER_CHILD",
             "PROPTEST_CASES",
             "RUSTC",
             "RUSTC_WORKSPACE_WRAPPER",

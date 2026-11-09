@@ -26,6 +26,11 @@ fn matrix(variant: Variant) -> (Summary, Cells) {
     (summary, cells)
 }
 
+/// Where the designated tests record reach for `cargo reach`.
+fn reach_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("reach")
+}
+
 #[test]
 fn crash_matrix_finds_no_violations() {
     let (summary, cells) = matrix(Variant::Correct);
@@ -50,6 +55,19 @@ fn crash_matrix_finds_no_violations() {
             );
         }
     }
+    // The designated record of this scenario's reach (INT-0005 AC-6): the
+    // two writers apart from the single-writer scenarios.
+    let (mut store, mut two) = (sim::reach::Totals::new(), sim::reach::Totals::new());
+    for (scenario, _, _, _, outcome) in &cells {
+        let totals = if *scenario == Scenario::TwoWriters {
+            &mut two
+        } else {
+            &mut store
+        };
+        sim::reach::add(totals, &outcome.reach);
+    }
+    sim::reach::record(&reach_dir(), "store", "store", 1, &store).unwrap();
+    sim::reach::record(&reach_dir(), "two-writers", "two writers", 1, &two).unwrap();
 }
 
 #[test]

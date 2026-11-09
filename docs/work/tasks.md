@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-007 (sprint 4) [intent: INT-0007, INT-0005]: The four-writer matrix and the four-process real-filesystem test (absorbs former backlog T-011) — touches: crates/store/tests/, crates/xtask/src/ci.rs
 - [ ] T-008 (sprint 4) [intent: INT-0005, INT-0003]: Reach recording, cargo reach, the reach step in cargo ci, and the simulation spec — touches: crates/sim/src/reach.rs, crates/store/tests/, crates/workspace/tests/, crates/xtask/, .cargo/config.toml, docs/reach.md, docs/spec/simulation.md, docs/SUMMARY.md
 - [ ] T-009 (sprint 4) [intent: INT-0004, INT-0014]: Report skipped names from every command that snapshots (absorbs former backlog T-019) — touches: crates/workspace/, crates/praps/
 - [ ] T-010 (sprint 4) [intent: INT-0005, INT-0003, INT-0007]: Consequences, credits, README and backlog — touches: docs/intents/, docs/prior-art.md, docs/work/tasks.md, README.md, crates/xtask/src/docs.rs, crates/xtask/Cargo.toml
@@ -10,3 +9,5 @@
 - [ ] T-018 (backlog) [intent: INT-0013, INT-0009]: Make `log` linear in the op log: it rebuilds each op's working-copy tree from its first-parent chain to count files, which is quadratic in history length; derive the counts incrementally or from cached derived data (Sprint 3 build, T-007) — touches: crates/workspace/
 
 - [ ] T-020 (backlog) [intent: INT-0001, INT-0002, INT-0003, INT-0004, INT-0006]: Record the Sprint 4 checkpoint's GitHub Actions runs and the owner's sign-offs still pending after Sprint 4 (INT-0001 AC-1, INT-0002 AC-1, INT-0003 AC-5, INT-0006 AC-6 for Sprint 0's frozen sections, INT-0004 AC-5) — touches: docs/sprints/, docs/intents/
+- [ ] T-021 (backlog) [intent: INT-0005, INT-0003]: Select the tests a change needs from the reach table: map changed code to the units it touches and run first the scenarios that reach them, keeping the full triangle at the checkpoint (the owner's Sprint 4 proposal; Sprint 4 research, out of scope) — touches: crates/xtask/, docs/spec/simulation.md
+- [ ] T-022 (backlog) [intent: INT-0005]: Move the remaining trace-text hooks in crates/workspace/tests/workspace.rs (`a_file_vanishing_mid_scan_is_deleted`) and crates/workspace/tests/materialise.rs (`edits_during_the_write_are_kept`) to named points and actions, as the two-writer race moved in Sprint 4 (Sprint 4 plan critique, C-020) — touches: crates/workspace/

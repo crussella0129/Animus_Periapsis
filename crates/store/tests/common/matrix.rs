@@ -30,7 +30,7 @@ use store::{Store, Variant, heads_of};
 pub const SEEDS: u64 = 40;
 pub const MODES: [Mode; 2] = [Mode::Lenient, Mode::Strict];
 pub const ROOT: &str = "repo";
-const ALG: HashAlg = HashAlg::DEFAULT;
+pub const ALG: HashAlg = HashAlg::DEFAULT;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Scenario {
@@ -146,13 +146,15 @@ pub struct Outcome {
     pub state: HashRef,
     /// A hash of the syscall trace.
     pub trace: HashRef,
+    /// The named points the scenario's own run reached (not the oracle's).
+    pub reach: Vec<(&'static str, u64)>,
 }
 
-fn id_of(op: &Operation) -> HashRef {
+pub fn id_of(op: &Operation) -> HashRef {
     object_id(ALG, &op.to_envelope())
 }
 
-fn op(parents: &[HashRef], view: HashRef) -> Operation {
+pub fn op(parents: &[HashRef], view: HashRef) -> Operation {
     Operation {
         parents: parents.iter().copied().collect(),
         view,
@@ -162,7 +164,7 @@ fn op(parents: &[HashRef], view: HashRef) -> Operation {
 /// The objects one recorded state needs, in put order: a blob per file, a
 /// changeset holding them, and a view whose head and `default` workspace are
 /// that changeset.
-fn state(tag: &str, files: &[&str]) -> Vec<Vec<u8>> {
+pub fn state(tag: &str, files: &[&str]) -> Vec<Vec<u8>> {
     let mut envelopes = Vec::new();
     let mut changes = BTreeMap::new();
     for (i, content) in files.iter().enumerate() {
@@ -195,7 +197,7 @@ fn state(tag: &str, files: &[&str]) -> Vec<Vec<u8>> {
     envelopes
 }
 
-fn view_of(state: &[Vec<u8>]) -> HashRef {
+pub fn view_of(state: &[Vec<u8>]) -> HashRef {
     object_id(ALG, state.last().unwrap())
 }
 
@@ -381,6 +383,7 @@ pub fn run_cell(
     fs.set_crash_at(Some(crash_at));
     let log = Arc::new(Mutex::new(Log::default()));
     let _ = run(&fs, scenario, variant, seed, &log);
+    let reach = fs.reach();
     let trace = fs.trace().join("\n");
     // Recovery is a function of the crashed state and the seed, so the
     // checks (whose final `init` writes) get their own copy and the state
@@ -393,6 +396,7 @@ pub fn run_cell(
         raced: log.raced,
         state: digest(&recovered),
         trace: HashAlg::Blake3.hash(trace.as_bytes()),
+        reach,
     };
     (outcome, recovered)
 }
@@ -422,13 +426,13 @@ pub fn digest(fs: &SimFs) -> HashRef {
 }
 
 /// A valid object: its kind and the ids it names.
-struct Object {
-    kind: ObjectKind,
-    refs: Vec<HashRef>,
+pub struct Object {
+    pub kind: ObjectKind,
+    pub refs: Vec<HashRef>,
 }
 
 /// An object file's content, if it is wholly a valid object (not an op).
-fn as_object(content: &[u8]) -> Option<Object> {
+pub fn as_object(content: &[u8]) -> Option<Object> {
     let kind = decode_envelope(content).ok()?.kind;
     if kind == ObjectKind::Operation {
         return None;
@@ -440,7 +444,7 @@ fn as_object(content: &[u8]) -> Option<Object> {
 }
 
 /// The present objects and ops under the store root, read from the raw state.
-fn present(
+pub fn present(
     snapshot: &BTreeMap<String, Node>,
 ) -> (BTreeMap<HashRef, Object>, BTreeMap<HashRef, Operation>) {
     let mut objects = BTreeMap::new();
@@ -471,7 +475,7 @@ fn present(
 
 /// Closure violations: missing parents and views of present ops, and missing
 /// references of every object those views reach.
-fn closure(objects: &BTreeMap<HashRef, Object>, ops: &BTreeMap<HashRef, Operation>) -> u64 {
+pub fn closure(objects: &BTreeMap<HashRef, Object>, ops: &BTreeMap<HashRef, Operation>) -> u64 {
     let mut count = 0;
     let mut stack = Vec::new();
     for op in ops.values() {

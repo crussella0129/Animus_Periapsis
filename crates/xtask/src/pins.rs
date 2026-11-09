@@ -57,6 +57,7 @@ jobs:
 const CARGO_CONFIG: &str = r#"# Project commands. Each is idempotent, so none takes flags (INT-0003 AC-9).
 [alias]
 ci = "run --locked --quiet --package xtask -- ci"
+reach = "run --locked --quiet --package xtask -- reach"
 policy = "run --locked --quiet --package xtask -- policy"
 book = "run --locked --quiet --package book --"
 "#;

@@ -217,3 +217,19 @@ fn real_fs_point_is_a_no_op() {
     assert!(RealFs.list(&dir).unwrap().is_empty());
     RealFs.remove_dir(&dir).unwrap();
 }
+
+#[test]
+fn reach_record_round_trips() {
+    let dir = std::env::temp_dir().join(format!("praps-reach-{}", std::process::id()));
+    let mut totals = sim::reach::Totals::new();
+    sim::reach::add(&mut totals, &[("b.x.y", 2), ("a.x.y", 1)]);
+    sim::reach::add(&mut totals, &[("b.x.y", 3)]);
+    sim::reach::record(&dir, "scenario-file", "a scenario", 4, &totals).unwrap();
+    // Written again: the temporary name is replaced, the file renamed over.
+    sim::reach::record(&dir, "scenario-file", "a scenario", 4, &totals).unwrap();
+    let text = RealFs.read(&dir.join("scenario-file.txt")).unwrap();
+    assert_eq!(text, b"scenario a scenario\nsprint 4\na.x.y 1\nb.x.y 5\n");
+    assert_eq!(RealFs.list(&dir).unwrap(), ["scenario-file.txt"]);
+    RealFs.remove_file(&dir.join("scenario-file.txt")).unwrap();
+    RealFs.remove_dir(&dir).unwrap();
+}
