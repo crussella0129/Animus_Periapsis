@@ -891,11 +891,47 @@ mod tests {
         }
     }
 
+    /// The child half of `run_command_keeps_the_streams_in_order`: with
+    /// `XTASK_STREAM_ORDER` set, it writes to stdout, then stderr, then stdout,
+    /// flushing each. Run on its own, it does nothing.
+    #[test]
+    fn stream_order_child() {
+        use std::io::Write;
+        if std::env::var_os("XTASK_STREAM_ORDER").is_none() {
+            return;
+        }
+        let (mut out, mut err) = (std::io::stdout(), std::io::stderr());
+        out.write_all(b"order-first\n").unwrap();
+        out.flush().unwrap();
+        err.write_all(b"order-second\n").unwrap();
+        err.flush().unwrap();
+        out.write_all(b"order-third\n").unwrap();
+        out.flush().unwrap();
+    }
+
     #[test]
     fn run_command_keeps_the_streams_in_order() {
         // A child that writes to stdout, then stderr, then stdout again: the
-        // captured output keeps that order. `cargo --version` and an unknown
-        // flag stand in, run through a shell-free chain of two commands.
+        // captured output keeps that order. Capturing the two streams apart
+        // and joining them would put `order-second` last (test critique
+        // C-002).
+        let mut child = Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "units::tests::stream_order_child", "--nocapture"])
+            .env("XTASK_STREAM_ORDER", "1");
+        let ran = super::run_command(child);
+        let at = |marker: &str| {
+            ran.output
+                .find(marker)
+                .unwrap_or_else(|| panic!("{marker} missing from {ran:?}"))
+        };
+        assert!(ran.ok, "{ran:?}");
+        assert!(
+            at("order-first") < at("order-second") && at("order-second") < at("order-third"),
+            "{ran:?}"
+        );
+
+        // The exit status and a program that cannot start.
         let mut command = Command::new(env!("CARGO"));
         command.args(["--version"]);
         let ran = super::run_command(command);
