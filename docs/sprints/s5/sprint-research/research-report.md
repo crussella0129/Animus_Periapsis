@@ -20,7 +20,7 @@ Make CI fast enough to wait for, without dropping a single test, and make each k
 - **Less waste:**
   - one run per commit instead of a `push` run plus a `pull_request` run;
   - a newer push cancels the runs it replaces;
-  - the cargo-deny install stops failing on a bad download.
+  - the cargo-deny install retries a bad download and checks its checksum, so a corrupt file never reaches the check.
 - **Carry forward:** T-020, the Sprint 4 CI record and sign-offs.
 
 ## 2. Existing Code Survey

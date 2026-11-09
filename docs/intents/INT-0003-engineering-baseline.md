@@ -37,8 +37,8 @@ and the independent mrustc bootstrap are C++, so that claim is not achievable
 - **AC-1** `necessary` `formal` — No workspace crate contains `unsafe` code.
   - Obligation: `unstated`.
   - Proxy: the workspace lint `unsafe_code = "forbid"` inherited by every crate, enforced by the compiler on every CI build.
-- **AC-2** `necessary` `empirical` — Builds are pinned and locked: `rust-toolchain.toml` names an exact stable release, `Cargo.lock` is committed, and every CI run builds with `--locked` on Windows and Linux. CI runs on every pull request, on every push to `main`, and on demand.
-  - Threshold: 100% of CI runs.
+- **AC-2** `necessary` `empirical` — Builds are pinned and locked: `rust-toolchain.toml` names an exact stable release, `Cargo.lock` is committed, and every CI run builds with `--locked` on Windows and Linux. CI runs on every pull request, on every push to `main`, and on demand. A pull-request run may be cancelled when a newer push to the same pull request replaces it; a push to `main` is never cancelled.
+  - Threshold: 100% of CI runs that complete.
 - **AC-3** `necessary` `empirical` — `cargo deny check` passes in CI: every dependency licence is on the GPL-3.0-compatible allowlist, no RustSec advisory is unaddressed and the ban policy holds.
 - **AC-4** `necessary` `empirical` — `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings` pass in CI on Windows and Linux, in a check of their own on each platform, separate from the test suite's.
 - **AC-5** `necessary` `asserted` — `docs/prior-art.md` credits every adopted design with its source system and licence, and a reviewer confirms that no code was copied from another VCS project.
@@ -52,8 +52,8 @@ and the independent mrustc bootstrap are C++, so that claim is not achievable
 - **AC-9** `necessary` `empirical` — The tooling commands `cargo ci`, `cargo policy`, `cargo book` and `cargo reach` are idempotent and take no flags: each rejects any argument starting with `-` with exit code 2, and two consecutive runs leave the working tree unchanged.
   - Threshold: 100% of tooling commands.
 - **AC-10** `supporting` `empirical` — The README keeps the owner's original statement, links the Book, documents the commands `cargo ci`, `cargo policy`, `cargo book`, `cargo reach` and `cargo deny check`, and states that the four project commands (`cargo ci`, `cargo policy`, `cargo book`, `cargo reach`) take no flags; `cargo deny check` is a third-party tool, run exactly as shown.
-- **AC-11** `supporting` `empirical` — CI is fast enough to wait for, with nothing dropped. On the checkpoint pull request, every check of a run finishes within 20 minutes of the run starting, and the aim is 15. Each `cargo ci` leg still runs every test target the workspace defines, with every simulation matrix at its full size.
-  - Threshold: 3 of 3 sampled runs of the checkpoint pull request.
+- **AC-11** `supporting` `empirical` — CI is fast enough to wait for, with nothing dropped. On the sprint's pull request into `main`, a run takes at most 20 minutes, and the aim is 15. A run's time is measured from its first job starting to its last job ending, which leaves out time spent waiting for a runner. Each `cargo ci` leg still runs every test executable Cargo builds for the workspace, with every simulation matrix at its full size.
+  - Threshold: 3 of 3 sampled runs of one commit. Each sample is an attempt in which every job runs: the pull request's first run (cold cache), then two "re-run all jobs" attempts (warm cache).
 
 ## Rationale
 - "Reproducible and bootstrappable" is the honest target: trusting-trust risk,
@@ -100,15 +100,30 @@ and the independent mrustc bootstrap are C++, so that claim is not achievable
   not as a `cargo ci` step, so a machine without cargo-deny can still run the
   whole suite. A green local `cargo ci` therefore says nothing about AC-3; the
   deny job does.
-- AC-2, AC-3 and AC-4 are claims about CI, so they hold only once a GitHub
-  Actions run on the work branch is recorded. That run starts at a sprint's
-  checkpoint, which opens only after the sprint closes, so each sprint's CI
-  evidence is recorded by the next sprint as a carried-forward task.
+- AC-2, AC-3, AC-4 and AC-11 are claims about CI, so they hold only once a
+  GitHub Actions run is recorded.
+  - Until Sprint 4, that run started at the sprint's checkpoint, after the
+    sprint closed, so each sprint's CI evidence was recorded by the next
+    sprint as a carried-forward task.
+  - From Sprint 5, the sprint's pull request into `main` opens during its Test
+    phase (owner's choice, 2026-11-09), so the runs of the tested head are
+    recorded in the sprint itself.
+  - Runs of commits added at close, and the merge's run on `main`, are still
+    recorded by the next sprint.
 - From Sprint 5, a push to `dev` starts no CI run of its own (owner's choice,
   2026-11-09). `dev` is built through its pull request into `main`, which
-  tests the merge of `dev` into `main`, and by hand through
-  `workflow_dispatch`. Each commit therefore runs once, and a newer push
-  cancels the runs it replaces.
+  tests the merge of `dev` into `main`. Each commit therefore runs once, and a
+  newer push to the pull request cancels the run it replaces.
+- `workflow_dispatch` runs on demand only once the workflow that declares it
+  is on `main`, so the first manual run can happen only after Sprint 5 merges.
+- Tests build at `opt-level = 1`, and dependencies at `3`, through
+  `[profile.dev]`, so the suite runs several times faster. The cost is that
+  local `cargo build` compiles more slowly and debug builds of `praps` are
+  optimised, which makes stepping through them in a debugger less exact.
+  Debug assertions and overflow checks stay on.
+- `cargo ci` runs every test executable that Cargo builds, and fails if any
+  one of them is not run by a unit. Adding a test target never needs a change
+  to the runner unless discovery misses it, and then `cargo ci` says so.
 - fmt and Clippy run twice in CI: in their own `lint` checks, which fail
   within minutes, and inside `cargo ci`, which stays the one canonical suite
   that runs the same way locally and in CI.
@@ -131,3 +146,4 @@ and the independent mrustc bootstrap are C++, so that claim is not achievable
 - 2026-11-08: revised while `active` (Sprint 4 plan critique, round 1, C-012): `cargo reach`, which writes the reach table of [INT-0005](INT-0005-deterministic-simulation-testing.md) AC-6, joins AC-9 and AC-10 as a fourth flagless, idempotent project command; `cargo ci` checks the table in-process instead of through a flag.
 - 2026-11-08: revised while `active` (Sprint 4 plan critique, round 2, C-007): the Intent paragraph names `cargo reach` among the flagless project commands, matching AC-9 and AC-10.
 - 2026-11-09: revised while `active` (Sprint 5 plan, on owner direction): AC-2 covers every CI run, now on pull requests, pushes to `main` and manual runs instead of pushes to `dev`; AC-4 puts fmt and Clippy in a check of their own on each platform; AC-11 added, a 20-minute budget per checkpoint run with no test dropped. Rationale and Consequences record why, and the parallel runner's place in `cargo ci`.
+- 2026-11-09: revised while `active` (Sprint 5 plan critique, round 1): AC-11 defines how a run is timed and sampled, and names the sprint's own pull request; AC-2 lets a superseded pull-request run be cancelled but never a push to `main`; Consequences record CI evidence recorded within the sprint, the late start of `workflow_dispatch`, the optimised `dev` profile, and the runner's check that every test executable runs.
