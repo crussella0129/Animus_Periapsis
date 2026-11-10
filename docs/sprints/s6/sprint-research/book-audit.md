@@ -73,7 +73,7 @@ These seven findings cut across chapters. Each names where it lands.
 
 ### INT-0004 Windows and Linux — Revise, small
 - A Consequence still says `undo`, `restore` and `new` drop their snapshot's report "a gap that backlog T-019 closes". Sprint 4 closed it.
-- Small files and flushes cost most on NTFS, so the one-flush rule of INT-0035 matters most there.
+- Recording cost about 14 ms a file on NTFS and on ext4 alike, so the one-flush rule of INT-0035 is needed on both.
 - **Change:** the stale sentence is corrected; a Consequence points to INT-0036's budgets, which hold on both platforms.
 
 ### INT-0005 Deterministic simulation testing — Revise, small

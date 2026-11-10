@@ -33,6 +33,12 @@ how (by hand, by choosing a side, from the resolution store, by structured
 merge or by a merge driver). Myers-minimal diff is available as an option;
 histogram is the default.
 
+The resolution store is shared, so one agent's resolution can be replayed for
+every agent. A stored resolution therefore carries the actor that made it.
+Repository policy names whose resolutions are replayed without a
+confirmation. A replay of anyone else's is admitted only after confirmation,
+like the output of the last two stages.
+
 ## Acceptance criteria
 - **AC-1** `necessary` `empirical` — diff3 parity: clean-versus-conflict status agrees with `git merge-file` on at least 99.5% of at least 800 random cases, with identical output whenever both are clean.
   - Note: R2-E20 measured 99.75% for the prototype `peri-merge`.
@@ -52,6 +58,8 @@ histogram is the default.
   - Note: R2-E22 measured 34–40% with Mergiraf 0.20.
 - **AC-8** `necessary` `empirical` — A file that both sides changed differently, and that no merge layer reads, always becomes a conflict term holding the base and both sides whole, never a file spliced from parts of both sides.
   - Threshold: 100% of such merges over a corpus of binaries, random bytes and files in a synthetic language.
+- **AC-9** `necessary` `empirical` — A replayed resolution names its resolver, and one made by an actor that policy does not name is never admitted without confirmation.
+  - Threshold: 0 admitted, over a corpus in which a faulty agent has filled the store with wrong resolutions.
 
 ## Rationale
 - Conflicts as data mean rebase never stops half-way, which matters most for
@@ -91,3 +99,4 @@ histogram is the default.
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 I.5 steps 14–17 and R2 §3).
 - 2026-11-01: revised while `proposed`, on owner direction: merging must work on content no layer can read. A conflict term now holds the base and each side as whole file versions by id, as III §3.2 describes, instead of the zdiff3-style hunks of II §2.7, which become the line layer's view; a file no merge layer reads is merged whole; a project can register a merge driver; and the diff3 pipeline applies to line-structured text. AC-8 is added and the Rationale says why.
+- 2026-11-10: revised while `proposed` (Sprint 6 Plan, on owner direction of 2026-11-09 for thousands of agents): among a thousand agents some are faulty, and a shared resolution store would replay a faulty agent's resolutions for all of them. The Intent says a stored resolution carries its resolver and that policy names whose resolutions replay without a confirmation; AC-9 checks it.

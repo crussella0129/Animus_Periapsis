@@ -27,6 +27,8 @@ Reference queries:
 - **AC-2** `necessary` `empirical` — Every reference query in this chapter parses and returns the expected result on a fixture repository.
 - **AC-3** `necessary` `empirical` — Evaluation is deterministic: the same repository state gives the same ordered result on Windows and Linux.
 - **AC-4** `supporting` `empirical` — Ancestry queries on large histories run in time proportional to the number of merges, using a segmented graph index.
+- **AC-5** `necessary` `empirical` — No reference query scans: each reference query in this chapter, run on fixture repositories of 10³ and 10⁶ changes that give results of the same size, reads the same number of objects within a factor of 3.
+  - Threshold: reads within ×3 across the two sizes ([INT-0035](INT-0035-scale-and-asynchrony.md), rule 6).
 
 ## Rationale
 - A query language over changes, actors, intents and phases is part of the
@@ -44,6 +46,11 @@ Reference queries:
 ## Consequences
 - The language is a compatibility surface for scripts and agents, so its
   grammar is versioned with the CLI.
+- Every predicate needs an index, kept as derived data
+  ([INT-0013](INT-0013-derived-data.md)). Gate 2 selects its batches by
+  query, and the live view ([INT-0038](INT-0038-live-view.md)) is built from
+  queries, so a predicate that scans would stall both at 10⁸ changes.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 I.5 step 18 and R5 §C.5).
+- 2026-11-10: revised while `proposed` (Sprint 6 Plan, on owner direction of 2026-11-09 for thousands of agents): AC-5 requires the reference queries to be answered without scanning, and Consequences say every predicate needs an index.

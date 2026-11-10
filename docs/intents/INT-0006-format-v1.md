@@ -3,7 +3,7 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0006
 - **State:** active
-- **Work evidence:** [T-002 build plan](../sprints/s0/sprint-plans/build-plan.md#t-002-format-v1-specification), [T-003 build plan](../sprints/s0/sprint-plans/build-plan.md#t-003-algorithm-tagged-hashes-in-the-hash-crate), [T-004 build plan](../sprints/s0/sprint-plans/build-plan.md#t-004-canonical-binary-encoding-in-the-codec-crate), [T-005 build plan](../sprints/s0/sprint-plans/build-plan.md#t-005-golden-corpus-and-spec-consistency), [Sprint 1 T-009 build plan](../sprints/s1/sprint-plans/build-plan.md#t-009-record-sprint-0s-github-actions-runs-and-owner-sign-offs), [Sprint 1 T-001 build plan](../sprints/s1/sprint-plans/build-plan.md#t-001-specify-and-implement-the-provisional-operation-object-kind), [T-010 backlog](../work/tasks.md), [T-012 backlog](../work/tasks.md), [Sprint 2 T-002 build plan](../sprints/s2/sprint-plans/build-plan.md#t-002-specify-and-implement-the-provisional-changeset-and-view-kinds-and-repository-paths), [Sprint 2 T-001 build plan](../sprints/s2/sprint-plans/build-plan.md#t-001-record-sprint-1s-github-actions-runs-and-owner-sign-offs), [T-013 backlog](../work/tasks.md), [Sprint 3 T-001 build plan](../sprints/s3/sprint-plans/build-plan.md#t-001-record-sprint-2s-github-actions-runs-and-owner-sign-offs), [T-017 backlog](../work/tasks.md), [Sprint 4 T-001 build plan](../sprints/s4/sprint-plans/build-plan.md#t-001-record-the-sprint-3-checkpoints-github-actions-runs-and-owner-sign-offs), [Sprint 5 T-001 build plan](../sprints/s5/sprint-plans/build-plan.md#t-001-record-the-sprint-4-checkpoints-github-actions-runs-and-owner-sign-offs)
+- **Work evidence:** [T-002 build plan](../sprints/s0/sprint-plans/build-plan.md#t-002-format-v1-specification), [T-003 build plan](../sprints/s0/sprint-plans/build-plan.md#t-003-algorithm-tagged-hashes-in-the-hash-crate), [T-004 build plan](../sprints/s0/sprint-plans/build-plan.md#t-004-canonical-binary-encoding-in-the-codec-crate), [T-005 build plan](../sprints/s0/sprint-plans/build-plan.md#t-005-golden-corpus-and-spec-consistency), [Sprint 1 T-009 build plan](../sprints/s1/sprint-plans/build-plan.md#t-009-record-sprint-0s-github-actions-runs-and-owner-sign-offs), [Sprint 1 T-001 build plan](../sprints/s1/sprint-plans/build-plan.md#t-001-specify-and-implement-the-provisional-operation-object-kind), [T-010 backlog](../work/tasks.md), [T-012 backlog](../work/tasks.md), [Sprint 2 T-002 build plan](../sprints/s2/sprint-plans/build-plan.md#t-002-specify-and-implement-the-provisional-changeset-and-view-kinds-and-repository-paths), [Sprint 2 T-001 build plan](../sprints/s2/sprint-plans/build-plan.md#t-001-record-sprint-1s-github-actions-runs-and-owner-sign-offs), [T-013 backlog](../work/tasks.md), [Sprint 3 T-001 build plan](../sprints/s3/sprint-plans/build-plan.md#t-001-record-sprint-2s-github-actions-runs-and-owner-sign-offs), [T-017 backlog](../work/tasks.md), [Sprint 4 T-001 build plan](../sprints/s4/sprint-plans/build-plan.md#t-001-record-the-sprint-3-checkpoints-github-actions-runs-and-owner-sign-offs), [Sprint 5 T-001 build plan](../sprints/s5/sprint-plans/build-plan.md#t-001-record-the-sprint-4-checkpoints-github-actions-runs-and-owner-sign-offs), [Sprint 6 T-001 build plan](../sprints/s6/sprint-plans/build-plan.md#t-001-record-sprint-5s-github-actions-runs-one-run-on-demand-and-the-owners-sign-offs)
 - **Completion evidence:** [T-002 completion](../work/completed-tasks.md#t-002-sprint-0), [T-003 completion](../work/completed-tasks.md#t-003-sprint-0), [T-004 completion](../work/completed-tasks.md#t-004-sprint-0), [T-005 completion](../work/completed-tasks.md#t-005-sprint-0), [Sprint 1 T-001 completion](../work/completed-tasks.md#t-001-sprint-1), [Sprint 2 T-002 completion](../work/completed-tasks.md#t-002-sprint-2), [Sprint 2 T-003 completion](../work/completed-tasks.md#t-003-sprint-2)
 - **Code evidence:** [hash crate](../../crates/hash/src/lib.rs), [codec crate](../../crates/codec/src/lib.rs), [golden test](../../crates/codec/tests/golden.rs), [operation.rs](../../crates/codec/src/operation.rs), [changeset.rs](../../crates/codec/src/changeset.rs), [view.rs](../../crates/codec/src/view.rs), [path.rs](../../crates/codec/src/path.rs)
 - **Test evidence:** [Sprint 0 test report](../sprints/s0/sprint-tests/test-report.md), [Sprint 0 GitHub Actions record](../sprints/s1/sprint-tests/ci-sprint0.md), [Sprint 1 test report](../sprints/s1/sprint-tests/test-report.md), [Sprint 1 CI record](../sprints/s2/sprint-tests/ci-sprint1.md), [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md), [Sprint 2 CI record](../sprints/s3/sprint-tests/ci-sprint2.md), [Sprint 3 CI record](../sprints/s4/sprint-tests/ci-sprint3.md), [Sprint 4 CI record](../sprints/s5/sprint-tests/ci-sprint4.md)
@@ -48,6 +48,19 @@ signature are still to come.
 Removed from v1: a HEAD/pointer file, separate evolution-marker objects, CRDT
 record operations, and chunk lists in core (R3 §4.1).
 
+Size follows the change. An object that records a change is as large as the
+change, not as large as the state it changes
+([INT-0035](INT-0035-scale-and-asynchrony.md)). A changeset already holds
+only the paths it changes. A view does not yet: Sprint 2's provisional `view`
+lists every head and every workspace, so each operation writes all of them
+again. Before the freeze a view becomes a map with shared structure:
+- an operation that changes *k* of *n* entries writes O(*k* log *n*) bytes,
+  and the rest of the view is shared with the view before;
+- the same set of entries has one encoding, whatever order they were added
+  in, so equal views have equal ids on every replica;
+- two views are compared, and merged, by skipping every part whose id is
+  equal, so the cost follows what differs.
+
 Object identity: an object's id is the `HashRef` of its whole envelope,
 `format_version ‖ kind ‖ body`, so the same body under two kinds or versions
 has two ids. A blob's id is therefore the hash of `01 ‖ 01 ‖ content`, not of
@@ -84,6 +97,11 @@ laid out on disk is [INT-0007](INT-0007-crash-safe-storage.md) and
 - **AC-6** `necessary` `asserted` — `docs/spec/format-v1.md` specifies each object type's encoding before its implementation lands, and every spec change is signed off by a human reviewer.
   - Signers: project owner or human reviewer.
 - **AC-7** `supporting` `empirical` — Every signature payload begins with the format version, the hash algorithm id and the signature algorithm id (checked when signing lands in INT-0016).
+- **AC-8** `necessary` `empirical` — A view's size follows the change: replacing one entry of a view of 10³, 10⁴ and 10⁵ entries stores the same number of new bytes, within a factor of 2, and every other byte of the new view is shared with the old one.
+  - Threshold: new bytes within ×2 across the three sizes ([INT-0035](INT-0035-scale-and-asynchrony.md) AC-4).
+- **AC-9** `necessary` `formal` — One encoding for one set of entries: a map with shared structure encodes to the same bytes whatever order its entries were added, changed or removed in.
+  - Obligation: `unstated`.
+  - Proxy: property tests that build the same map in at least 10,000 random orders of edits.
 
 ## Rationale
 - Git's SHA-1 → SHA-256 transition needs bidirectional mapping tables, cannot
@@ -120,6 +138,22 @@ laid out on disk is [INT-0007](INT-0007-crash-safe-storage.md) and
 - Stores written with a provisional encoding are development stores: a
   change to that encoding before Phase 1 exit may make them unreadable, and
   no migration is owed for them.
+- The object set gains whatever kind a map with shared structure needs, as a
+  recorded revision of this chapter when it is specified. Its form is not
+  chosen here. What AC-8 and AC-9 fix is its behaviour.
+- A changeset names no tree. A tree is therefore checked by replaying
+  changesets from the root, which a replica that lacks early history
+  ([INT-0009](INT-0009-reversible-by-default.md) AC-5) cannot do. Whether a
+  changeset should commit to the root of its tree is open, and is settled
+  before the Phase 1 freeze:
+  - committing lets any replica check a tree it is given, but fixes the
+    tree's form into authoritative data, as Git does;
+  - not committing keeps trees purely derived
+    ([INT-0013](INT-0013-derived-data.md)), and a partial clone then trusts
+    whoever derived the tree for it.
+- Operations gain a scope, local or shared
+  ([INT-0009](INT-0009-reversible-by-default.md)), with the fields backlog
+  T-012 lists.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §3.1 as slimmed by R3 §5).
@@ -128,3 +162,4 @@ laid out on disk is [INT-0007](INT-0007-crash-safe-storage.md) and
 - 2026-11-06: revised while `active`, after the Sprint 1 plan critique (round 1, C-009): Intent defines provisional kinds (specified and pinned, excluded from AC-6 sign-off and freezing until the Phase 1 exit gate, required to carry the object set's fields before freezing) and records that Sprint 1's provisional `Operation` uses the reachable object ids in place of the view hash; Consequences add that stores written with a provisional encoding are development stores.
 - 2026-11-07: revised while `active` (Sprint 2 Plan): Intent records Sprint 2's provisional `Changeset` and `View` and the `Operation` body naming its view in place of the object ids; the fields still missing are listed.
 - 2026-11-07: evidence while `active` (Sprint 2 Loop): `changeset`, `view` and the revised `operation` are specified, implemented and pinned by golden files (provisional). The GitHub-matrix half of AC-3 for this head is pending backlog T-013; the remaining fields are backlog T-012.
+- 2026-11-10: revised while `active` (Sprint 6 Plan, on owner direction of 2026-11-09 for thousands of agents): the Intent says an object's size follows the change it records, and that a view becomes a map with shared structure before the freeze, because the provisional `view` writes every head and workspace again with each operation. AC-8 and AC-9 are added. Consequences record that the map's form is still to be specified, the open question of a changeset committing to its tree, and that operations gain a scope.

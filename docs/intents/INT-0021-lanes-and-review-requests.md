@@ -59,6 +59,19 @@ build or a validator; the fast lane's post-merge sweep runs the same checks. A
 group with no check to run is green without running anything, and its
 promotion op and batch review say that no check ran.
 
+**A queue is not a place.** No one machine is the queue
+([INT-0035](INT-0035-scale-and-asynchrony.md)):
+- Any verifier that policy names may compute dev and promote. dev is a
+  function of the records, so every verifier holding the same records
+  computes the same dev.
+- Two promotions made at the same time both stand when their groups touch
+  disjoint modules, which is the unit Gate 2 already packs by.
+- When their groups overlap, the two promotions are divergent. A rule that
+  policy names chooses one, the same way on every replica, and the other's
+  requests return to dev to be tested again on the new main.
+- So no combination reaches main untested, whichever verifiers ran and
+  however their messages were delayed.
+
 ## Acceptance criteria
 - **AC-1** `necessary` `empirical` — Zero main breaks: in simulation with real change shapes (300 and 1,000 concurrent RRs, 8 and 16 workers, 8 seeds each), the default pipeline never lands two interacting RRs untested together.
   - Threshold: 0 breaks (R5 §C.3: AIMD-DIR 0 in every configuration).
@@ -77,6 +90,11 @@ promotion op and batch review say that no check ran.
   - Threshold: 0 conflict terms promoted, over a scenario corpus with conflicting edits to text, binary and synthetic-language files.
 - **AC-8** `necessary` `empirical` — A group with no check to run is promoted only by a promotion op that records that no check ran, and its batch review shows this.
   - Threshold: 100% of such promotions in the scenario corpus.
+- **AC-9** `supporting` `empirical` — At the scale of the direction: the simulation of AC-1 and AC-2, run with 10,000 concurrent RRs and with 64 and 256 workers, still lands no two interacting RRs untested together, and still beats serial promotion by the factors of AC-2.
+  - Sample: 8 seeds for each configuration.
+  - Threshold: 0 breaks; throughput at least 1.8 times serial.
+- **AC-10** `necessary` `empirical` — Several verifiers: with 2 and with 8 verifiers promoting at the same time over a simulated network that delays and partitions, no two interacting RRs land untested together, and every replica that holds the same records agrees on main.
+  - Threshold: 0 breaks, and 1 main among replicas holding the same records.
 
 ## Rationale
 - Prior art: Zuul's dependent pipeline with a TCP-like window; Rust's bors
@@ -105,7 +123,14 @@ promotion op and batch review say that no check ran.
   repository's change shapes, so AC-6 must close the gap with telemetry.
 - A Book edit is always rollup class `never`, so intent changes always get
   their own human-reviewed promotion.
+- The window's cap of 32 and the simulation's sizes (at most 1,000 requests
+  and 16 workers) were set for tens of agents. AC-9 runs them again at the
+  scale of the direction before anyone relies on them there.
+- With several verifiers, an overlapping promotion that loses is tested
+  twice. That is the price of having no single queue, and it falls only on
+  promotions that overlap.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 Part VIII §C).
 - 2026-11-01: revised while `proposed`, on owner direction: lanes and gates must work on content they cannot read. Touched paths and modules leave the signed RR and become derived data, a file's module being the one a declared detector names or else its top-level directory; an RR that conflicts with the dev view waits in its lane, so Gate 2 never promotes a conflict; rollup classes come from history and policy, not content; and testing a group runs the checks policy names, recording when none ran. AC-7 and AC-8 are added.
+- 2026-11-10: revised while `proposed` (Sprint 6 Plan, on owner direction of 2026-11-09 for thousands of agents, decentralised and asynchronous): the chapter spoke of "the queue" as one integrator. The Intent says any named verifier may compute dev and promote, and what happens when two promote at once. AC-9 runs the simulation at 10,000 requests, and AC-10 checks several verifiers. Consequences record that the window and the simulation were sized for tens of agents.

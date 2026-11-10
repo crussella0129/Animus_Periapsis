@@ -2,8 +2,8 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0037
-- **State:** proposed
-- **Work evidence:** none
+- **State:** planned
+- **Work evidence:** [Sprint 6 T-004 build plan](../sprints/s6/sprint-plans/build-plan.md#t-004-the-command-registry-dispatch-help-and-suggestions-from-one-table), [Sprint 6 T-005 build plan](../sprints/s6/sprint-plans/build-plan.md#t-005-commands-find-their-working-copy-from-any-directory-inside-it), [Sprint 6 T-006 build plan](../sprints/s6/sprint-plans/build-plan.md#t-006-describe-log-for-changes-ops-for-operations-and-verify), [Sprint 6 T-007 build plan](../sprints/s6/sprint-plans/build-plan.md#t-007-every-refusal-names-the-next-command), [Sprint 6 T-008 build plan](../sprints/s6/sprint-plans/build-plan.md#t-008-readme-specs-credits-and-backlog)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none
@@ -34,12 +34,15 @@ Rules:
   - A word that is not a command gets the nearest command names.
   - `--help` and `-h` are other spellings of `help`, and `--version` and `-V`
     of `version`. They are the only arguments beginning with `-` that every
-    command accepts.
+    command accepts. Any other is refused, so the text given to `describe`
+    cannot begin with `-`.
 - **Anywhere inside.** A command run in any directory of a working copy acts
   on that working copy. `init` refuses to make a repository inside another.
 - **Every answer says what happened and what to do next.** A command that
   changes something says what it changed in one line. A command that cannot do
-  what was asked says what was wrong and which command to run next.
+  what was asked says what was wrong and what to do next: a command to run,
+  or something to put right outside `praps`. Where this build has no remedy
+  yet, it says so, and says that nothing was lost.
 - **No questions.** No command prompts. One that needs a decision stops and
   names the commands that make it, so an agent never hangs
   ([INT-0022](INT-0022-agent-and-human-interfaces.md) AC-1).
@@ -90,8 +93,8 @@ many agents is [INT-0038](INT-0038-live-view.md).
   - Threshold: 100% of registry commands, and 100% of a corpus of misspelt names.
 - **AC-3** `necessary` `empirical` — Anywhere inside: every command that opens a working copy prints the same output and leaves the same state when run from the top of the working copy and from any directory below it, and `init` inside a working copy is refused with nothing written.
   - Threshold: identical output and state over the command corpus, on Windows and Linux.
-- **AC-4** `necessary` `empirical` — Every refusal says what to do: each error `praps` can print states what was wrong and names a command to run next, or says that nothing needs doing.
-  - Threshold: 100% of the error kinds in the registry's error table.
+- **AC-4** `necessary` `empirical` — Every refusal says what to do: each kind of error `praps` can print states what was wrong, and then one of three things: a command to run next; what to put right outside `praps`; or that this build has no remedy yet and nothing was lost.
+  - Threshold: 100% of the error kinds `praps` defines: usage errors, unknown words, every error of the `workspace` crate, and every way `verify` and finding the working copy can fail.
 - **AC-5** `necessary` `formal` — The everyday group of the registry holds at most ten commands.
   - Obligation: `unstated`.
   - Proxy: a registry test.
@@ -159,3 +162,5 @@ many agents is [INT-0038](INT-0038-live-view.md).
 
 ## Transition history
 - 2026-11-09: created as `proposed` (Sprint 6 research; owner direction of 2026-11-09 for a far more intuitive command set).
+- 2026-11-10: revised while `proposed` (Sprint 6 Plan, after a review of the build plan against the code): three kinds of error have no next command today (several op heads, a change with several parents, a failure of the filesystem), so the rule and AC-4 now allow an answer that says what to put right outside `praps`, or that this build has no remedy yet and nothing was lost. AC-4's threshold names the error kinds it covers. The rule on `--help` says that any other argument beginning with `-` is refused.
+- 2026-11-10: `proposed` → `planned` (Sprint 6 build plan T-004 to T-008, approved by the owner on 2026-11-10 with `verify` as the name of the integrity check and with `log` for changes and `ops` for operations: the registry, help and suggestions; finding the working copy; `describe`, `log`, `ops` and `verify`; hints on every refusal; the README. AC-1 to AC-5. AC-6 and AC-7 need agents and a panel, and AC-8 the owner's sign-off on the whole table).
