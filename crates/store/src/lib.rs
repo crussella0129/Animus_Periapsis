@@ -447,6 +447,31 @@ impl<F: Fs> Store<F> {
         Ok(ops)
     }
 
+    /// The op log from one listing of `ops/`: every valid op, as
+    /// [`Store::ops`] gives them, and how many other files lie there. A
+    /// caller that needs both asks once, where `ops` followed by a listing
+    /// of its own would read the directory twice.
+    pub fn op_log(&self) -> io::Result<OpLog> {
+        let mut log = OpLog::default();
+        for name in self.fs.list(&self.ops)? {
+            if name.starts_with(TMP_PREFIX) {
+                continue;
+            }
+            let Some(id) = parse_name(&name) else {
+                log.invalid += 1;
+                continue;
+            };
+            let bytes = self.fs.read(&self.ops.join(&name))?;
+            match Operation::from_envelope(&bytes) {
+                Ok(op) if object_id(id.alg(), &bytes) == id => {
+                    log.ops.insert(id, op);
+                }
+                _ => log.invalid += 1,
+            }
+        }
+        Ok(log)
+    }
+
     /// The op heads, derived from the op files: every valid op that no other
     /// valid op names as a parent.
     pub fn heads(&self) -> io::Result<BTreeSet<HashRef>> {
@@ -462,6 +487,19 @@ impl<F: Fs> Store<F> {
     pub fn fsck(&self) -> io::Result<Report> {
         fsck::check(&self.fs, &self.root)
     }
+}
+
+/// What [`Store::op_log`] found in `ops/`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OpLog {
+    /// Every valid op: its file name is an id, its content hashes to that
+    /// id, and it decodes as an operation.
+    pub ops: BTreeMap<HashRef, Operation>,
+    /// How many other files lie in `ops/`, not counting those a writer has
+    /// not yet renamed into place (the `tmp-` prefix): a name that is not
+    /// an id, bytes that do not hash to the name, or a body that does not
+    /// decode. A store that is whole has none.
+    pub invalid: usize,
 }
 
 /// The heads of a set of ops: those no op in the set names as a parent.

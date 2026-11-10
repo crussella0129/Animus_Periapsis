@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0035
-- **State:** planned
+- **State:** active
 - **Work evidence:** [Sprint 6 T-003 build plan](../sprints/s6/sprint-plans/build-plan.md#t-003-a-command-reads-the-op-log-once), [Sprint 6 T-009 build plan](../sprints/s6/sprint-plans/build-plan.md#t-009-log-lists-changes-and-ops-lists-operations)
 - **Completion evidence:** none
 - **Code evidence:** none
@@ -197,3 +197,4 @@ How fast each command is, against other systems, is
 - 2026-11-09: created as `proposed` (Sprint 6 research; owner direction of 2026-11-09 for thousands of agents, decentralised and asynchronous).
 - 2026-11-10: `proposed` → `planned` (Sprint 6 build plan T-003: a command reads the op log once, a first step toward cost rule 2. It meets no criterion of this chapter. The criteria wait for the merge, the packed storage form, the stat cache and the simulator at scale: backlog T-029 to T-032).
 - 2026-11-10: revised while `planned` (Sprint 6 plan critique, round 1, C-017; `editorial`: no criterion changes): the Consequence that puts the merge before further single-user features names Sprint 6's command-set work as the exception the owner approved, and why.
+- 2026-11-10: `planned` → `active` (Sprint 6 build, T-003 starts: a command reads the op log once).

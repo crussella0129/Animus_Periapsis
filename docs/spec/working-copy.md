@@ -43,6 +43,30 @@ the chain of first parents, and it is never stored
 parents is refused with an error until merges exist
 ([INT-0012](../intents/INT-0012-conflicts-and-merge.md)).
 
+## Reading the op log
+
+A command reads the op log once, at its start: one listing of `ops/` and one
+read of each op file. From that it knows every valid op, the single head, the
+view and the working-copy change, and it keeps them for as long as it runs. A
+step that commits an op adds that op to what the command holds, so a later
+step of the same command reads nothing again.
+
+Each command starts from the log as it is on disk, with one exception. The
+first command on a workspace that was just opened uses the reading that
+opening made, so a `praps` process, which opens the repository and runs one
+command, reads the log once. An op another process writes between the opening
+and that command is treated like any op written while a command runs: both
+stand, the log has two heads, and the next command stops and names them.
+
+`Workspace::working_copy` and `Workspace::parent_tree` read the store every
+time they are called. They exist for tests that compare what is stored with a
+model, and never return what a command kept.
+
+Two costs that grow with the history remain. Opening a store lists `objects/`
+and `ops/` once each, to see that they exist. And every command reads the
+whole chain of changes to build a tree. Both wait for the storage form
+([INT-0008](../intents/INT-0008-compact-history-storage.md)).
+
 ## Snapshot
 
 Every command that opens the working copy snapshots it first: `praps new` and
@@ -51,8 +75,10 @@ repository writes nothing, so neither snapshots. An edit made before one of
 them is captured by the next command that does.
 
 A snapshot does the following:
-1. **Loads the state.** If `ops/` holds an op file that does not hash to
-   its name or does not decode, it stops and points to `praps fsck`. It finds
+1. **Loads the state**, or takes the one its command already read
+   ([Reading the op log](#reading-the-op-log)). If `ops/` holds an op file
+   that does not hash to its name or does not decode, it stops and points to
+   `praps fsck`. It finds
    the single op head. With no op it reports
    that the repository is not initialised. With several op heads it stops,
    names every head, and writes nothing. Concurrent ops are not merged

@@ -401,10 +401,10 @@ fn snapshot_matrix_is_reproducible() {
     );
     // Asserted, not only printed, so a change that moves any cell fails
     // here on every system (Sprint 4 plan critique, C-008).
-    assert_eq!(first.len(), 25_360);
+    assert_eq!(first.len(), 24_320);
     assert_eq!(
         digest.to_string(),
-        "blake3:c1e39cb10607ff208e0f2774eee8770659aad590dbc8c71abd76522b69013ea3"
+        "blake3:b6fca2372d26d8a0b40000df18c57b226eb976d4b9597d2deb2a95a629e84e1c"
     );
 }
 

@@ -8,32 +8,32 @@ Each row is a simulation scenario, by the sprint that added it. Each column is a
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | store (S1) | 227040 | 24160 | 657200 | 23200 | 0 | 0 | 0 | 0 |
 | two writers (S1) | 28600 | 6760 | 96920 | 10000 | 0 | 0 | 0 | 0 |
-| Snapshot (S2) | 451250 | 49680 | 1128291 | 49360 | 138731 | 0 | 0 | 0 |
-| Materialise (S3) | 654395 | 43280 | 1855576 | 80560 | 160960 | 76860 | 35678 | 9918 |
+| Snapshot (S2) | 431840 | 47600 | 1082283 | 47280 | 132529 | 0 | 0 | 0 |
+| Materialise (S3) | 550395 | 37920 | 1556696 | 70000 | 132640 | 66860 | 31678 | 9918 |
 | four writers (S4) | 542894 | 43876 | 1963196 | 181522 | 0 | 0 | 0 | 0 |
 
 ## Points
 
 | Point | Unit | Sprint | Hits |
 |---|---|---:|---:|
-| `store.commit_op.dir_synced` | `store::commit_op` | 1 | 359885 |
+| `store.commit_op.dir_synced` | `store::commit_op` | 1 | 335203 |
 | `store.commit_op.present_synced` | `store::commit_op` | 1 | 11030 |
-| `store.commit_op.references_resynced` | `store::commit_op` | 1 | 408721 |
-| `store.commit_op.renamed` | `store::commit_op` | 1 | 368471 |
-| `store.commit_op.temp_synced` | `store::commit_op` | 1 | 373159 |
-| `store.commit_op.temp_written` | `store::commit_op` | 1 | 382913 |
-| `store.init.layout_created` | `store::init` | 1 | 167756 |
-| `store.put_object.dir_synced` | `store::put_object` | 1 | 1394614 |
-| `store.put_object.present_synced` | `store::put_object` | 1 | 18067 |
-| `store.put_object.renamed` | `store::put_object` | 1 | 1412280 |
-| `store.put_object.temp_synced` | `store::put_object` | 1 | 1429798 |
-| `store.put_object.temp_written` | `store::put_object` | 1 | 1446424 |
-| `store.sync_layout.synced` | `store::sync_layout` | 1 | 344642 |
-| `workspace.snapshot.committed` | `workspace::snapshot` | 2 | 101771 |
-| `workspace.snapshot.scanned` | `workspace::snapshot` | 2 | 197920 |
-| `workspace.apply.path_removed` | `workspace::materialise` | 3 | 32436 |
-| `workspace.apply.path_written` | `workspace::materialise` | 3 | 44424 |
-| `workspace.record.dropped` | `workspace::record` | 3 | 17838 |
-| `workspace.record.written` | `workspace::record` | 3 | 17840 |
+| `store.commit_op.references_resynced` | `store::commit_op` | 1 | 384039 |
+| `store.commit_op.renamed` | `store::commit_op` | 1 | 343789 |
+| `store.commit_op.temp_synced` | `store::commit_op` | 1 | 348477 |
+| `store.commit_op.temp_written` | `store::commit_op` | 1 | 358231 |
+| `store.init.layout_created` | `store::init` | 1 | 160316 |
+| `store.put_object.dir_synced` | `store::put_object` | 1 | 1308513 |
+| `store.put_object.present_synced` | `store::put_object` | 1 | 17583 |
+| `store.put_object.renamed` | `store::put_object` | 1 | 1326179 |
+| `store.put_object.temp_synced` | `store::put_object` | 1 | 1343697 |
+| `store.put_object.temp_written` | `store::put_object` | 1 | 1360323 |
+| `store.sync_layout.synced` | `store::sync_layout` | 1 | 332002 |
+| `workspace.snapshot.committed` | `workspace::snapshot` | 2 | 90129 |
+| `workspace.snapshot.scanned` | `workspace::snapshot` | 2 | 175040 |
+| `workspace.apply.path_removed` | `workspace::materialise` | 3 | 28436 |
+| `workspace.apply.path_written` | `workspace::materialise` | 3 | 38424 |
+| `workspace.record.dropped` | `workspace::record` | 3 | 15838 |
+| `workspace.record.written` | `workspace::record` | 3 | 15840 |
 | `workspace.resume.dropped` | `workspace::resume` | 3 | 1920 |
 | `workspace.resume.started` | `workspace::resume` | 3 | 7998 |
