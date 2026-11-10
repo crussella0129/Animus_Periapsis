@@ -1302,8 +1302,20 @@ fn a_missing_directory_is_not_searched_above() {
         ("nowhere", "no such directory"),
         ("a-file", "not a directory"),
     ] {
-        for command in ["status", "new", "log", "undo"] {
-            let output = praps(&[command, given], &top);
+        // Every command that opens a working copy, with the directory in
+        // the place each takes it; and `verify`, which refuses it too.
+        for args in [
+            &["status", given][..],
+            &["new", given][..],
+            &["log", given][..],
+            &["ops", given][..],
+            &["undo", given][..],
+            &["restore", "0000", given][..],
+            &["describe", "text", given][..],
+            &["verify", given][..],
+        ] {
+            let command = args[0];
+            let output = praps(args, &top);
             assert_eq!(code(&output), 1, "{command} {given}: {output:?}");
             assert!(output.stdout.is_empty(), "{command} {given}");
             let err = stderr(&output);
@@ -1796,12 +1808,12 @@ fn named_in(hint: &str) -> Vec<String> {
 /// was wrong, and a command the hint names is one `praps` lists (INT-0037
 /// AC-4). The corpus is the refusals these tests can make happen through
 /// the binary: usage errors, words that are not commands, ways of not
-/// finding a working copy, errors of the `workspace` crate, and ways
-/// `verify` fails. It does not reach the refusals that need a directory the
-/// user may not read or enter, nor a change with several parents; a hazard
-/// and text with no UTF-8 form are reached on Windows only, and a removed
-/// current directory on Linux only. The unit test
-/// `hints_take_one_of_three_forms` reads the hint of every kind.
+/// finding a working copy, every error of the `workspace` crate, and ways
+/// `verify` fails. Some are reached on one system only: a hazard and text
+/// with no UTF-8 form on Windows; a removed current directory, and the four
+/// that need a directory closed by its mode, on Unix. One kind is not
+/// reached on either: a top that cannot be made the current directory,
+/// which nothing here can close without closing its store too.
 #[test]
 fn every_refusal_prints_one_hint() {
     let dir = claim("hints");
@@ -2059,6 +2071,109 @@ fn every_refusal_prints_one_hint() {
         1,
         "`praps verify` to check what is stored",
     );
+    // A working-copy change with two parents, written through the store.
+    let merged = dir.join("merged");
+    assert_eq!(code(&praps(&["init", "merged"], &dir)), 0);
+    write(&merged, "a", b"1");
+    assert_eq!(code(&praps(&["new"], &merged)), 0);
+    {
+        let mut store =
+            Store::open(RealFs, &merged.join(".praps/store"), HashAlg::DEFAULT, 5).unwrap();
+        let head = *store.heads().unwrap().first().unwrap();
+        let view =
+            View::from_envelope(&store.get_object(&store.ops().unwrap()[&head].view).unwrap())
+                .unwrap();
+        let second = view.workspaces["default"];
+        let first = codec::Changeset::from_envelope(&store.get_object(&second).unwrap())
+            .unwrap()
+            .parents[0];
+        let both = codec::Changeset {
+            parents: vec![second, first],
+            change_id: [9; 16],
+            changes: Default::default(),
+            description: Vec::new(),
+        };
+        let both = store.put_object(&both.to_envelope()).unwrap();
+        let view = View {
+            heads: [both].into(),
+            workspaces: [("default".to_owned(), both)].into(),
+        };
+        let view = store.put_object(&view.to_envelope()).unwrap();
+        store
+            .commit_op(&Operation {
+                parents: [head].into(),
+                view,
+            })
+            .unwrap();
+    }
+    refused(
+        "a change with several parents",
+        praps(&["status"], &merged),
+        1,
+        "this build cannot read a change that has several parents yet; nothing was lost",
+    );
+
+    // Refusals that need a directory the user may not read or write. They
+    // are made with file modes, so on Unix only, and not as root, for whom
+    // a mode closes nothing.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path, mode: u32| {
+            fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let locked = dir.join("locked");
+        assert_eq!(code(&praps(&["init", "locked"], &dir)), 0);
+        fs::create_dir(locked.join("in")).unwrap();
+        fs::create_dir(dir.join("closed")).unwrap();
+        fs::create_dir_all(top.join("bak/objects")).unwrap();
+        fs::create_dir_all(top.join("bak/ops")).unwrap();
+        mode(&locked.join(".praps/store"), 0o000);
+        mode(&dir.join("closed"), 0o555);
+        mode(&top.join("bak/objects"), 0o000);
+        let root = fs::read_dir(locked.join(".praps/store")).is_ok();
+        assert!(
+            !root,
+            "this test must not run as root: a mode closes nothing"
+        );
+        refused(
+            "a store that cannot be listed",
+            praps(&["status"], &locked),
+            1,
+            "make that directory readable",
+        );
+        refused(
+            "a directory above that cannot be searched",
+            praps(&["status"], &locked.join("in")),
+            1,
+            "make the store of each repository above that directory readable",
+        );
+        refused(
+            "init stopped by the filesystem",
+            praps(&["init", "closed/new"], &dir),
+            1,
+            "`praps init` again once the cause is put right",
+        );
+        // A directory given to `verify` that may or may not be a store: it
+        // is refused, and the working copy around it is not checked in its
+        // place (code review, finding 1).
+        let output = praps(&["verify", "bak"], &top);
+        assert!(
+            output.stdout.is_empty(),
+            "nothing was called clean: {output:?}"
+        );
+        refused(
+            "verify stopped by the filesystem",
+            output,
+            1,
+            "make the store's directories readable",
+        );
+        mode(&locked.join(".praps/store"), 0o755);
+        mode(&dir.join("closed"), 0o755);
+        mode(&top.join("bak/objects"), 0o755);
+        fs::remove_dir_all(top.join("bak")).unwrap();
+    }
+
     // An untracked entry where the write must put a file.
     let blocked = dir.join("blocked");
     assert_eq!(code(&praps(&["init", "blocked"], &dir)), 0);
@@ -2120,7 +2235,11 @@ fn every_refusal_prints_one_hint() {
         1,
         "`praps init` there if its `init` was interrupted",
     );
-    assert!(kinds >= 25, "{kinds} kinds of refusal were checked");
+    // 25 everywhere; four more on Unix by file modes and one by a removed
+    // current directory; two more on Windows (a hazard, text that is not
+    // Unicode).
+    let expected = if cfg!(unix) { 30 } else { 27 };
+    assert_eq!(kinds, expected, "kinds of refusal checked");
     let _ = fs::remove_dir_all(&dir);
 }
 

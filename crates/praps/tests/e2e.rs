@@ -424,8 +424,18 @@ fn first_session(from_below: bool) {
         );
     }
 
+    // `praps help init` gives an example that names a directory; it is run
+    // as printed.
+    let help = ok(&[word("help"), word("init")], &dir);
+    let example = help
+        .iter()
+        .map(|line| line.trim())
+        .find(|line| line.starts_with("praps init "))
+        .expect("an example of `init` with a directory");
+    assert_eq!(example, "praps init project");
+    let words: Vec<&str> = example.split(' ').skip(1).collect();
     assert_eq!(
-        ok(&[word("init"), "project"], &dir),
+        ok(&words, &dir),
         ["initialised a Periapsis repository in project"]
     );
     let root = dir.join("project");

@@ -1014,6 +1014,41 @@ fn a_later_command_reads_the_op_log_once_more() {
         reads.sort();
         assert_eq!(reads, op_files(&fs), "round {round}");
     }
+    // A later command that commits: it too lists `ops/` once and reads each
+    // op file once, all of it before its first write. The commit then reads
+    // its parent once more and its own name once, and nothing is read again
+    // after it (test critique C-008).
+    let at_start = op_files(&fs);
+    put(&fs, "later", b"edit");
+    let before = fs.trace().len();
+    assert!(ws.snapshot().unwrap().op.is_some());
+    let part = fs.trace()[before..].to_vec();
+    let (lists, mut reads) = op_log_calls(&part);
+    assert_eq!(lists, 1);
+    let first_write = part
+        .iter()
+        .position(|line| writes(std::slice::from_ref(line)).len() == 1)
+        .unwrap();
+    let (lists_at_start, mut reads_at_start) = op_log_calls(&part[..first_write]);
+    assert_eq!(lists_at_start, 1, "the listing comes before any write");
+    reads_at_start.sort();
+    assert_eq!(reads_at_start, at_start, "and so does each op file's read");
+    let committed: Vec<String> = op_files(&fs)
+        .into_iter()
+        .filter(|file| !at_start.contains(file))
+        .collect();
+    assert_eq!(committed.len(), 1);
+    let parent = ws.store().ops().unwrap()[&store::names::parse_name(&committed[0]).unwrap()]
+        .parents
+        .first()
+        .map(store::names::file_name)
+        .unwrap();
+    let mut expected = at_start.clone();
+    expected.push(parent);
+    expected.push(committed[0].clone());
+    expected.sort();
+    reads.sort();
+    assert_eq!(reads, expected);
     // A workspace `init` returned keeps no state: its first command reads.
     let mut ws = fresh(44);
     let fs = fs_of(&ws);

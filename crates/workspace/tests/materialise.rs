@@ -941,6 +941,9 @@ struct Held {
     held: Mutex<Vec<PathBuf>>,
     /// Directories another process removes just before the write does.
     vanishing: Mutex<Vec<PathBuf>>,
+    /// Directories whose removal fails with the simulator's crash error,
+    /// while every later call still goes through.
+    crashing: Mutex<Vec<PathBuf>>,
 }
 
 impl Held {
@@ -951,6 +954,11 @@ impl Held {
     /// Makes `dir`, a repository path, a directory that cannot be removed.
     fn hold(&self, dir: &str) {
         self.held.lock().unwrap().push(Self::path(dir));
+    }
+
+    /// Makes the removal of `dir` fail as a crash of the simulator does.
+    fn crash_at(&self, dir: &str) {
+        self.crashing.lock().unwrap().push(Self::path(dir));
     }
 
     /// Makes `dir` a directory that is gone when the write comes to remove
@@ -1008,6 +1016,13 @@ impl Fs for Held {
                 "another process stands in it",
             ));
         }
+        if self.crashing.lock().unwrap().iter().any(|dir| dir == path) {
+            // The crash error cannot be built outside `sim`: it is taken
+            // from a simulator made to crash at its first syscall.
+            let scratch = SimFs::new(0, DirMode::Strict);
+            scratch.set_crash_at(Some(1));
+            return Err(scratch.create_dir(Path::new("x")).unwrap_err());
+        }
         if self
             .vanishing
             .lock()
@@ -1043,6 +1058,7 @@ fn two_states(
         fs: Arc::new(SimFs::new(seed, DirMode::Strict)),
         held: Mutex::new(Vec::new()),
         vanishing: Mutex::new(Vec::new()),
+        crashing: Mutex::new(Vec::new()),
     });
     let mut ws = Workspace::init(Arc::clone(&held), Path::new(ROOT), seed)
         .unwrap()
@@ -1205,14 +1221,35 @@ fn a_directory_below_a_file_to_put_stops_the_write() {
     assert!(!has_record(&held.fs));
 }
 
+/// A removal that fails with the simulator's crash error stops the write
+/// even when every later call would succeed: the error is told from a
+/// refusal by what it is. Here only the removal fails, so a write that took
+/// the crash for a refusal would go on, write `keep`, drop the record and
+/// leave a note (test critique C-004).
+#[test]
+fn a_crash_is_not_taken_for_a_refusal() {
+    let (mut ws, held, first) = two_states(128, &[("keep", "1")], &[("keep", "2"), ("d/x", "x")]);
+    held.crash_at("d");
+    let error = ws.restore_view(&first).unwrap_err();
+    assert!(
+        matches!(&error, Error::Io(io) if sim::is_crash(io)),
+        "{error}"
+    );
+    assert!(ws.notes().is_empty(), "{:?}", ws.notes());
+    assert!(has_record(&held.fs), "the record is kept");
+    // The files to write were not written: the write stopped at the removal.
+    assert_eq!(files_on_disk(&*held), expect(&[("keep", "2", false)]));
+    assert!(held.fs.snapshot().contains_key("repo/d"));
+}
+
 /// A removal that fails because the simulator crashed is not a refusal:
 /// the write stops, the record is kept, and the next open finishes the
 /// write, removing the directory. The directory here is in the way of
 /// nothing, so a refusal to remove it would have been passed over.
 ///
-/// This test shows the outcome, not which arm of the write gave it: after
-/// a crash the simulator fails every later syscall, so the write stops
-/// whether or not it tells a crash from a refusal (code review, finding 4).
+/// This test shows the outcome on the simulator, where every syscall after
+/// a crash fails too. `a_crash_is_not_taken_for_a_refusal` shows that the
+/// write tells the two apart (code review, finding 4).
 #[test]
 fn a_crash_during_a_removal_still_stops_the_write() {
     for seed in 0..10 {
