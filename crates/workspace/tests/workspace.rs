@@ -892,7 +892,7 @@ fn op_files(fs: &SimFs) -> Vec<String> {
 #[test]
 fn open_and_one_command_read_the_op_log_once() {
     type Command = fn(&mut Workspace<Arc<SimFs>>, &SimFs, &hash::HashRef);
-    let commands: [(&str, Command, usize); 8] = [
+    let commands: [(&str, Command, usize); 9] = [
         (
             "snapshot, nothing to record",
             |ws, _, _| drop(ws.snapshot().unwrap()),
@@ -908,7 +908,8 @@ fn open_and_one_command_read_the_op_log_once() {
         ),
         ("status", |ws, _, _| drop(ws.status().unwrap()), 0),
         ("new_change", |ws, _, _| _ = ws.new_change().unwrap(), 1),
-        ("log", |ws, _, _| drop(ws.log().unwrap()), 0),
+        ("ops", |ws, _, _| drop(ws.ops().unwrap()), 0),
+        ("changes", |ws, _, _| drop(ws.changes().unwrap()), 0),
         ("undo", |ws, _, _| _ = ws.undo().unwrap(), 1),
         (
             "restore",

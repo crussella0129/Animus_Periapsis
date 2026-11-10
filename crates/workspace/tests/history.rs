@@ -41,15 +41,19 @@ fn hex(id: &HashRef) -> String {
 }
 
 #[test]
-fn log_lists_ops_newest_first() {
+fn ops_list_newest_first() {
     let (mut ws, fs) = fresh(1);
     put(&fs, "a", b"1");
     ws.snapshot().unwrap();
     ws.new_change().unwrap();
-    // An edit not yet snapshotted: `log` snapshots first.
+    // An edit not yet snapshotted: `ops` snapshots first.
     put(&fs, "a", b"2");
-    let log = ws.log().unwrap();
-    assert_eq!(log.len(), 4, "root, snapshot, new, and log's own snapshot");
+    let log = ws.ops().unwrap();
+    assert_eq!(
+        log.len(),
+        4,
+        "root, snapshot, new, and the listing's own snapshot"
+    );
     assert_eq!(log[0].id, head(&ws));
     for pair in log.windows(2) {
         assert_eq!(
@@ -59,12 +63,17 @@ fn log_lists_ops_newest_first() {
         );
     }
     assert!(log[3].parents.is_empty(), "the root op is last");
-    assert_eq!(log[0].files, 1);
-    assert_eq!(log[3].files, 0);
+    // Each entry counts the paths its working-copy change changes: the new
+    // change with `a` modified, the new change while still empty, the first
+    // change with `a` added, and the root's empty change.
+    assert_eq!(
+        log.iter().map(|entry| entry.paths).collect::<Vec<_>>(),
+        [1, 0, 1, 0]
+    );
     let (wc, change_id, _) = ws.working_copy().unwrap();
     assert_eq!((log[0].working_copy, log[0].change_id), (wc, change_id));
-    // A second `log` with nothing changed adds no op.
-    assert_eq!(ws.log().unwrap().len(), 4);
+    // A second listing with nothing changed adds no op.
+    assert_eq!(ws.ops().unwrap().len(), 4);
 }
 
 #[test]
@@ -403,7 +412,7 @@ fn replay(n: usize) -> (Ws, Rc<SimFs>) {
                 ws.undo().unwrap();
             }
             Step::Restore(k) => {
-                let ops = ws.log().unwrap();
+                let ops = ws.ops().unwrap();
                 let id = ops[ops.len() - 1 - k].id;
                 ws.restore(&id.to_string()).unwrap();
             }
@@ -418,7 +427,7 @@ fn replay(n: usize) -> (Ws, Rc<SimFs>) {
 #[test]
 fn restore_reaches_every_earlier_state() {
     let (mut ws, fs) = replay(SCRIPT.len());
-    let ops: Vec<HashRef> = ws.log().unwrap().into_iter().map(|e| e.id).collect();
+    let ops: Vec<HashRef> = ws.ops().unwrap().into_iter().map(|e| e.id).collect();
     assert!(ops.len() >= 10, "{}", ops.len());
     for op in &ops {
         let (_, new) = ws.restore(&op.to_string()).unwrap();
@@ -474,7 +483,7 @@ fn ops_are_never_removed() {
                     Err(error) => panic!("seed {seed} step {step}: undo: {error}"),
                 },
                 3 => {
-                    let ops = ws.log().unwrap();
+                    let ops = ws.ops().unwrap();
                     let id = ops[rng.below(ops.len() as u64) as usize].id;
                     ws.restore(&id.to_string()).unwrap();
                 }
@@ -485,7 +494,7 @@ fn ops_are_never_removed() {
             // Checked through `log`, what a user sees, and against the
             // store's own op files (test critique C-006).
             let now: std::collections::BTreeSet<HashRef> = ws
-                .log()
+                .ops()
                 .unwrap()
                 .into_iter()
                 .map(|entry| entry.id)
@@ -528,8 +537,12 @@ fn snapshotting_commands_return_reports() {
     assert_eq!(ws.reported(), expected, "new_change");
     put(&fs, "a", b"2");
     let mut ws = reopen(2);
-    ws.log().unwrap();
-    assert_eq!(ws.reported(), expected, "log");
+    ws.ops().unwrap();
+    assert_eq!(ws.reported(), expected, "ops");
+    put(&fs, "a", b"3");
+    let mut ws = reopen(5);
+    ws.changes().unwrap();
+    assert_eq!(ws.reported(), expected, "changes");
     let mut ws = reopen(3);
     let (undone, _) = ws.undo().unwrap();
     // `undo` snapshots once, so its report is one.
@@ -685,4 +698,140 @@ fn undo_and_restore_read_an_untouched_file_once() {
     let recorded = *ws.store().ops().unwrap()[&new].parents.first().unwrap();
     ws.restore(&hex(&recorded)).unwrap();
     assert_eq!(content(&fs, "a").unwrap(), b"edited before restore_view");
+}
+
+/// `changes` lists the working-copy change and the changes before it along
+/// first parents, newest first, each with its change ID and the number of
+/// paths it changes. Like every command that opens the working copy, it
+/// records it first: an edit no command has recorded yet is counted
+/// (Sprint 6 T-009).
+#[test]
+fn changes_follow_first_parents_newest_first() {
+    let (mut ws, fs) = fresh(61);
+    let mut ids = vec![ws.working_copy().unwrap().1];
+    for round in 0..3u8 {
+        put(&fs, "a", &[b'0' + round]);
+        put(&fs, &format!("f{round}"), b"new");
+        ws.snapshot().unwrap();
+        ids.push(ws.new_change().unwrap());
+    }
+    // An edit that no command has recorded yet.
+    delete(&fs, "f0");
+    let ops_before = ws.store().ops().unwrap().len();
+    let changes = ws.changes().unwrap();
+    assert_eq!(
+        ws.store().ops().unwrap().len(),
+        ops_before + 1,
+        "the listing recorded the working copy first"
+    );
+    ids.reverse();
+    assert_eq!(
+        changes
+            .iter()
+            .map(|change| change.change_id)
+            .collect::<Vec<_>>(),
+        ids,
+        "the working-copy change first, the root change last"
+    );
+    // The working-copy change deletes `f0`; each change before it changed
+    // `a` and added one file.
+    assert_eq!(
+        changes
+            .iter()
+            .map(|change| change.paths)
+            .collect::<Vec<_>>(),
+        [1, 2, 2, 2]
+    );
+    assert!(changes.iter().all(|change| change.description.is_empty()));
+    let (wc, ..) = ws.working_copy().unwrap();
+    assert_eq!(changes[0].id, wc);
+    // Listing again records nothing and gives the same answer.
+    let ops = ws.store().ops().unwrap().len();
+    assert_eq!(ws.changes().unwrap(), changes);
+    assert_eq!(ws.store().ops().unwrap().len(), ops);
+}
+
+/// A change's description is listed exactly as stored. No command sets one
+/// yet, so the changeset is written through a second store handle.
+#[test]
+fn changes_carry_each_description() {
+    let (ws, fs) = fresh(62);
+    let (root, ..) = ws.working_copy().unwrap();
+    let mut store = store::Store::open(
+        Rc::clone(&fs),
+        &Path::new(ROOT).join(".praps").join("store"),
+        hash::HashAlg::DEFAULT,
+        63,
+    )
+    .unwrap();
+    let text = b"Add the parser\n\nIt reads \xff one line at a time.\n".to_vec();
+    let described = codec::Changeset {
+        parents: vec![root],
+        change_id: [5; 16],
+        changes: Default::default(),
+        description: text.clone(),
+    };
+    let described = store.put_object(&described.to_envelope()).unwrap();
+    let view = codec::View {
+        heads: [described].into(),
+        workspaces: [("default".to_owned(), described)].into(),
+    };
+    let view = store.put_object(&view.to_envelope()).unwrap();
+    store
+        .commit_op(&codec::Operation {
+            parents: [head(&ws)].into(),
+            view,
+        })
+        .unwrap();
+    let mut ws = Workspace::open(Rc::clone(&fs), Path::new(ROOT), 64).unwrap();
+    let changes = ws.changes().unwrap();
+    assert_eq!(changes.len(), 2);
+    assert_eq!(changes[0].description, text);
+    assert_eq!(changes[0].change_id, [5; 16]);
+    assert!(changes[1].description.is_empty());
+    // The operation list names the same changeset for the head.
+    let ops = ws.ops().unwrap();
+    assert_eq!(ops[0].working_copy, described);
+    assert_eq!((ops[0].change_id, ops[0].paths), ([5; 16], 0));
+}
+
+/// The syscalls one listing makes after `steps` steps of: edit one small
+/// file, snapshot, start a new change. Each step adds two ops and one
+/// change, and every change sits on top of the last.
+fn listing_cost(steps: usize, list: fn(&mut Ws) -> usize) -> (usize, u64) {
+    let (mut ws, fs) = fresh(70);
+    for step in 0..steps {
+        put(&fs, "f", format!("{step}").as_bytes());
+        ws.snapshot().unwrap();
+        ws.new_change().unwrap();
+    }
+    let before = fs.syscalls();
+    let entries = list(&mut ws);
+    (entries, fs.syscalls() - before)
+}
+
+/// The cost of a listing follows its length: the syscalls `ops` makes grow
+/// by the same amount, within a tenth, from 50 to 100 operations as from
+/// 100 to 150, and so do those of `changes` over 50, 100 and 150 changes.
+/// Before Sprint 6's T-009 each line of the operation list read the whole
+/// chain of changes, and the second growth was far larger than the first
+/// (backlog T-018; the run at T-008's commit is in the sprint's unit test
+/// record).
+#[test]
+fn listing_cost_grows_in_a_straight_line() {
+    let straight = |what: &str, costs: [u64; 3]| {
+        let [a, b, c] = costs;
+        let (first, second) = (b - a, c - b);
+        println!("{what}: {a}, {b}, {c} syscalls; growth {first} then {second}");
+        assert!(
+            second * 10 <= first * 11 && second * 10 >= first * 9,
+            "{what}: the cost does not grow in a straight line: {first} then {second}"
+        );
+    };
+    let ops = [25, 50, 75].map(|steps| listing_cost(steps, |ws| ws.ops().unwrap().len()));
+    assert_eq!(ops.map(|(entries, _)| entries), [51, 101, 151]);
+    straight("ops", ops.map(|(_, cost)| cost));
+    let changes = [49, 99, 149].map(|steps| listing_cost(steps, |ws| ws.changes().unwrap().len()));
+    assert_eq!(changes.map(|(entries, _)| entries), [50, 100, 150]);
+    straight("changes", changes.map(|(_, cost)| cost));
 }

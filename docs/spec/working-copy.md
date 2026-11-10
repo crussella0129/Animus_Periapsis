@@ -187,9 +187,18 @@ This is called *materialising* F → T.
 
 ### History commands
 
-- **`log`** snapshots, then lists every op, newest first: its id, parents and
-  working-copy change. "Newest first" means a topological order, children
-  before parents, ties broken by id.
+- **`ops`** snapshots, then lists every op, newest first: its id, the change
+  ID of its working-copy change, and the number of paths that change
+  changes. "Newest first" means a topological order, children before
+  parents, ties broken by id. It reads two objects for each op, the view and
+  the working-copy changeset, however long the history is. (Until Sprint 6
+  this command was `log`, and it counted the files of each op's whole tree,
+  which read the chain of changes again for every line.)
+- **`log`** snapshots, then lists the working-copy change and the changes
+  before it along first parents, newest first: the change ID, the number of
+  paths the change changes, and the first line of its description, or
+  `(no description)`. The line is escaped as names are, so it stays one line
+  whatever bytes the description holds. It reads one object for each change.
 - **`undo`** takes H, the single op head when the command starts, before its
   snapshot. It then snapshots. If H has no parent, it fails with "nothing to
   undo", having written only that snapshot. Otherwise the target view is the

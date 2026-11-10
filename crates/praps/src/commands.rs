@@ -27,6 +27,7 @@ pub fn run(command: &Command, args: &[&OsStr], out: &mut impl Write, err: &mut i
         Action::Status => status(dir(0), out, err),
         Action::New => new(dir(0), out, err),
         Action::Log => log(dir(0), out, err),
+        Action::Ops => ops(dir(0), out, err),
         Action::Undo => undo(dir(0), out, err),
         Action::Restore => match args.first().and_then(|op| op.to_str()) {
             Some(op) => restore(op, dir(1), out, err),
@@ -34,7 +35,7 @@ pub fn run(command: &Command, args: &[&OsStr], out: &mut impl Write, err: &mut i
                 let _ = writeln!(err, "{}", command.usage());
                 let _ = writeln!(
                     err,
-                    "hint: an operation's id is hex digits, as `praps log` prints them"
+                    "hint: an operation's id is hex digits, as `praps ops` prints them"
                 );
                 2
             }
@@ -234,27 +235,75 @@ fn print_reported(reported: &[workspace::Reported], out: &mut impl Write) {
 
 // ------------------------------------------------------------ the commands
 
+/// `count` paths, as a listing prints it: `1 path`, `2 paths`.
+fn paths(count: usize) -> String {
+    format!("{count} {}", if count == 1 { "path" } else { "paths" })
+}
+
+/// The first line of a change's description as a listing shows it: escaped
+/// as names are, so that it stays one line whatever bytes it holds, or
+/// `(no description)` for a change that has none.
+fn first_line(description: &[u8]) -> String {
+    if description.is_empty() {
+        return "(no description)".to_owned();
+    }
+    let line = description
+        .split(|byte| *byte == b'\n')
+        .next()
+        .unwrap_or_default();
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    sim::Name::Raw(sim::RawName::Bytes(line.to_vec())).display()
+}
+
+/// `log`: the working-copy change and the changes before it, newest first,
+/// one line each: `CHANGE N paths FIRST LINE`.
 fn log(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 {
     let place = match locate("log", given, err) {
         Ok(place) => place,
         Err(code) => return code,
     };
-    let (result, reported) = with_reports(&place, err, |ws| ws.log());
+    let (result, reported) = with_reports(&place, err, |ws| ws.changes());
     let code = match result {
         Ok(entries) => {
             for entry in entries {
-                let files = if entry.files == 1 { "file" } else { "files" };
                 let _ = writeln!(
                     out,
-                    "{} change {} {} {files}",
-                    short(entry.id.digest()),
+                    "{} {} {}",
                     short(&entry.change_id),
-                    entry.files
+                    paths(entry.paths),
+                    first_line(&entry.description)
                 );
             }
             0
         }
         Err(error) => fail("log", &place.shown, error, err),
+    };
+    print_reported(&reported, out);
+    code
+}
+
+/// `ops`: every operation, newest first, one line each:
+/// `OP change CHANGE N paths`.
+fn ops(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 {
+    let place = match locate("ops", given, err) {
+        Ok(place) => place,
+        Err(code) => return code,
+    };
+    let (result, reported) = with_reports(&place, err, |ws| ws.ops());
+    let code = match result {
+        Ok(entries) => {
+            for entry in entries {
+                let _ = writeln!(
+                    out,
+                    "{} change {} {}",
+                    short(entry.id.digest()),
+                    short(&entry.change_id),
+                    paths(entry.paths)
+                );
+            }
+            0
+        }
+        Err(error) => fail("ops", &place.shown, error, err),
     };
     print_reported(&reported, out);
     code
@@ -444,5 +493,33 @@ fn verify(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u
     } else {
         let _ = writeln!(out, "{} problems", report.problems.len());
         1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A description's first line is shown alone, escaped as names are, and
+    /// a change with none says so (Sprint 6 T-009).
+    #[test]
+    fn first_line_is_escaped() {
+        assert_eq!(first_line(b""), "(no description)");
+        assert_eq!(first_line(b"Add the parser"), "Add the parser");
+        assert_eq!(
+            first_line(b"Add the parser\n\nIt reads one line at a time.\n"),
+            "Add the parser"
+        );
+        assert_eq!(first_line(b"one\r\ntwo"), "one");
+        // A blank first line is shown as it is: the change has a description.
+        assert_eq!(first_line(b"\nbody"), "");
+        // Control characters and bytes that are not UTF-8 cannot break the
+        // line or the terminal.
+        assert_eq!(first_line(b"tab\there\x1b[31m"), "tab\\u{9}here\\u{1b}[31m");
+        assert_eq!(first_line(b"caf\xc3\xa9 \xff\xfe"), "caf\u{e9} \\xff\\xfe");
+        assert_eq!(first_line(b"back\\slash"), "back\\\\slash");
+        assert_eq!(paths(0), "0 paths");
+        assert_eq!(paths(1), "1 path");
+        assert_eq!(paths(2), "2 paths");
     }
 }

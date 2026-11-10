@@ -104,7 +104,7 @@ pub const OTHER_WORDS: &[(&[&str], &str)] = &[
     ),
     (
         &["reflog", "oplog", "history"],
-        "`praps log` lists every operation",
+        "`praps ops` lists every operation, and `praps log` the changes",
     ),
     (
         &["stash"],

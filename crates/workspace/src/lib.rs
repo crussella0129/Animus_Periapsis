@@ -554,7 +554,7 @@ impl<F: Fs> Workspace<F> {
 
     /// The entries the latest snapshot reported and left alone, sorted, as
     /// [`Status::reported`] gives them (INT-0004 AC-7). Every command that
-    /// snapshots (`log`, `undo`, `restore`, `new_change`, `status`) sets
+    /// snapshots (`ops`, `changes`, `undo`, `restore`, `new_change`, `status`) sets
     /// it, and it stays set when the command then fails. Each command
     /// snapshots once, so it holds one report.
     pub fn reported(&self) -> &[Reported] {
@@ -988,8 +988,10 @@ impl<F: Fs> Workspace<F> {
     }
 
     /// Snapshots, then lists every op, newest first: children before
-    /// parents, ties broken by id ("History commands" in the spec).
-    pub fn log(&mut self) -> Result<Vec<LogEntry>, Error> {
+    /// parents, ties broken by id ("History commands" in the spec). Each
+    /// entry costs two object reads, its view and its working-copy
+    /// changeset, however long the history is.
+    pub fn ops(&mut self) -> Result<Vec<OpEntry>, Error> {
         let mut state = self.begin()?;
         self.snapshot_in(&mut state)?;
         let ops = &state.ops;
@@ -1022,13 +1024,36 @@ impl<F: Fs> Workspace<F> {
                 .workspaces
                 .get(DEFAULT_WORKSPACE)
                 .ok_or_else(|| corrupt(format!("view {}: no default workspace", op.view)))?;
-            entries.push(LogEntry {
+            let changeset = self.changeset(&working_copy)?;
+            entries.push(OpEntry {
                 id: *id,
                 parents: op.parents.clone(),
                 working_copy,
-                change_id: self.changeset(&working_copy)?.change_id,
-                files: self.tree_of(&working_copy)?.len(),
+                change_id: changeset.change_id,
+                paths: changeset.changes.len(),
             });
+        }
+        Ok(entries)
+    }
+
+    /// Snapshots, then lists the working-copy change and the changes before
+    /// it along first parents, newest first ("History commands" in the
+    /// spec). Each entry costs one object read.
+    pub fn changes(&mut self) -> Result<Vec<ChangeEntry>, Error> {
+        let mut state = self.begin()?;
+        self.snapshot_in(&mut state)?;
+        let entry = |id: HashRef, changeset: &Changeset| ChangeEntry {
+            id,
+            change_id: changeset.change_id,
+            paths: changeset.changes.len(),
+            description: changeset.description.clone(),
+        };
+        let mut entries = vec![entry(state.at.wc_id, &state.at.wc)];
+        let mut next = only_parent(&state.at.wc, &state.at.wc_id)?;
+        while let Some(id) = next {
+            let changeset = self.changeset(&id)?;
+            next = only_parent(&changeset, &id)?;
+            entries.push(entry(id, &changeset));
         }
         Ok(entries)
     }
@@ -1093,9 +1118,19 @@ fn resolve(ops: &BTreeMap<HashRef, Operation>, spec: &str) -> Result<HashRef, Er
     }
 }
 
-/// One op, as `log` lists it.
+/// A changeset's one parent, if it has any. A changeset with several needs
+/// INT-0012's merge.
+fn only_parent(changeset: &Changeset, id: &HashRef) -> Result<Option<HashRef>, Error> {
+    match changeset.parents.as_slice() {
+        [] => Ok(None),
+        [parent] => Ok(Some(*parent)),
+        _ => Err(Error::Merge(*id)),
+    }
+}
+
+/// One op, as `ops` lists it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LogEntry {
+pub struct OpEntry {
     /// The op's id.
     pub id: HashRef,
     /// Its parent ops.
@@ -1104,6 +1139,21 @@ pub struct LogEntry {
     pub working_copy: HashRef,
     /// That changeset's change ID.
     pub change_id: [u8; CHANGE_ID_LEN],
-    /// How many files its tree holds.
-    pub files: usize,
+    /// How many paths that changeset changes against its parent. Counting
+    /// the files of its whole tree would need the chain of changes behind
+    /// it, for every op listed.
+    pub paths: usize,
+}
+
+/// One change, as `log` lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChangeEntry {
+    /// The changeset's id.
+    pub id: HashRef,
+    /// Its change ID.
+    pub change_id: [u8; CHANGE_ID_LEN],
+    /// How many paths it changes against its parent.
+    pub paths: usize,
+    /// Its description, exactly as stored.
+    pub description: Vec<u8>,
 }

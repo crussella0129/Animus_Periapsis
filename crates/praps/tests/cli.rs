@@ -404,6 +404,8 @@ fn praps_rejects_flags_and_extra_arguments() {
         &["snapshot"][..],
         &["log", "-n", "3"][..],
         &["log", "a", "b"][..],
+        &["ops", "-n", "3"][..],
+        &["ops", "a", "b"][..],
         &["undo", "--force"][..],
         &["undo", "a", "b"][..],
         &["restore", "-f", "abc"][..],
@@ -448,9 +450,9 @@ fn praps_verify_reports_a_broken_repository_store() {
 
 // ------------------------------------------- log, undo, restore (Sprint 3 T-008)
 
-/// The 12-hex op prefixes `praps log` prints, newest first.
+/// The 12-hex op prefixes `praps ops` prints, newest first.
 fn logged_ops(root: &Path) -> Vec<String> {
-    let output = praps(&["log"], root);
+    let output = praps(&["ops"], root);
     assert_eq!(code(&output), 0, "{output:?}");
     lines(&output)
         .iter()
@@ -459,14 +461,14 @@ fn logged_ops(root: &Path) -> Vec<String> {
 }
 
 #[test]
-fn praps_log_lists_ops_newest_first() {
-    let dir = claim("log");
+fn praps_ops_lists_operations_newest_first() {
+    let dir = claim("ops");
     let root = dir.join("repo");
     assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
     write(&root, "a", b"1");
     write(&root, "b", b"1");
     assert_eq!(code(&praps(&["new", "repo"], &dir)), 0);
-    let output = praps(&["log", "repo"], &dir);
+    let output = praps(&["ops", "repo"], &dir);
     assert_eq!(code(&output), 0, "{output:?}");
     let lines = lines(&output);
     // init, the snapshot `new` took, `new` itself.
@@ -478,9 +480,14 @@ fn praps_log_lists_ops_newest_first() {
         assert_eq!(parts[1], "change");
         assert_eq!(parts[2].len(), 12);
     }
-    assert!(lines[0].ends_with(" 2 files"), "{lines:?}");
+    // Each line counts the paths its working-copy change changes: the
+    // change `new` started is empty, the snapshot before it added `a` and
+    // `b`, and the root's change is empty (Sprint 6 T-009; the count was
+    // the size of the tree, ` 2 files`, ` 2 files` and ` 0 files`).
+    assert!(lines[0].ends_with(" 0 paths"), "{lines:?}");
+    assert!(lines[1].ends_with(" 2 paths"), "{lines:?}");
     assert!(
-        lines[2].ends_with(" 0 files"),
+        lines[2].ends_with(" 0 paths"),
         "the root op is last: {lines:?}"
     );
     // The newest is the head.
@@ -1144,6 +1151,7 @@ fn commands_act_the_same_from_below() {
         }),
         ("status with none", vec!["status".into()], |_| {}),
         ("log", vec!["log".into()], |top| write(top, "a", b"3")),
+        ("ops", vec!["ops".into()], |top| write(top, "a", b"3")),
         ("undo", vec!["undo".into()], |top| write(top, "a", b"3")),
         ("restore", vec!["restore".into(), first_op.clone()], |_| {}),
         ("verify", vec!["verify".into()], |_| {}),
@@ -1511,5 +1519,50 @@ fn a_praps_entry_without_a_store_is_ordinary() {
         assert_eq!(code(&output), 1, "{output:?}");
         assert!(stderr(&output).contains("inside the working copy at"));
     }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+// ------------------- `log` lists changes, `ops` lists operations (Sprint 6 T-009)
+
+/// `log` lists the working-copy change and the changes before it, newest
+/// first, one line each: 12 hex digits of the change ID, the number of
+/// paths the change changes, and `(no description)` for a change without
+/// one. It records the working copy first.
+#[test]
+fn praps_log_lists_changes_newest_first() {
+    let dir = claim("log");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    write(&root, "a", b"1");
+    write(&root, "b", b"1");
+    let first = stdout(&praps(&["new", "repo"], &dir));
+    write(&root, "a", b"2");
+    let second = stdout(&praps(&["new", "repo"], &dir));
+    // An edit no command has recorded: `log` records it and counts it.
+    fs::remove_file(root.join("b")).unwrap();
+    let ops_before = logged_ops(&root).len();
+    write(&root, "c", b"new");
+    let output = praps(&["log", "repo"], &dir);
+    assert_eq!(code(&output), 0, "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    let listed = lines(&output);
+    let id = |line: &str| line.trim().strip_prefix("new change ").unwrap()[..12].to_owned();
+    assert_eq!(
+        listed,
+        [
+            format!("{} 2 paths (no description)", id(&second)),
+            format!("{} 1 path (no description)", id(&first)),
+            // The root change's ID is not printed by any command before
+            // this one, so only its shape is checked below.
+            listed[2].clone(),
+        ]
+    );
+    let root_line: Vec<&str> = listed[2].splitn(4, ' ').collect();
+    assert_eq!(root_line[1..], ["2", "paths", "(no description)"]);
+    assert!(root_line[0].len() == 12 && root_line[0].bytes().all(|b| b.is_ascii_hexdigit()));
+    // `logged_ops` recorded `b`'s removal; `log` then recorded `c`.
+    assert_eq!(logged_ops(&root).len(), ops_before + 1);
+    // From the top with no directory it prints the same.
+    assert_eq!(lines(&praps(&["log"], &root)), listed);
     let _ = fs::remove_dir_all(&dir);
 }

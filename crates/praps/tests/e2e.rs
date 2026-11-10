@@ -221,7 +221,7 @@ fn praps_history_end_to_end() {
     );
 
     // Restore the snapshot undo took: the edits are back.
-    let log = ok(&["log"], &root);
+    let log = ok(&["ops"], &root);
     let edits = log[1].split(' ').next().unwrap();
     ok(&["restore", edits], &root);
     assert_eq!(read("README.md").unwrap(), b"# project\n\nMore.\n");
@@ -233,7 +233,7 @@ fn praps_history_end_to_end() {
     );
 
     // Every op is still listed: none was removed, and `restore` added one.
-    let after = ok(&["log"], &root);
+    let after = ok(&["ops"], &root);
     assert_eq!(after.len(), log.len() + 1, "{after:?}");
     for line in &log {
         assert!(after.contains(line), "{line} was removed");
@@ -243,7 +243,7 @@ fn praps_history_end_to_end() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// `log`, `undo`, `restore` and `new` report a name with no UTF-8 form as
+/// `ops`, `log`, `undo`, `restore` and `new` report a name with no UTF-8 form as
 /// `status` does, after their own output, on success and on failure, and
 /// keep their exit codes (Sprint 4 T-009, backlog T-019; INT-0004 AC-7).
 #[test]
@@ -288,16 +288,23 @@ fn praps_commands_report_skipped_names() {
             .contains("no op matches `0000000000000000`")
     );
 
-    // `new`, `log`, `undo` and `restore`: their own lines, then the report.
+    // `new`, `ops`, `log`, `undo` and `restore`: their own lines, then the
+    // report.
     write(&root, "a", b"1");
     let lines = ok(&["new"], &root);
     assert_eq!(lines.len(), 2, "{lines:?}");
     assert!(lines[0].starts_with("new change "));
     assert_eq!(lines[1], skipped);
-    let lines = ok(&["log"], &root);
+    let lines = ok(&["ops"], &root);
     assert_eq!(lines.last(), Some(&skipped), "{lines:?}");
     assert_eq!(lines.iter().filter(|line| **line == skipped).count(), 1);
     let target = lines[0][..12].to_owned();
+    // The list of changes records the working copy too, and reports what
+    // it left alone (Sprint 6 T-009).
+    let lines = ok(&["log"], &root);
+    assert_eq!(lines.last(), Some(&skipped), "{lines:?}");
+    assert_eq!(lines.iter().filter(|line| **line == skipped).count(), 1);
+    assert!(lines[0].ends_with("(no description)"), "{lines:?}");
     let lines = ok(&["undo"], &root);
     assert_eq!(lines.len(), 2, "{lines:?}");
     assert!(lines[0].starts_with("undid the last op"));
@@ -353,7 +360,7 @@ fn praps_end_to_end_from_below() {
         assert_eq!(read("docs/guide.md"), None);
         assert!(!root.join("docs").exists());
 
-        let log = ok(&["log"], &cwd);
+        let log = ok(&["ops"], &cwd);
         let edits = log[1].split(' ').next().unwrap();
         ok(&["restore", edits], &cwd);
         assert_eq!(read("README.md").unwrap(), b"# project\n\nMore.\n");
@@ -367,7 +374,7 @@ fn praps_end_to_end_from_below() {
         assert!(!root.join(".praps/working-copy").exists());
         // No repository was made where the commands ran.
         assert!(!cwd.join(".praps").exists() || cwd == root);
-        let listed = ok(&["log"], &cwd).len();
+        let listed = ok(&["ops"], &cwd).len();
         let _ = fs::remove_dir_all(&dir);
         listed
     };

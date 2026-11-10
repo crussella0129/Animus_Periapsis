@@ -13,6 +13,7 @@ pub enum Action {
     Status,
     New,
     Log,
+    Ops,
     Undo,
     Restore,
     Init,
@@ -114,6 +115,19 @@ pub const COMMANDS: &[Command] = &[
         examples: &[("praps new", "finish this change and start the next")],
     },
     Command {
+        action: Action::Log,
+        name: "log",
+        group: Group::Everyday,
+        summary: "List the changes that lead to the working copy, newest first",
+        about: "Records the working copy, then lists the current change and each change \
+                before it: the first digits of its change ID, how many paths it changes, \
+                and the first line of its description.",
+        args: &[DIR],
+        flags: &[],
+        idempotent: true,
+        examples: &[("praps log", "the changes so far, the current one first")],
+    },
+    Command {
         action: Action::Undo,
         name: "undo",
         group: Group::Everyday,
@@ -126,17 +140,19 @@ pub const COMMANDS: &[Command] = &[
         examples: &[("praps undo", "take back what the last command did")],
     },
     Command {
-        action: Action::Log,
-        name: "log",
+        action: Action::Ops,
+        name: "ops",
         group: Group::LookingBack,
         summary: "List every operation, newest first",
-        about: "Records the working copy, then lists each operation with its id, the change \
-                it left as the working copy, and how many files that change holds.",
+        about: "Records the working copy, then lists each operation: the first digits of \
+                its id, the change it left as the working copy, and how many paths that \
+                change changes. An operation is one thing a command did, and `praps \
+                restore` takes these ids.",
         args: &[DIR],
         flags: &[],
         idempotent: true,
         examples: &[(
-            "praps log",
+            "praps ops",
             "every operation, with the ids `praps restore` takes",
         )],
     },
