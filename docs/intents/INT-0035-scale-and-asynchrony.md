@@ -3,7 +3,7 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0035
 - **State:** planned
-- **Work evidence:** [Sprint 6 T-003 build plan](../sprints/s6/sprint-plans/build-plan.md#t-003-a-command-reads-the-op-log-once)
+- **Work evidence:** [Sprint 6 T-003 build plan](../sprints/s6/sprint-plans/build-plan.md#t-003-a-command-reads-the-op-log-once), [Sprint 6 T-009 build plan](../sprints/s6/sprint-plans/build-plan.md#t-009-log-lists-changes-and-ops-lists-operations)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none

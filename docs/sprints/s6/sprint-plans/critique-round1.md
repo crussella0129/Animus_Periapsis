@@ -128,7 +128,7 @@ block
 
 ## Responses
 
-Task numbers below are the revised plan's. The eight tasks became twelve: the old T-003 is now T-003 to T-005, the old T-004 is T-006, the old T-005 is T-008, the old T-006 is T-007, T-009 and T-010, the old T-007 is T-011 and the old T-008 is T-012.
+Task numbers below are those of the plan as revised after this round; round 2 then added one task, so its documentation task, T-012 here, is T-013 in the locked plan. The eight tasks became twelve: the old T-003 is now T-003 to T-005, the old T-004 is T-006, the old T-005 is T-008, the old T-006 is T-007, T-009 and T-010, the old T-007 is T-011 and the old T-008 is T-012.
 
 | Concern | Response |
 |---|---|

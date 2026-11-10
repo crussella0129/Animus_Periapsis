@@ -21,18 +21,21 @@ message crosses in byte ranges. An API-only workspace therefore reads and
 writes any content without loss ([INT-0034](INT-0034-any-content.md)).
 
 Command names are the simplest words that say what they do. A command is
-**idempotent** when it only reports: run again, it changes nothing and prints
-the same (`status`, `log`, `ops`, `diff`, `verify`, `help`). Idempotent
-commands take no flags, so their default behaviour is their only behaviour.
-Every other command is asked to change something, and flags exist only
-there, where they make a state change explicit. `init` and `describe` belong
-to that second class although a repeat finds nothing left to do: what each
-prints says whether it did anything, so a repeat does not print the same.
-Every command that opens the working copy records it first. That recording
-is not something the command was asked for, so it does not move a command
-out of the first class. The registry marks each command's class, and `help`
-shows it. The project's own tooling follows the same rule
-([INT-0003](INT-0003-engineering-baseline.md) AC-9).
+**idempotent** when a repeat changes nothing and prints the same: run twice
+in a row, the second run leaves every file as the first left it and prints
+what the first printed. `status`, `log`, `ops`, `diff`, `verify` and `help`
+are idempotent; they are the commands that report. Idempotent commands take
+no flags, so their default behaviour is their only behaviour. Flags exist
+only on the other commands, where they make a state change explicit. `init`
+and `describe` are not idempotent, although a repeat finds nothing left to
+do: what each prints says whether it did anything, so a repeat does not
+print the same. Every command that opens the working copy records it first.
+A first run may therefore write, and a repeat still changes nothing, so that
+recording does not make a command any less idempotent. The registry marks
+each idempotent command, and `help` shows the mark. The project's own
+tooling follows the same rule
+([INT-0003](INT-0003-engineering-baseline.md) AC-9): `cargo reach` rewrites
+a file, and a repeat changes nothing and prints the same.
 
 Since `diff` takes no flags, how it shows a file depends only on the file and
 the repository's declarations: through the diff layer chosen for that kind of
@@ -139,3 +142,4 @@ result with it or without.
 - 2026-11-10: revised while `proposed` (Sprint 6 Plan, on owner direction of 2026-11-09 for a far more intuitive command set and for thousands of agents): the Intent says the registry is the one description of each command, points to [INT-0037](INT-0037-command-set.md) for the command set and [INT-0038](INT-0038-live-view.md) for the live view, and adds an optional local service that many agents share. AC-11 and AC-12 are added.
 - 2026-11-10: `proposed` → `planned` (Sprint 6 build plan T-006: the registry, with dispatch, help and usage generated from it; AC-8 and AC-11. `praps mcp`, the schemas and the service wait for later sprints).
 - 2026-11-10: revised while `planned` (Sprint 6 plan critique, round 1, C-004 and C-006; `semantic`): the Intent defines the idempotent class as the commands that only report, names `init` and `describe` as outside it, and says the registry marks the class and `help` shows it; AC-8 and AC-9 are unchanged and now apply to that class. Consequences record that Sprint 6's `log` listing is provisional, that it does not meet AC-4, and when the seed and the rubric of AC-5 and AC-6 are registered.
+- 2026-11-10: revised while `planned` (Sprint 6 plan critique, round 2, C-008; `semantic`): the idempotent class is defined by the repeat alone, that it changes nothing and prints the same, so that a command which writes on its first run, as `status` and `cargo reach` do, has a settled class. "The commands that report" stays as a description of the `praps` commands in it.

@@ -3,7 +3,7 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0037
 - **State:** planned
-- **Work evidence:** [Sprint 6 T-006 build plan](../sprints/s6/sprint-plans/build-plan.md#t-006-the-command-registry-dispatch-help-and-suggestions-from-one-table), [Sprint 6 T-007 build plan](../sprints/s6/sprint-plans/build-plan.md#t-007-verify-replaces-fsck), [Sprint 6 T-008 build plan](../sprints/s6/sprint-plans/build-plan.md#t-008-commands-find-their-working-copy-from-any-directory-inside-it), [Sprint 6 T-009 build plan](../sprints/s6/sprint-plans/build-plan.md#t-009-log-lists-changes-and-ops-lists-operations), [Sprint 6 T-010 build plan](../sprints/s6/sprint-plans/build-plan.md#t-010-describe-sets-the-description-of-the-current-change), [Sprint 6 T-011 build plan](../sprints/s6/sprint-plans/build-plan.md#t-011-every-refusal-names-the-next-command), [Sprint 6 T-012 build plan](../sprints/s6/sprint-plans/build-plan.md#t-012-readme-specs-and-credits)
+- **Work evidence:** [Sprint 6 T-006 build plan](../sprints/s6/sprint-plans/build-plan.md#t-006-the-command-registry-dispatch-help-and-suggestions-from-one-table), [Sprint 6 T-007 build plan](../sprints/s6/sprint-plans/build-plan.md#t-007-verify-replaces-fsck), [Sprint 6 T-008 build plan](../sprints/s6/sprint-plans/build-plan.md#t-008-commands-find-their-working-copy-from-any-directory-inside-it), [Sprint 6 T-009 build plan](../sprints/s6/sprint-plans/build-plan.md#t-009-log-lists-changes-and-ops-lists-operations), [Sprint 6 T-010 build plan](../sprints/s6/sprint-plans/build-plan.md#t-010-describe-sets-the-description-of-the-current-change), [Sprint 6 T-011 build plan](../sprints/s6/sprint-plans/build-plan.md#t-011-every-refusal-names-the-next-command), [Sprint 6 T-012 build plan](../sprints/s6/sprint-plans/build-plan.md#t-012-a-write-leaves-a-directory-it-cannot-remove), [Sprint 6 T-013 build plan](../sprints/s6/sprint-plans/build-plan.md#t-013-readme-specs-and-credits)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none
@@ -26,8 +26,8 @@ Rules:
 - **Few arguments, in a fixed order.** A command takes what it acts on, then
   optionally the directory of the working copy. Text of several words is
   one quoted argument. Flags follow
-  [INT-0022](INT-0022-agent-and-human-interfaces.md): a command that only
-  reports takes none.
+  [INT-0022](INT-0022-agent-and-human-interfaces.md): an idempotent command,
+  one whose repeat changes nothing and prints the same, takes none.
 - **The tool teaches itself.**
   - `praps` alone lists the commands by purpose, one line each, the everyday
     ones first.
@@ -164,5 +164,5 @@ many agents is [INT-0038](INT-0038-live-view.md).
 ## Transition history
 - 2026-11-09: created as `proposed` (Sprint 6 research; owner direction of 2026-11-09 for a far more intuitive command set).
 - 2026-11-10: revised while `proposed` (Sprint 6 Plan, after a review of the build plan against the code): three kinds of error have no next command today (several op heads, a change with several parents, a failure of the filesystem), so the rule and AC-4 now allow an answer that says what to put right outside `praps`, or that this build has no remedy yet and nothing was lost. AC-4's threshold names the error kinds it covers. The rule on `--help` says that any other argument beginning with `-` is refused.
-- 2026-11-10: `proposed` → `planned` (Sprint 6 build plan T-006 to T-012, approved by the owner on 2026-11-10 with `verify` as the name of the integrity check and with `log` for changes and `ops` for operations: the registry, help and suggestions; finding the working copy; `describe`, `log`, `ops` and `verify`; hints on every refusal; the README. AC-1 to AC-5. AC-6 and AC-7 need agents and a panel, and AC-8 the owner's sign-off on the whole table).
-- 2026-11-10: revised while `planned` (Sprint 6 plan critique, round 1, C-006 and C-015; `editorial`: no criterion changes): the rule on arguments says that text of several words is one quoted argument, and words the flag rule as [INT-0022](INT-0022-agent-and-human-interfaces.md) now defines it. The build plan's tasks for this chapter are renumbered T-006 to T-012 after three were split.
+- 2026-11-10: `proposed` → `planned` (Sprint 6 build plan T-006 to T-013, approved by the owner on 2026-11-10 with `verify` as the name of the integrity check and with `log` for changes and `ops` for operations: the registry, help and suggestions; finding the working copy; `describe`, `log`, `ops` and `verify`; hints on every refusal; the README. AC-1 to AC-5. AC-6 and AC-7 need agents and a panel, and AC-8 the owner's sign-off on the whole table).
+- 2026-11-10: revised while `planned` (Sprint 6 plan critique, round 1, C-006 and C-015; `editorial`: no criterion changes): the rule on arguments says that text of several words is one quoted argument, and words the flag rule as [INT-0022](INT-0022-agent-and-human-interfaces.md) now defines it. The build plan's tasks for this chapter are renumbered after three were split; with the task the second critique added, they are T-006 to T-013.
