@@ -410,6 +410,10 @@ fn praps_rejects_flags_and_extra_arguments() {
         &["undo", "a", "b"][..],
         &["restore", "-f", "abc"][..],
         &["restore", "abc", "--force"][..],
+        &["describe"][..],
+        &["describe", "-m", "text"][..],
+        &["describe", "-text"][..],
+        &["describe", "a", "b", "c"][..],
     ] {
         let output = praps(args, &dir);
         assert_eq!(code(&output), 2, "{args:?}: {output:?}");
@@ -738,7 +742,8 @@ fn praps_alone_lists_every_command() {
     let commands = listed(&dir);
     let names: Vec<&str> = commands.iter().map(|(name, _)| name.as_str()).collect();
     for expected in [
-        "status", "new", "undo", "restore", "init", "help", "version",
+        "status", "describe", "new", "log", "undo", "ops", "restore", "init", "verify", "help",
+        "version",
     ] {
         assert!(names.contains(&expected), "{expected} is not in {names:?}");
     }
@@ -1152,6 +1157,16 @@ fn commands_act_the_same_from_below() {
         ("status with none", vec!["status".into()], |_| {}),
         ("log", vec!["log".into()], |top| write(top, "a", b"3")),
         ("ops", vec!["ops".into()], |top| write(top, "a", b"3")),
+        (
+            "describe",
+            vec!["describe".into(), "Change a\n\nAnd say why.".into()],
+            |top| write(top, "a", b"3"),
+        ),
+        (
+            "describe, the text it has",
+            vec!["describe".into(), String::new()],
+            |_| {},
+        ),
         ("undo", vec!["undo".into()], |top| write(top, "a", b"3")),
         ("restore", vec!["restore".into(), first_op.clone()], |_| {}),
         ("verify", vec!["verify".into()], |_| {}),
@@ -1564,5 +1579,201 @@ fn praps_log_lists_changes_newest_first() {
     assert_eq!(logged_ops(&root).len(), ops_before + 1);
     // From the top with no directory it prints the same.
     assert_eq!(lines(&praps(&["log"], &root)), listed);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+// ------------------------------------------------------ `describe` (Sprint 6 T-010)
+
+/// `praps` with arguments that need not be text.
+fn praps_os(args: &[&std::ffi::OsStr], cwd: &Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_praps"))
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .unwrap()
+}
+
+/// The working-copy changeset the single op head names, read from the store.
+fn working_copy_change(root: &Path) -> codec::Changeset {
+    let store = Store::open(RealFs, &root.join(".praps/store"), HashAlg::DEFAULT, 1).unwrap();
+    let ops = store.ops().unwrap();
+    let heads = store::heads_of(&ops);
+    assert_eq!(heads.len(), 1);
+    let view =
+        View::from_envelope(&store.get_object(&ops[heads.first().unwrap()].view).unwrap()).unwrap();
+    codec::Changeset::from_envelope(&store.get_object(&view.workspaces["default"]).unwrap())
+        .unwrap()
+}
+
+/// `praps describe TEXT` records the working copy, then leaves the current
+/// change with TEXT's bytes as its description and the same change ID,
+/// parents and changes. It says so in one line that names the change and
+/// shows the first line of the text. A later edit keeps the description,
+/// and `new` starts a change with none.
+#[test]
+fn praps_describe_sets_and_reports() {
+    let dir = claim("describe");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    write(&root, "a", b"1");
+    write(&root, "sub/b", b"2");
+    let text = "Add a and b\n\nThe second line is not shown.\n";
+    let output = praps(&["describe", text, "repo"], &dir);
+    assert_eq!(code(&output), 0, "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    let change = working_copy_change(&root);
+    let id = hash::hex(&change.change_id)[..12].to_owned();
+    assert_eq!(
+        stdout(&output),
+        format!("described change {id}: Add a and b\n")
+    );
+    assert_eq!(change.description, text.as_bytes());
+    assert_eq!(change.changes.len(), 2, "the edit was recorded first");
+    assert!(change.parents.is_empty());
+    // The root op, the recording of the edit, and the description.
+    assert_eq!(logged_ops(&root).len(), 3);
+    assert_eq!(
+        lines(&praps(&["log"], &root)),
+        [format!("{id} 2 paths Add a and b")]
+    );
+    // No working-copy file was touched.
+    assert_eq!(fs::read(root.join("a")).unwrap(), b"1");
+    assert_eq!(fs::read(root.join("sub/b")).unwrap(), b"2");
+
+    // A later edit, recorded by another command, keeps the description.
+    write(&root, "a", b"edited");
+    assert_eq!(lines(&praps(&["status"], &root)), ["A a", "A sub/b"]);
+    let edited = working_copy_change(&root);
+    assert_eq!(edited.description, text.as_bytes());
+    assert_eq!(edited.change_id, change.change_id);
+
+    // `new` starts a change with none; the one before keeps its own.
+    assert_eq!(code(&praps(&["new"], &root)), 0);
+    let log = lines(&praps(&["log"], &root));
+    assert_eq!(log.len(), 2, "{log:?}");
+    assert!(log[0].ends_with(" 0 paths (no description)"), "{log:?}");
+    assert_eq!(log[1], format!("{id} 2 paths Add a and b"));
+
+    // From a directory below, with no directory given.
+    let output = praps(&["describe", "Next"], &root.join("sub"));
+    assert_eq!(code(&output), 0, "{output:?}");
+    let next = working_copy_change(&root);
+    assert_eq!(next.description, b"Next");
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "described change {}: Next\n",
+            &hash::hex(&next.change_id)[..12]
+        )
+    );
+    assert_eq!(code(&praps(&["verify"], &root)), 0);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// With the description the change already has, `describe` says that
+/// nothing changed, exits 0 and writes nothing. An empty text on a change
+/// with no description is the same case, and an empty text on a described
+/// change removes the description.
+#[test]
+fn praps_describe_says_when_nothing_changed() {
+    let dir = claim("describe-same");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    let id = hash::hex(&working_copy_change(&root).change_id)[..12].to_owned();
+    let unchanged = format!("nothing changed: change {id} already has that description\n");
+
+    let before = tree(&root);
+    let output = praps(&["describe", ""], &root);
+    assert_eq!(code(&output), 0, "{output:?}");
+    assert_eq!(stdout(&output), unchanged);
+    assert_eq!(tree(&root), before, "nothing was written");
+
+    let output = praps(&["describe", "Start"], &root);
+    assert_eq!(stdout(&output), format!("described change {id}: Start\n"));
+    let before = tree(&root);
+    let ops = logged_ops(&root).len();
+    for _ in 0..2 {
+        let output = praps(&["describe", "Start"], &root);
+        assert_eq!(code(&output), 0, "{output:?}");
+        assert_eq!(stdout(&output), unchanged);
+        assert!(output.stderr.is_empty());
+    }
+    assert_eq!(tree(&root), before, "nothing was written");
+    assert_eq!(logged_ops(&root).len(), ops);
+
+    // An edit made before it is still recorded, in an op of its own.
+    write(&root, "a", b"1");
+    let output = praps(&["describe", "Start"], &root);
+    assert_eq!(stdout(&output), unchanged);
+    assert_eq!(logged_ops(&root).len(), ops + 1);
+    assert_eq!(working_copy_change(&root).changes.len(), 1);
+
+    // An empty text removes the description.
+    let output = praps(&["describe", ""], &root);
+    assert_eq!(
+        stdout(&output),
+        format!("described change {id}: (no description)\n")
+    );
+    assert!(working_copy_change(&root).description.is_empty());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// The first line of a description is printed escaped, as names are, by
+/// `describe` and by `log`: a control character or a byte that is not UTF-8
+/// cannot break the line or reach the terminal, and the bytes stored are
+/// the bytes given (INT-0034).
+#[test]
+fn praps_log_escapes_the_first_line() {
+    let dir = claim("describe-escape");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    let id = hash::hex(&working_copy_change(&root).change_id)[..12].to_owned();
+    let text = "tab\there \u{1b}[31mred back\\slash caf\u{e9}\r\nsecond line";
+    let shown = "tab\\u{9}here \\u{1b}[31mred back\\\\slash caf\u{e9}";
+    let output = praps(&["describe", text], &root);
+    assert_eq!(code(&output), 0, "{output:?}");
+    assert_eq!(stdout(&output), format!("described change {id}: {shown}\n"));
+    assert_eq!(working_copy_change(&root).description, text.as_bytes());
+    let log = praps(&["log"], &root);
+    assert_eq!(stdout(&log), format!("{id} 0 paths {shown}\n"));
+    assert!(
+        !log.stdout.contains(&0x1b),
+        "an escape reached the terminal"
+    );
+
+    // Bytes that are not UTF-8, which Linux passes as they are.
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let raw = b"caf\xc3\xa9 \xff\xfe end";
+        let output = praps_os(
+            &["describe".as_ref(), std::ffi::OsStr::from_bytes(raw)],
+            &root,
+        );
+        assert_eq!(code(&output), 0, "{output:?}");
+        let shown = "caf\u{e9} \\xff\\xfe end";
+        assert_eq!(stdout(&output), format!("described change {id}: {shown}\n"));
+        assert_eq!(working_copy_change(&root).description, raw);
+        assert_eq!(
+            stdout(&praps(&["log"], &root)),
+            format!("{id} 0 paths {shown}\n")
+        );
+    }
+    // Text with no UTF-8 form, which only Windows can pass, is refused as a
+    // usage error, and nothing is written.
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        let raw = std::ffi::OsString::from_wide(&[u16::from(b'a'), 0xd800, u16::from(b'b')]);
+        let before = tree(&root);
+        let output = praps_os(&["describe".as_ref(), raw.as_os_str()], &root);
+        assert_eq!(code(&output), 2, "{output:?}");
+        assert!(output.stdout.is_empty());
+        let err = stderr(&output);
+        assert_eq!(err.lines().next(), Some("usage: praps describe TEXT [DIR]"));
+        assert!(err.lines().last().unwrap().starts_with("hint: "), "{err}");
+        assert!(err.contains("Unicode"), "{err}");
+        assert_eq!(tree(&root), before);
+    }
     let _ = fs::remove_dir_all(&dir);
 }

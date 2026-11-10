@@ -11,6 +11,7 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Status,
+    Describe,
     New,
     Log,
     Ops,
@@ -100,6 +101,29 @@ pub const COMMANDS: &[Command] = &[
         examples: &[(
             "praps status",
             "what has changed since the last `praps new`",
+        )],
+    },
+    Command {
+        action: Action::Describe,
+        name: "describe",
+        group: Group::Everyday,
+        summary: "Say what the current change is for",
+        about: "Records the working copy, then sets the description of the current change \
+                to TEXT, in place of any it had. TEXT is one argument, so text of more than \
+                one word goes in quotes. `praps log` shows its first line.",
+        args: &[
+            Arg {
+                name: "TEXT",
+                required: true,
+                about: "the description; in quotes if it is more than one word",
+            },
+            DIR,
+        ],
+        flags: &[],
+        idempotent: false,
+        examples: &[(
+            "praps describe \"Add the parser\"",
+            "say what the current change is for",
         )],
     },
     Command {
@@ -386,6 +410,11 @@ mod tests {
             "usage: praps restore OP [DIR]"
         );
         assert_eq!(find("version").unwrap().usage(), "usage: praps version");
+        assert_eq!(
+            find("describe").unwrap().usage(),
+            "usage: praps describe TEXT [DIR]"
+        );
+        assert_eq!(find("describe").unwrap().arity(), (1, 2));
         assert_eq!(find("restore").unwrap().arity(), (1, 2));
         assert!(find("statsu").is_none());
     }

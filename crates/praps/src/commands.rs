@@ -25,20 +25,33 @@ pub fn run(command: &Command, args: &[&OsStr], out: &mut impl Write, err: &mut i
     let dir = |at: usize| args.get(at).map(|arg| Path::new(*arg));
     match command.action {
         Action::Status => status(dir(0), out, err),
+        Action::Describe => match args.first().map(|text| text_bytes(text)) {
+            Some(Some(text)) => describe(&text, dir(1), out, err),
+            // Only Windows can pass text that has no UTF-8 form.
+            Some(None) => usage_error(
+                command,
+                "TEXT must be Unicode text, so that it can be stored as UTF-8",
+                err,
+            ),
+            // The parser has counted the arguments; this keeps the match
+            // whole.
+            None => usage_error(
+                command,
+                &format!("run `praps help {}` for what it takes", command.name),
+                err,
+            ),
+        },
         Action::New => new(dir(0), out, err),
         Action::Log => log(dir(0), out, err),
         Action::Ops => ops(dir(0), out, err),
         Action::Undo => undo(dir(0), out, err),
         Action::Restore => match args.first().and_then(|op| op.to_str()) {
             Some(op) => restore(op, dir(1), out, err),
-            None => {
-                let _ = writeln!(err, "{}", command.usage());
-                let _ = writeln!(
-                    err,
-                    "hint: an operation's id is hex digits, as `praps ops` prints them"
-                );
-                2
-            }
+            None => usage_error(
+                command,
+                "an operation's id is hex digits, as `praps ops` prints them",
+                err,
+            ),
         },
         Action::Init => init(dir(0), out, err),
         Action::Verify => verify(dir(0), out, err),
@@ -53,6 +66,30 @@ pub fn run(command: &Command, args: &[&OsStr], out: &mut impl Write, err: &mut i
             0
         }
     }
+}
+
+/// Prints `command`'s usage line and a hint, and returns exit code 2: the
+/// arguments were counted right but one of them cannot be what it must be.
+fn usage_error(command: &Command, hint: &str, err: &mut impl Write) -> u8 {
+    let _ = writeln!(err, "{}", command.usage());
+    let _ = writeln!(err, "hint: {hint}");
+    2
+}
+
+/// The bytes of a description given on the command line. On Unix they are
+/// the argument's bytes exactly as given, whatever they are. Elsewhere they
+/// are its UTF-8 form, and text that has none (on Windows, text holding an
+/// unpaired surrogate) gives `None`: the bytes the standard library holds
+/// for such text are its own, and nothing to store.
+#[cfg(unix)]
+fn text_bytes(text: &OsStr) -> Option<Vec<u8>> {
+    use std::os::unix::ffi::OsStrExt;
+    Some(text.as_bytes().to_vec())
+}
+
+#[cfg(not(unix))]
+fn text_bytes(text: &OsStr) -> Option<Vec<u8>> {
+    text.to_str().map(|text| text.as_bytes().to_vec())
 }
 
 /// The first [`SHOWN`] hex digits of `bytes`.
@@ -346,6 +383,34 @@ fn restore(op: &str, given: Option<&Path>, out: &mut impl Write, err: &mut impl 
             0
         }
         Err(error) => fail("restore", &place.shown, error, err),
+    };
+    print_reported(&reported, out);
+    code
+}
+
+/// `describe`: sets the description of the working-copy change to `text`,
+/// byte for byte, and says so in one line: `described change CHANGE: FIRST
+/// LINE`. With the description the change already has, it says that nothing
+/// changed.
+fn describe(text: &[u8], given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 {
+    let place = match locate("describe", given, err) {
+        Ok(place) => place,
+        Err(code) => return code,
+    };
+    let (result, reported) = with_reports(&place, err, |ws| ws.describe(text));
+    let code = match result {
+        Ok(described) => {
+            let change = short(&described.change_id);
+            let _ = match described.op {
+                Some(_) => writeln!(out, "described change {change}: {}", first_line(text)),
+                None => writeln!(
+                    out,
+                    "nothing changed: change {change} already has that description"
+                ),
+            };
+            0
+        }
+        Err(error) => fail("describe", &place.shown, error, err),
     };
     print_reported(&reported, out);
     code

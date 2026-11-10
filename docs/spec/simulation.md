@@ -167,7 +167,7 @@ a temporary file and a rename.
 
 **What counts:**
 - the scenario's own run;
-- the next command it models on the recovered filesystem (`init` and `snapshot` for Snapshot; the resuming `open` for Materialise), read before the oracle checks anything.
+- the next command it models on the recovered filesystem (`init` and `snapshot` for Snapshot; the resuming `open` for Materialise; `init`, one more edit and `snapshot` for Describe), read before the oracle checks anything.
 
 The oracle's own checks never count.
 
@@ -178,6 +178,7 @@ The oracle's own checks never count.
 | Snapshot | `snapshot_matrix_finds_no_violations` | Sprint 2 |
 | Materialise | `materialise_matrix_finds_no_violations` (Unix rules) | Sprint 3 |
 | four writers | `writers_matrix_finds_no_violations` | Sprint 4 |
+| Describe | `describe_matrix_finds_no_violations` | Sprint 6 |
 
 **Generating.** `cargo reach` takes no flags. It reads the files and the
 registries and writes the table:

@@ -223,6 +223,16 @@ pub struct Snapshot {
     pub reported: Vec<Reported>,
 }
 
+/// What `describe` did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Described {
+    /// The change ID of the change described.
+    pub change_id: [u8; CHANGE_ID_LEN],
+    /// The op that set the description, or `None` when the change already
+    /// had exactly this description and nothing was written for it.
+    pub op: Option<HashRef>,
+}
+
 /// What a command works from: the op log as one listing read it, and the
 /// state its single head leaves. A command reads this once, at its start,
 /// and passes it through its steps; a step that commits an op moves it to
@@ -547,6 +557,16 @@ impl<F: Fs> Workspace<F> {
         true
     }
 
+    #[cfg(feature = "variants")]
+    fn keeps_description(&self) -> bool {
+        self.variant != Variant::DropDescription
+    }
+
+    #[cfg(not(feature = "variants"))]
+    fn keeps_description(&self) -> bool {
+        true
+    }
+
     /// What resuming an interrupted write left undone, one line each.
     pub fn notes(&self) -> &[String] {
         &self.notes
@@ -554,9 +574,9 @@ impl<F: Fs> Workspace<F> {
 
     /// The entries the latest snapshot reported and left alone, sorted, as
     /// [`Status::reported`] gives them (INT-0004 AC-7). Every command that
-    /// snapshots (`ops`, `changes`, `undo`, `restore`, `new_change`, `status`) sets
-    /// it, and it stays set when the command then fails. Each command
-    /// snapshots once, so it holds one report.
+    /// snapshots (`ops`, `changes`, `undo`, `restore`, `new_change`,
+    /// `describe`, `status`) sets it, and it stays set when the command then
+    /// fails. Each command snapshots once, so it holds one report.
     pub fn reported(&self) -> &[Reported] {
         &self.reported
     }
@@ -874,7 +894,11 @@ impl<F: Fs> Workspace<F> {
             parents: loaded.wc.parents.clone(),
             change_id: loaded.wc.change_id,
             changes: tree::diff(&loaded.parent_tree, &tree),
-            description: loaded.wc.description.clone(),
+            description: if self.keeps_description() {
+                loaded.wc.description.clone()
+            } else {
+                Vec::new()
+            },
         };
         let op = self.replace_working_copy(state, changeset)?;
         self.store.fs().point("workspace.snapshot.committed");
@@ -946,6 +970,34 @@ impl<F: Fs> Workspace<F> {
         };
         self.replace_working_copy(&mut state, changeset)?;
         Ok(change_id)
+    }
+
+    /// Snapshots, then sets the working-copy change's description to
+    /// `text`, byte for byte: one op in which a changeset with the same
+    /// change ID, parents and changes, and `text` as its description,
+    /// replaces the current one. No working-copy file is written. When
+    /// `text` is the description the change already has, nothing is written
+    /// for it.
+    pub fn describe(&mut self, text: &[u8]) -> Result<Described, Error> {
+        let mut state = self.begin()?;
+        self.snapshot_in(&mut state)?;
+        let change_id = state.at.wc.change_id;
+        if state.at.wc.description == text {
+            return Ok(Described {
+                change_id,
+                op: None,
+            });
+        }
+        let changeset = Changeset {
+            description: text.to_vec(),
+            ..state.at.wc.clone()
+        };
+        let op = self.replace_working_copy(&mut state, changeset)?;
+        self.store.fs().point("workspace.describe.committed");
+        Ok(Described {
+            change_id,
+            op: Some(op),
+        })
     }
 
     /// Snapshots, then compares the working-copy change with its parent.

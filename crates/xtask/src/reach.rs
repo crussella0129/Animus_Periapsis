@@ -25,21 +25,23 @@ use crate::workspace::members;
 
 /// The scenarios, by the file their designated test writes and the name the
 /// table shows.
-pub const SCENARIOS: [(&str, &str); 5] = [
+pub const SCENARIOS: [(&str, &str); 6] = [
     ("store", "store"),
     ("two-writers", "two writers"),
     ("snapshot", "Snapshot"),
     ("materialise", "Materialise"),
     ("four-writers", "four writers"),
+    ("describe", "Describe"),
 ];
 
 /// The points each scenario is expected to reach, as the Sprint 4 build
-/// plan lists them (T-006), by the name the table shows. A scenario that
+/// plan lists them (T-006), and the Sprint 6 plan for Describe (T-010), by
+/// the name the table shows. A scenario that
 /// stops reaching one fails the table, even if another scenario still
 /// reaches it (test critique C-011). An expectation is checked when its
 /// point is registered and its scenario recorded; `expectations_are_real`
 /// keeps this list naming real points and scenarios.
-pub const EXPECTED: [(&str, &[&str]); 4] = [
+pub const EXPECTED: [(&str, &[&str]); 5] = [
     (
         "store",
         &[
@@ -73,6 +75,7 @@ pub const EXPECTED: [(&str, &[&str]); 4] = [
             "workspace.resume.dropped",
         ],
     ),
+    ("Describe", &["workspace.describe.committed"]),
 ];
 
 /// The committed table.
@@ -616,6 +619,20 @@ mod tests {
             assert!(cell("Materialise (S3)", unit) > 0, "{unit}");
         }
         assert!(cell("Materialise (S3)", "S2 `workspace::snapshot`") > 0);
+        // Sprint 6's scenario reaches its own unit, and passes back through
+        // the snapshot and the store.
+        assert!(cell("Describe (S6)", "S6 `workspace::describe`") > 0);
+        for unit in [
+            "S1 `store::commit_op`",
+            "S1 `store::put_object`",
+            "S2 `workspace::snapshot`",
+        ] {
+            assert!(cell("Describe (S6)", unit) > 0, "{unit}");
+        }
+        // No earlier scenario describes a change.
+        for row in ["Snapshot (S2)", "Materialise (S3)", "four writers (S4)"] {
+            assert_eq!(cell(row, "S6 `workspace::describe`"), 0, "{row}");
+        }
     }
 
     /// `cargo ci`'s `reach` step passes on the table `cargo reach` wrote,

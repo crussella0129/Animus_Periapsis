@@ -775,7 +775,8 @@ fn resume_skips_a_directory_at_a_temporary_name() {
 }
 
 /// Each stage of the working copy marks its named point (Sprint 4 T-006):
-/// a snapshot, a write of the working copy, and both ways a resume ends.
+/// a snapshot, a write of the working copy, a description (Sprint 6 T-010),
+/// and both ways a resume ends.
 #[test]
 fn workspace_points_mark_each_stage() {
     use std::sync::Mutex;
@@ -812,6 +813,15 @@ fn workspace_points_mark_each_stage() {
         assert!(marked.contains(&stage), "{stage} not in {marked:?}");
     }
     assert_eq!(marked.first(), Some(&"workspace.snapshot.scanned"));
+    // `describe` scans, finds nothing to record, and marks its own commit.
+    ws.describe(b"why").unwrap();
+    assert_eq!(
+        take(&seen),
+        ["workspace.snapshot.scanned", "workspace.describe.committed"]
+    );
+    // With the text the change has, it commits nothing.
+    ws.describe(b"why").unwrap();
+    assert_eq!(take(&seen), ["workspace.snapshot.scanned"]);
     fs.clear_points();
 
     // A crash right after the record is written, before the target op: the

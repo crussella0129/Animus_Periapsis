@@ -94,8 +94,9 @@ fn wrap(text: &str) -> String {
 pub const OTHER_WORDS: &[(&[&str], &str)] = &[
     (
         &["commit", "ci", "add", "stage", "save", "snapshot"],
-        "there is nothing to add or commit: every command records the working copy first, \
-         and `praps new` starts the next change",
+        "there is nothing to add or commit: every command records the working copy first. \
+         `praps describe` says what the current change is for, and `praps new` starts the \
+         next one",
     ),
     (
         &["checkout", "switch", "reset", "revert"],

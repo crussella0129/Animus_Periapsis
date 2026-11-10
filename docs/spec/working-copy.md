@@ -108,6 +108,30 @@ current one: a changeset whose only parent is the current change, with a
 fresh change ID and no changes. It replaces its parent as a head. No
 working-copy file is written.
 
+`praps describe TEXT` snapshots, then sets the description of the
+working-copy change. It writes a changeset with the same change ID, parents
+and changes and with TEXT's bytes as its description, a view in which that
+changeset replaces the current one, both as a head and as the `default`
+workspace's change, and one op whose single parent is the head. No
+working-copy file is written. It prints one line that names the change and
+shows the first line of the text, escaped as names are. If TEXT is already
+the change's description, it writes nothing for it and says that nothing
+changed. An empty TEXT removes a description.
+
+What is stored is what was given:
+- on Linux, the argument's bytes, whatever they are;
+- on Windows, the argument's UTF-8 form. Text that has none, because it
+  holds an unpaired surrogate, is refused as a usage error with nothing
+  written.
+
+TEXT is one argument, so more than one word needs quotes. It cannot begin
+with `-` ([INT-0037](../intents/INT-0037-command-set.md)).
+
+A later snapshot keeps the description (step 4 above), and `praps new`
+starts a change with none. `describe` commits an op like any other, so
+`undo` takes the description back and `restore` returns to it, and neither
+writes a working-copy file for it.
+
 `praps status` snapshots, then lists each path of the working-copy change
 against its parent: `A` added, `M` modified (content or mode), `D` deleted.
 It also prints a `skipped` line for each reported entry.
