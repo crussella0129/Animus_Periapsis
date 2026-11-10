@@ -39,20 +39,22 @@ Before T-012, `praps` built at T-011's commit failed this `undo` on Windows with
 
 `dev` was pushed and the sprint's pull request, [crussella0129/Animus_Periapsis#8](https://github.com/crussella0129/Animus_Periapsis/pull/8), was opened during Test, as the owner approved. Nothing was merged, and no job was re-run. Read on 2026-11-10 with `gh api …/actions/runs/<run>`, `…/jobs`, and `gh run view --job <job> --log`.
 
-**`sprint_pull_request_checks_pass`: yes.** Run [42858372557](https://github.com/crussella0129/Animus_Periapsis/actions/runs/42858372557), event `pull_request`, head `4152526`, attempt 1, concluded `success`.
+**`sprint_pull_request_checks_pass`: yes.** Run [42867476706](https://github.com/crussella0129/Animus_Periapsis/actions/runs/42867476706), event `pull_request`, head `bbffce6`, the tested head, attempt 1, concluded `success`.
 
 | Job | Conclusion | Started → completed (UTC) | Job time |
 |---|---|---|---|
-| `cargo ci (windows-latest)` (129977556677) | success | 16:48:58 → 17:05:15 | 16 min 17 s |
-| `cargo ci (ubuntu-latest)` (129977557370) | success | 16:48:58 → 16:55:45 | 6 min 47 s |
-| `lint (windows-latest)` (129977557161) | success | 16:48:58 → 16:49:39 | 41 s |
-| `lint (ubuntu-latest)` (129977557304) | success | 16:48:58 → 16:49:20 | 22 s |
-| `cargo deny check` (129977557361) | success | 16:48:58 → 16:49:14 | 16 s |
+| `cargo ci (windows-latest)` (130009567485) | success | 17:41:16 → 17:58:07 | 16 min 51 s |
+| `cargo ci (ubuntu-latest)` (130009567461) | success | 17:41:16 → 17:49:49 | 8 min 33 s |
+| `lint (windows-latest)` (130009567409) | success | 17:41:16 → 17:42:02 | 46 s |
+| `lint (ubuntu-latest)` (130009566813) | success | 17:41:16 → 17:41:35 | 19 s |
+| `cargo deny check` (130009567292) | success | 17:41:16 → 17:41:28 | 12 s |
 
-- **Totals.** Windows: `test: 37 units, 587 passed, 0 failed, 0 ignored`. Linux: `test: 37 units, 589 passed, 0 failed, 0 ignored`. Both end `ci: all 6 steps passed`, and both equal the local totals. `cargo deny check` printed `advisories ok, bans ok, licenses ok, sources ok`.
-- **Runners.** `windows-2025-vs2026` 20261103.298.1 and `ubuntu-26.04` 20261101.186.1, the images Sprint 5's runs used. Both `cargo ci` jobs restored their build cache.
-- **Time** (one sample each, not INT-0003 AC-11's three). The Windows suite took 16 min 17 s: under the criterion's 20 minutes, over its aim of 15. Sprint 5's last pull request run took 16 min 19 s there, with 501 tests. The Linux suite took 6 min 47 s.
-- **An earlier run.** Run 42856495316 started at the first push, head `80a3e7e`. The push of `4152526` replaced it, as the workflow intends for a pull request: its Windows suite was cancelled after ten minutes, and its other four jobs had already succeeded.
+- **Totals.** Windows: `test: 37 units, 588 passed, 0 failed, 0 ignored`. Linux: `test: 37 units, 590 passed, 0 failed, 0 ignored`. Both end `ci: all 6 steps passed`, and both equal the local totals. `cargo deny check` printed `advisories ok, bans ok, licenses ok, sources ok`.
+- **Runners.** `windows-2025-vs2026` 20261103.298.1 and `ubuntu-26.04` 20261101.186.1, the images Sprint 5's runs used. Both `cargo ci` jobs restored their build cache. The Linux runner is not root: the test that closes directories by their mode asserts that, and passed.
+- **Time** (one sample each, not INT-0003 AC-11's three). The Windows suite took 16 min 51 s: under the criterion's 20 minutes, over its aim of 15. Sprint 5's last pull request run took 16 min 19 s there, with 501 tests. The Linux suite took 8 min 33 s.
+- **Earlier runs of this pull request**, each at a head that a later push replaced:
+  - run 42856495316, head `80a3e7e`: the push of `4152526` cancelled its Windows suite after ten minutes, as the workflow intends for a pull request; its other four jobs had already succeeded;
+  - run 42858372557, head `4152526`: `success` in all five jobs, with 587 and 589 tests; its Windows suite took 16 min 17 s and its Linux suite 6 min 47 s.
 
 **`dispatch_runs_on_dev` (T-001): yes.** Run 42825642596, event `workflow_dispatch`, `dev` at `b0675f6`, five jobs, all `success`. Its record is [ci-sprint5.md](ci-sprint5.md).
 
