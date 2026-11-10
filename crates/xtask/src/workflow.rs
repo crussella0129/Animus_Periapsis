@@ -9,26 +9,40 @@ struct Node<'a> {
     children: Vec<Node<'a>>,
 }
 
-/// What the workflow lacks against the T-007 clause; empty when it meets
-/// every point.
+/// What the workflow lacks against the T-007 clause, as Sprint 5 T-004
+/// revised it; empty when it meets every point.
 pub fn problems(workflow: &str) -> Vec<String> {
     let top = parse(workflow);
     let mut problems = Vec::new();
-    let branches = under(&top, &["on", "push", "branches"])
-        .map(list)
-        .unwrap_or_default();
-    for branch in ["dev", "main"] {
-        if !branches.contains(&branch) {
-            problems.push(format!("push does not trigger on {branch}"));
-        }
-    }
-    // GitHub applies branch patterns in order, so a later `!` pattern can
-    // exclude a branch an earlier one names.
-    if branches.iter().any(|branch| branch.starts_with('!')) {
-        problems.push("push excludes branches with a `!` pattern".to_owned());
+    // CI runs on pushes to `main` only: `dev` is built through its pull
+    // request (INT-0003 AC-2).
+    match under(&top, &["on", "push"]) {
+        None => problems.push("push does not trigger on main".to_owned()),
+        Some(push) => match field(&push.children, "branches") {
+            None => problems.push("push has no branch list".to_owned()),
+            Some(branches) => {
+                let branches = list(branches);
+                if !branches.contains(&"main") {
+                    problems.push("push does not trigger on main".to_owned());
+                }
+                // GitHub applies branch patterns in order, so a later `!`
+                // pattern can exclude a branch an earlier one names.
+                if branches.iter().any(|branch| branch.starts_with('!')) {
+                    problems.push("push excludes branches with a `!` pattern".to_owned());
+                }
+                for branch in branches.iter().filter(|branch| **branch != "main") {
+                    problems.push(format!(
+                        "push triggers on another branch or a pattern: {branch}"
+                    ));
+                }
+            }
+        },
     }
     if under(&top, &["on", "pull_request"]).is_none() {
         problems.push("there is no pull_request trigger".to_owned());
+    }
+    if under(&top, &["on", "workflow_dispatch"]).is_none() {
+        problems.push("there is no workflow_dispatch trigger".to_owned());
     }
     // A filter can keep a trigger from ever firing, so none is allowed; a
     // `pull_request` branch list must name both branches.
@@ -62,13 +76,37 @@ pub fn problems(workflow: &str) -> Vec<String> {
             problems.push("pull_request excludes branches with a `!` pattern".to_owned());
         }
     }
+    problems.extend(concurrency_problems(&top));
+    // A job's own concurrency would cancel or queue jobs apart from the
+    // workflow's rule.
+    let jobs_list = under(&top, &["jobs"]).map_or(&[][..], |jobs| jobs.children.as_slice());
+    if jobs_list
+        .iter()
+        .any(|job| field(&job.children, "concurrency").is_some())
+    {
+        problems.push("a job sets its own concurrency".to_owned());
+    }
     if field(&top, "defaults").is_some() {
         problems.push("the workflow sets step defaults".to_owned());
     }
     let jobs = under(&top, &["jobs"]).map_or(&[][..], |jobs| jobs.children.as_slice());
-    if !jobs.iter().any(runs_ci_on_both_platforms) {
+    if !jobs
+        .iter()
+        .any(|job| runs_on_both_platforms(job, &[CARGO_CI]))
+    {
         problems.push(
             "no job runs `cargo ci` on a matrix of ubuntu-latest and windows-latest".to_owned(),
+        );
+    }
+    let lint = |job: &Node| {
+        runs_on_both_platforms(job, &[FMT, CLIPPY])
+            && !steps(job).any(|(_, entries)| entries.contains(&("run", CARGO_CI)))
+    };
+    if !jobs.iter().any(lint) {
+        problems.push(
+            "no lint job of its own runs fmt and Clippy on a matrix of ubuntu-latest and \
+             windows-latest"
+                .to_owned(),
         );
     }
     if !field(jobs, "deny").is_some_and(runs_deny_on_ubuntu) {
@@ -79,6 +117,41 @@ pub fn problems(workflow: &str) -> Vec<String> {
     }
     if handles_failure_in_shell(workflow) {
         problems.push("a command handles its own failure with `||` or `set +e`".to_owned());
+    }
+    problems
+}
+
+/// The suite, and the two lint commands (INT-0003 AC-4), as the jobs run them.
+const CARGO_CI: &str = "cargo ci";
+const FMT: &str = "cargo fmt --all --check";
+const CLIPPY: &str = "cargo clippy --workspace --all-targets --locked -- -D warnings";
+
+/// The only concurrency group accepted: one group per pull request, and one
+/// per commit for every other event, so no push to `main` shares a group.
+const GROUP: &str = "ci-${{ github.ref }}-${{ github.event_name == 'pull_request' || github.sha }}";
+
+/// The only `cancel-in-progress` value accepted: a newer push to a pull
+/// request cancels the run it replaces, and nothing else is cancelled.
+const CANCEL_PULL_REQUESTS: &str = "${{ github.event_name == 'pull_request' }}";
+
+/// The top-level `concurrency` block: a group that keeps each pull request
+/// apart (`github.ref`) and gives each push its own group (`github.sha`), and
+/// cancelling for pull-request runs only (INT-0003 AC-2).
+fn concurrency_problems(top: &[Node]) -> Vec<String> {
+    let Some(concurrency) = field(top, "concurrency") else {
+        return vec!["there is no top-level concurrency".to_owned()];
+    };
+    let mut problems = Vec::new();
+    if field(&concurrency.children, "group").map(value_of) != Some(GROUP) {
+        problems.push(format!("the concurrency group is not exactly {GROUP}"));
+    }
+    if field(&concurrency.children, "cancel-in-progress").map(value_of)
+        != Some(CANCEL_PULL_REQUESTS)
+    {
+        problems.push(format!(
+            "concurrency does not cancel exactly the superseded pull-request runs \
+             (cancel-in-progress: {CANCEL_PULL_REQUESTS})"
+        ));
     }
     problems
 }
@@ -120,10 +193,18 @@ fn outside_expressions(line: &str) -> String {
     shell
 }
 
+/// Whether a step's entries leave it unconditional and running where and how
+/// it says: no `if:`, `working-directory` or `shell`.
+fn plain(entries: &[(&str, &str)]) -> bool {
+    !entries
+        .iter()
+        .any(|&(key, _)| ["if", "working-directory", "shell"].contains(&key))
+}
+
 /// A job whose matrix holds both platforms and nothing that adds or removes a
-/// leg, that runs on the matrix's platform, and whose own steps run
-/// `cargo ci`. Neither the job nor that step may carry an `if:`.
-fn runs_ci_on_both_platforms(job: &Node) -> bool {
+/// leg, that runs on the matrix's platform, sets no step defaults, and whose
+/// own plain steps run each of `commands`. The job carries no `if:`.
+fn runs_on_both_platforms(job: &Node, commands: &[&str]) -> bool {
     let matrix = under(&job.children, &["strategy", "matrix"]);
     let os = matrix
         .and_then(|matrix| field(&matrix.children, "os"))
@@ -136,59 +217,49 @@ fn runs_ci_on_both_platforms(job: &Node) -> bool {
         && os.contains(&"windows-latest")
         && fixed
         && unconditional(&job.children)
+        && field(&job.children, "defaults").is_none()
         && runs_on(job) == Some("${{ matrix.os }}")
-        && steps(job).any(|(_, entries)| {
-            entries.contains(&("run", "cargo ci")) && !entries.iter().any(|&(key, _)| key == "if")
+        && commands.iter().all(|command| {
+            steps(job).any(|(_, entries)| entries.contains(&("run", command)) && plain(&entries))
         })
 }
 
-/// A job on ubuntu-latest whose own steps run every cargo-deny check
-/// (advisories, bans, licences and sources) on this workspace: cargo-deny's
-/// action with its defaults, or a plain `cargo deny check` command. A step
-/// that only installs cargo-deny, or narrows what it checks, does not count.
-/// Neither the job nor that step may carry an `if:`, and neither may change
-/// where or how the step runs (`defaults`, `working-directory`, `shell`).
+/// A job on ubuntu-latest whose own steps install cargo-deny with
+/// `taiki-e/install-action` (checksum verified, which may not be turned off,
+/// and downloads retried) and then
+/// run a plain `cargo deny check`, which runs every check (advisories, bans,
+/// licences and sources) on this workspace. A check that narrows what it
+/// checks does not count. Neither the job nor those steps may carry an `if:`,
+/// and none may change where or how a step runs (`defaults`,
+/// `working-directory`, `shell`). cargo-deny's own action is not accepted:
+/// its unchecked download failed Sprint 4's checkpoint.
 fn runs_deny_on_ubuntu(job: &Node) -> bool {
+    let jobs_steps: Vec<_> = steps(job).collect();
+    let install = jobs_steps.iter().position(|(step, entries)| {
+        plain(entries)
+            && entries.iter().any(|&(key, value)| {
+                key == "uses"
+                    && value
+                        .to_ascii_lowercase()
+                        .starts_with("taiki-e/install-action@")
+            })
+            && field(&step.children, "with").is_some_and(|with| {
+                let tool = field(&with.children, "tool").map(value_of);
+                let checksum = field(&with.children, "checksum").map(value_of);
+                tool.is_some_and(|tool| tool == "cargo-deny" || tool.starts_with("cargo-deny@"))
+                    && matches!(checksum, None | Some("true"))
+            })
+    });
+    let check = jobs_steps.iter().position(|(_, entries)| {
+        plain(entries)
+            && entries
+                .iter()
+                .any(|&(key, value)| key == "run" && runs_deny_check(value))
+    });
     runs_on(job) == Some("ubuntu-latest")
         && unconditional(&job.children)
         && field(&job.children, "defaults").is_none()
-        && steps(job).any(|(step, entries)| {
-            let keys = |key: &str| entries.iter().any(|&(found, _)| found == key);
-            !["if", "working-directory", "shell"].into_iter().any(keys)
-                && entries.iter().any(|&(key, value)| match key {
-                    "uses" => {
-                        value
-                            .to_ascii_lowercase()
-                            .starts_with("embarkstudios/cargo-deny-action@")
-                            && match field(&step.children, "with") {
-                                // Inputs are read only as a block under the step.
-                                Some(with) => {
-                                    value_of(with).is_empty() && keeps_every_check(&with.children)
-                                }
-                                None => !keys("with"),
-                            }
-                    }
-                    "run" => runs_deny_check(value),
-                    _ => false,
-                })
-        })
-}
-
-/// cargo-deny's log levels. The action passes `log-level` to cargo-deny
-/// word by word, so any other value could add arguments.
-const LOG_LEVELS: [&str; 5] = ["error", "warn", "info", "debug", "trace"];
-
-/// Whether the action's `with:` inputs keep the defaults that decide what is
-/// checked: `command` exactly `check`, `arguments` exactly `--all-features`,
-/// and no other input but a plain `log-level`. Naming checks, another
-/// manifest or other arguments would narrow the check.
-fn keeps_every_check(inputs: &[Node]) -> bool {
-    inputs.iter().all(|input| match entry(input.text) {
-        Some(("command", value)) => value == "check",
-        Some(("arguments", value)) => value == "--all-features",
-        Some(("log-level", value)) => LOG_LEVELS.contains(&value),
-        _ => false,
-    })
+        && matches!((install, check), (Some(install), Some(check)) if install < check)
 }
 
 /// Flags that leave what `cargo deny check` checks, and where, unchanged.
@@ -339,17 +410,29 @@ fn workflow_forms_read_alike() {
 'on':
   push:
     branches:
-      - \"dev\"
-      - main
+      - \"main\"
   pull_request:
+  workflow_dispatch:
+concurrency:
+  group: \"ci-${{ github.ref }}-${{ github.event_name == 'pull_request' || github.sha }}\"
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
-  ci:
-    name: ${{ github.head_ref || 'suite' }}
+  lint:
     strategy:
       matrix:
         os:
         - ubuntu-latest
         - windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+    - run: 'cargo fmt --all --check'
+    - name: Clippy
+      run: cargo clippy --workspace --all-targets --locked -- -D warnings
+  ci:
+    name: ${{ github.head_ref || 'suite' }}
+    strategy:
+      matrix:
+        os: [\"ubuntu-latest\", windows-latest]
     runs-on: ${{ matrix.os }}  # each platform
     steps:
     - uses: actions/checkout@v4
@@ -359,13 +442,18 @@ jobs:
   deny:
     runs-on: \"ubuntu-latest\"
     steps:
-      - run: cargo deny --all-features check
-      - uses: embarkstudios/cargo-deny-action@v2
+      - uses: Taiki-E/install-action@v2
         with:
-          command: 'check'
-          log-level: warn
+          tool: 'cargo-deny@0.20.2'
+      - run: cargo deny --all-features check
 ";
     assert_eq!(problems(workflow), Vec::<String>::new());
-    let develop = workflow.replace("- \"dev\"", "- develop");
-    assert_eq!(problems(&develop), ["push does not trigger on dev"]);
+    let develop = workflow.replace("- \"main\"", "- develop");
+    assert_eq!(
+        problems(&develop),
+        [
+            "push does not trigger on main",
+            "push triggers on another branch or a pattern: develop"
+        ]
+    );
 }

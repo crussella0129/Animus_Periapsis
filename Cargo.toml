@@ -31,3 +31,13 @@ workspace = { path = "crates/workspace" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+
+# Tests build optimised: the simulation matrices run several times faster, and
+# debug assertions and overflow checks keep their `dev` defaults (on). This is
+# the only profile setting, which `cargo ci`'s pin test checks (INT-0003
+# AC-11, Consequences).
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

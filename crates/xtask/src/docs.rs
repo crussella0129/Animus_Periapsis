@@ -13,7 +13,7 @@ fn repo_file(path: &str) -> String {
 
 /// Systems the Book's intents adopt or evaluate, the owner's projects and the
 /// third-party test data. Completeness beyond this list is the owner's review.
-const CREDITED: [&str; 36] = [
+const CREDITED: [&str; 37] = [
     "Jujutsu",
     "Mercurial",
     "Sapling",
@@ -50,6 +50,7 @@ const CREDITED: [&str; 36] = [
     "CubiKan",
     "array-test",
     "BLAKE3 test vectors",
+    "nextest",
 ];
 
 /// The owner's original README paragraphs, as of commit `620f99c`, kept

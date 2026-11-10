@@ -93,6 +93,34 @@ fn hostile_small_element_count_reserves_nothing() {
     );
 }
 
+/// What a decoder that trusts a hostile count would do: reserve room for
+/// every declared element, then fail on the first one.
+fn reserve_then_fail(count: u64) -> Result<Vec<u64>, DecodeError> {
+    let mut elements = Vec::with_capacity(count as usize);
+    if count > 1 {
+        return Err(DecodeError::VarintOverflow { at: 3 });
+    }
+    elements.push(count);
+    Ok(elements)
+}
+
+#[test]
+fn a_reservation_on_the_error_path_is_measured() {
+    // The negative control for `rejected_cheaply` (Sprint 5 T-002). Tests now
+    // build optimised, and an optimiser may delete an allocation that is never
+    // used. If it deleted this one, a reserving decoder would pass every test
+    // above. No `black_box` or other barrier is used, so the control is
+    // optimised exactly as a decoder would be.
+    let mut result = None;
+    let info = allocation_counter::measure(|| result = Some(reserve_then_fail(COUNT)));
+    assert_eq!(result, Some(Err(DecodeError::VarintOverflow { at: 3 })));
+    assert!(
+        info.bytes_max >= COUNT * 8,
+        "reserving {COUNT} elements held only {} bytes of heap",
+        info.bytes_max
+    );
+}
+
 #[test]
 fn valid_vec_grows_as_it_decodes() {
     let hashes: Vec<HashRef> = (0..3_000u32)

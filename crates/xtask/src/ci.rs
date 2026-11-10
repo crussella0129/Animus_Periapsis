@@ -8,13 +8,16 @@ use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
-use crate::{policy, reach};
+use crate::{policy, reach, units};
 
 /// What a step does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     /// Runs `cargo` with these arguments at the workspace root.
     Cargo(&'static [&'static str]),
+    /// Builds every test executable once, then runs the test targets as
+    /// units, several at a time (`units`, Sprint 5 T-003).
+    Test,
     /// Runs the policy rules in-process.
     Policy,
     /// Checks the Book in-process.
@@ -51,7 +54,7 @@ pub const STEPS: [Step; 6] = [
     },
     Step {
         name: "test",
-        action: Action::Cargo(&["test", "--workspace", "--locked"]),
+        action: Action::Test,
     },
     Step {
         name: "reach",
@@ -96,17 +99,18 @@ pub enum Outcome {
 }
 
 /// Runs every step, even after a failure, printing one line per step, and
-/// returns the names of the failed steps.
+/// returns the names of the failed steps. A step may write its own output to
+/// `out` before its line.
 pub fn run_with(
     steps: &[Step],
     out: &mut dyn Write,
-    mut execute: impl FnMut(&Step) -> Outcome,
+    mut execute: impl FnMut(&Step, &mut dyn Write) -> Outcome,
 ) -> Vec<&'static str> {
     let mut failed = Vec::new();
     for step in steps {
         // Child processes write to the same terminal; keep the lines in order.
         out.flush().ok();
-        match execute(step) {
+        match execute(step, out) {
             Outcome::Pass => {
                 writeln!(out, "PASS {}", step.name).ok();
             }
@@ -134,9 +138,9 @@ pub fn finish(failed: &[&str], out: &mut dyn Write) -> u8 {
 /// Runs the suite at `root` and returns the exit code.
 pub fn run(root: &Path, out: &mut dyn Write) -> u8 {
     let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
-    let failed = run_with(&STEPS, out, |step| {
+    let failed = run_with(&STEPS, out, |step, out| {
         prepare(root, step);
-        execute_with(root, step, |args| cargo_command(&cargo, root, args))
+        execute_with(root, step, out, |args| cargo_command(&cargo, root, args))
     });
     finish(&failed, out)
 }
@@ -201,16 +205,37 @@ fn scrubbed(set: impl IntoIterator<Item = OsString>) -> BTreeSet<OsString> {
 /// for the `reach` step (INT-0005 AC-6). Kept apart from `execute_with`, so
 /// tests that run a step's command at the real root clear nothing.
 fn prepare(root: &Path, step: &Step) {
-    if step.action == Action::Cargo(&["test", "--workspace", "--locked"]) {
+    if step.action == Action::Test {
         reach::clear(root);
     }
 }
 
 /// Runs one step at `root`. A cargo step runs the command `cargo` builds from
 /// the step's arguments: `cargo_command` with the cargo that started
-/// `cargo ci` (or `cargo` from the path), or whatever a test builds.
-fn execute_with(root: &Path, step: &Step, cargo: impl Fn(&[&str]) -> Command) -> Outcome {
+/// `cargo ci` (or `cargo` from the path), or whatever a test builds. The test
+/// step builds all its commands with `cargo` too, and writes their captured
+/// output to `out`; other cargo steps print straight to the terminal.
+fn execute_with(
+    root: &Path,
+    step: &Step,
+    out: &mut dyn Write,
+    cargo: impl Fn(&[&str]) -> Command + Sync,
+) -> Outcome {
     match step.action {
+        Action::Test => {
+            let problems = units::execute(
+                &units::discover(root),
+                units::slots(),
+                out,
+                &cargo,
+                &units::run_command,
+            );
+            if problems.is_empty() {
+                Outcome::Pass
+            } else {
+                Outcome::Fail(problems.join("; "))
+            }
+        }
         Action::Cargo(args) => match cargo(args).status() {
             Ok(status) if status.success() => Outcome::Pass,
             Ok(status) => Outcome::Fail(format!("cargo {} exited with {status}", args.join(" "))),
@@ -243,12 +268,12 @@ fn execute_with(root: &Path, step: &Step, cargo: impl Fn(&[&str]) -> Command) ->
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
     use std::collections::BTreeSet;
     use std::ffi::{OsStr, OsString};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
+    use std::sync::Mutex;
 
     use super::{
         Action, Outcome, STEPS, Step, cargo_command, execute_with, finish, prepare, run, run_with,
@@ -318,6 +343,15 @@ fn inherits_no_stripped_variable() {
             "version = 4\n\n[[package]]\nname = \"probe\"\nversion = \"0.0.0\"\n",
         );
         write("src/lib.rs", PROBE);
+        // An integration test too, so a `--test` unit also runs under the
+        // scrubbed environment (Sprint 5 T-003).
+        write(
+            "tests/probe.rs",
+            &PROBE.replace(
+                "fn inherits_no_stripped_variable",
+                "fn probe_inherits_no_stripped_variable",
+            ),
+        );
         write(
             "docs/.sprint-loop-book",
             "schema-version: 2\ntyped-acceptance: 1\n",
@@ -362,7 +396,7 @@ fn inherits_no_stripped_variable() {
             },
             Step {
                 name: "test",
-                action: Action::Cargo(&["test", "--workspace", "--locked"]),
+                action: Action::Test,
             },
             Step {
                 name: "reach",
@@ -400,16 +434,16 @@ fn inherits_no_stripped_variable() {
                 "{}",
                 step.name
             );
-            let handed = RefCell::new(Vec::new());
-            let outcome = execute_with(&root, &step, |passed| {
-                handed.borrow_mut().push(owned(passed));
+            let handed = Mutex::new(Vec::new());
+            let outcome = execute_with(&root, &step, &mut std::io::sink(), |passed| {
+                handed.lock().unwrap().push(owned(passed));
                 // A command that passes, so only the arguments are at stake.
                 let mut version = Command::new(env!("CARGO"));
                 version.arg("--version").stdout(Stdio::null());
                 version
             });
             assert_eq!(
-                (outcome, handed.into_inner()),
+                (outcome, handed.into_inner().unwrap()),
                 (Outcome::Pass, vec![owned(args)]),
                 "{}",
                 step.name
@@ -438,7 +472,10 @@ fn inherits_no_stripped_variable() {
         };
 
         let version = step(Action::Cargo(&["--version"]));
-        assert_eq!(execute_with(&root, &version, quiet(cargo)), Outcome::Pass);
+        assert_eq!(
+            execute_with(&root, &version, &mut std::io::sink(), quiet(cargo)),
+            Outcome::Pass
+        );
 
         const UNKNOWN: &[&str] = &["no-such-subcommand", "--locked"];
         let status = cargo_command(OsStr::new(cargo), &root, UNKNOWN)
@@ -447,7 +484,12 @@ fn inherits_no_stripped_variable() {
             .status;
         assert!(!status.success(), "cargo must reject {UNKNOWN:?}");
         assert_eq!(
-            execute_with(&root, &step(Action::Cargo(UNKNOWN)), quiet(cargo)),
+            execute_with(
+                &root,
+                &step(Action::Cargo(UNKNOWN)),
+                &mut std::io::sink(),
+                quiet(cargo)
+            ),
             Outcome::Fail(format!(
                 "cargo no-such-subcommand --locked exited with {status}"
             ))
@@ -461,11 +503,21 @@ fn inherits_no_stripped_variable() {
             .status;
         assert_eq!(status.code(), Some(1), "cargo must exit 1 on {BAD_FLAG:?}");
         assert_eq!(
-            execute_with(&root, &step(Action::Cargo(BAD_FLAG)), quiet(cargo)),
+            execute_with(
+                &root,
+                &step(Action::Cargo(BAD_FLAG)),
+                &mut std::io::sink(),
+                quiet(cargo)
+            ),
             Outcome::Fail(format!("cargo --no-such-flag exited with {status}"))
         );
 
-        let missing = execute_with(&root, &version, quiet("no-such-cargo-program"));
+        let missing = execute_with(
+            &root,
+            &version,
+            &mut std::io::sink(),
+            quiet("no-such-cargo-program"),
+        );
         let Outcome::Fail(reason) = missing else {
             panic!("a program that does not exist must fail the step");
         };
@@ -473,13 +525,13 @@ fn inherits_no_stripped_variable() {
 
         for action in [Action::Policy, Action::Book] {
             assert_eq!(
-                execute_with(&root, &step(action), quiet(cargo)),
+                execute_with(&root, &step(action), &mut std::io::sink(), quiet(cargo)),
                 Outcome::Pass
             );
             let nowhere = root.join("no-such-workspace");
             assert!(
                 matches!(
-                    execute_with(&nowhere, &step(action), quiet(cargo)),
+                    execute_with(&nowhere, &step(action), &mut std::io::sink(), quiet(cargo)),
                     Outcome::Fail(_)
                 ),
                 "{action:?} must fail without a workspace"
@@ -514,7 +566,7 @@ fn inherits_no_stripped_variable() {
                 format!("# INT-0001 — X\n\n## Acceptance criteria\n{criteria}"),
             )
             .unwrap();
-            outcomes.push(execute_with(&root, &book, |_| {
+            outcomes.push(execute_with(&root, &book, &mut std::io::sink(), |_| {
                 panic!("the Book step runs no cargo")
             }));
         }
@@ -541,7 +593,11 @@ fn inherits_no_stripped_variable() {
             name: "policy",
             action: Action::Policy,
         };
-        let execute = || execute_with(&root, &policy, |_| panic!("the policy step runs no cargo"));
+        let execute = || {
+            execute_with(&root, &policy, &mut std::io::sink(), |_| {
+                panic!("the policy step runs no cargo")
+            })
+        };
         let mut outcomes = vec![execute()];
         fs::write(root.join(".gitattributes"), "* text=auto eol=lf\n").unwrap();
         outcomes.push(execute());
@@ -587,7 +643,7 @@ fn inherits_no_stripped_variable() {
         ];
         let mut ran = Vec::new();
         let mut out = Vec::new();
-        let failed = run_with(&steps, &mut out, |step| {
+        let failed = run_with(&steps, &mut out, |step, _| {
             ran.push(step.name);
             match step.name {
                 "two" => Outcome::Fail("could not run cargo-no-such-tool".to_owned()),
@@ -642,11 +698,36 @@ sprint 1
     /// compiled or which toolchain compiles it.
     #[test]
     fn test_step_removes_golden_create() {
+        // Every command a step runs: each cargo step's own, and every command
+        // the test step builds, its pre-build and each unit.
+        let mut commands: Vec<(&str, Command)> = Vec::new();
         for step in STEPS {
-            let Action::Cargo(args) = step.action else {
-                continue;
-            };
-            let command = cargo_command(OsStr::new("cargo"), Path::new("."), args);
+            if let Action::Cargo(args) = step.action {
+                commands.push((
+                    step.name,
+                    cargo_command(OsStr::new("cargo"), Path::new("."), args),
+                ));
+            }
+        }
+        let built = Mutex::new(Vec::new());
+        let units = crate::units::discover(&repo_root());
+        crate::units::execute(
+            &units,
+            4,
+            &mut std::io::sink(),
+            &|args| cargo_command(OsStr::new("cargo"), Path::new("."), args),
+            &|command| {
+                built.lock().unwrap().push(command);
+                crate::units::Ran {
+                    ok: true,
+                    output: String::new(),
+                }
+            },
+        );
+        let built = built.into_inner().unwrap();
+        assert_eq!(built.len(), units.len() + 1, "the pre-build and every unit");
+        commands.extend(built.into_iter().map(|command| ("test", command)));
+        for (step, command) in commands {
             for name in [
                 "PERI_GOLDEN_CREATE",
                 "PERI_WRITER_CHILD",
@@ -663,7 +744,7 @@ sprint 1
                 let removed = command
                     .get_envs()
                     .any(|(key, value)| key == OsStr::new(name) && value.is_none());
-                assert!(removed, "the {} step must not inherit {name}", step.name);
+                assert!(removed, "the {step} step must not inherit {name}");
             }
         }
     }
@@ -687,7 +768,11 @@ sprint 1
         )
         .unwrap();
         let child = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "ci::tests::run_passes_a_clean_workspace"])
+            .args([
+                "--exact",
+                "ci::tests::run_passes_a_clean_workspace",
+                "--nocapture",
+            ])
             .env("XTASK_CI_WORKSPACE", &root)
             .env("PERI_GOLDEN_CREATE", "1")
             .env("PROPTEST_CASES", "1")
@@ -705,7 +790,8 @@ sprint 1
         assert!(
             child.status.success()
                 && stdout.contains("test ci::tests::run_passes_a_clean_workspace ... ok")
-                && stdout.contains("test inherits_no_stripped_variable ... ok"),
+                && stdout.contains("test inherits_no_stripped_variable ... ok")
+                && stdout.contains("test probe_inherits_no_stripped_variable ... ok"),
             "{stdout}{}",
             String::from_utf8_lossy(&child.stderr)
         );
@@ -722,14 +808,39 @@ sprint 1
         };
         let mut out = Vec::new();
         let code = run(Path::new(&root), &mut out);
+        let out = String::from_utf8(out).unwrap();
+        // The test step's unit output, which now sits among the step lines,
+        // reaches the parent through this test's own output.
+        println!("{out}");
+        let steps: Vec<&str> = out
+            .lines()
+            .filter(|line| line.starts_with("PASS ") || line.starts_with("FAIL "))
+            .collect();
         assert_eq!(
-            (code, String::from_utf8(out).unwrap()),
+            (code, steps, out.lines().last()),
             (
                 0,
-                "PASS fmt\nPASS clippy\nPASS test\nPASS reach\nPASS policy\nPASS book\nci: all 6 steps passed\n"
-                    .to_owned()
+                vec![
+                    "PASS fmt",
+                    "PASS clippy",
+                    "PASS test",
+                    "PASS reach",
+                    "PASS policy",
+                    "PASS book"
+                ],
+                Some("ci: all 6 steps passed")
             )
         );
+        for line in [
+            "test inherits_no_stripped_variable ... ok",
+            "test probe_inherits_no_stripped_variable ... ok",
+            // The pre-build's own report found both executables, the probe
+            // library's and `tests/probe.rs`'s, so the unrun check checked
+            // something real (code review CR-04).
+            "test: 2 test executables built, 2 run",
+        ] {
+            assert!(out.contains(line), "{line}");
+        }
     }
 
     #[test]
@@ -776,77 +887,213 @@ sprint 1
         assert_eq!(scrubbed(set.map(OsString::from)), names);
     }
 
+    /// `workflow` with `from` replaced by `to` inside job `job` only.
+    fn in_job(workflow: &str, job: &str, from: &str, to: &str) -> String {
+        let start = workflow
+            .find(&format!("\n  {job}:\n"))
+            .unwrap_or_else(|| panic!("no job {job}"));
+        // The job ends at the next line at job depth: two spaces, then a
+        // letter.
+        let body = &workflow[start + 1..];
+        let end = body
+            .match_indices("\n  ")
+            .find(|&(at, _)| {
+                body[at + 3..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic())
+            })
+            .map_or(workflow.len(), |(at, _)| start + 1 + at);
+        let section = &workflow[start..end];
+        assert!(section.contains(from), "{from:?} is not in job {job}");
+        format!(
+            "{}{}{}",
+            &workflow[..start],
+            section.replace(from, to),
+            &workflow[end..]
+        )
+    }
+
     #[test]
     fn workflow_matches_ci_contract() {
         let workflow = repo_file(".github/workflows/ci.yml").replace("\r\n", "\n");
         assert_eq!(workflow::problems(&workflow), Vec::<String>::new());
 
+        const PUSH: &str = "    branches: [main]\n";
+        const PR: &str = "  pull_request:\n";
+        const INSTALL: &str = "      - uses: taiki-e/install-action@v2\n        with:\n          tool: cargo-deny@0.20.2\n";
+        const DENY: &str = "      - run: cargo deny check\n";
+        const MATRIX: &str = "        os: [ubuntu-latest, windows-latest]\n";
+        const CLIPPY: &str =
+            "      - run: cargo clippy --workspace --all-targets --locked -- -D warnings\n";
+
         // Each mutant breaks one point of the clause and must be caught.
         let without_ci = replace(&workflow, "      - run: cargo ci\n", "");
+        let without_install = replace(&workflow, INSTALL, "");
         let mutants = [
+            // Triggers (INT-0003 AC-2).
+            replace(&workflow, PUSH, "    branches: [dev, main]\n"),
+            replace(&workflow, PUSH, "    branches: ['**']\n"),
+            replace(&workflow, PUSH, "    branches: [develop]\n"),
+            replace(&workflow, PUSH, ""),
+            replace(&workflow, &format!("  push:\n{PUSH}"), ""),
+            replace(&workflow, "pull_request:", "pull_request_target:"),
+            replace(&workflow, "  workflow_dispatch:\n", ""),
+            // Concurrency.
             replace(
                 &workflow,
+                "concurrency:\n  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' || github.sha }}\n  \
+                 cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+                "",
+            ),
+            replace(
+                &workflow,
+                "  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' || github.sha }}\n",
+                "  group: ci\n",
+            ),
+            replace(
+                &workflow,
+                "  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' || github.sha }}\n",
+                "  group: ci-${{ github.ref }}\n",
+            ),
+            replace(
+                &workflow,
+                "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+                "  cancel-in-progress: true\n",
+            ),
+            // The suite on both platforms.
+            in_job(
+                &workflow,
+                "ci",
                 "runs-on: ${{ matrix.os }}",
                 "runs-on: ubuntu-latest",
             ),
+            format!("{}\n      - run: cargo ci\n", without_ci.trim_end()),
             replace(
                 &workflow,
-                "branches: [dev, main]",
-                "branches: [develop, main]",
+                "      - run: cargo ci\n",
+                "      - run: cargo ci\n        if: false\n",
             ),
-            replace(&workflow, "pull_request:", "pull_request_target:"),
-            format!("{}\n      - run: cargo ci\n", without_ci.trim_end()),
+            in_job(
+                &workflow,
+                "ci",
+                MATRIX,
+                &format!("{MATRIX}        exclude:\n          - os: windows-latest\n"),
+            ),
+            in_job(
+                &workflow,
+                "ci",
+                "    timeout-minutes: 30\n",
+                "    timeout-minutes: 30\n    continue-on-error: true\n",
+            ),
+            // The lint checks on both platforms (INT-0003 AC-4).
+            in_job(&workflow, "lint", MATRIX, "        os: [ubuntu-latest]\n"),
+            in_job(
+                &workflow,
+                "lint",
+                "runs-on: ${{ matrix.os }}",
+                "runs-on: ubuntu-latest",
+            ),
+            in_job(
+                &workflow,
+                "lint",
+                "    timeout-minutes: 30\n",
+                "    timeout-minutes: 30\n    if: false\n",
+            ),
+            replace(&workflow, CLIPPY, ""),
+            replace(&workflow, "      - run: cargo fmt --all --check\n", ""),
+            replace(&workflow, " -- -D warnings\n", "\n"),
+            in_job(
+                &workflow,
+                "lint",
+                MATRIX,
+                &format!("{MATRIX}        include:\n          - os: macos-latest\n"),
+            ),
+            replace(&workflow, CLIPPY, &format!("{}        if: false\n", CLIPPY)),
+            // The deny job (INT-0003 AC-3).
+            without_install.clone(),
+            in_job(
+                &without_install,
+                "lint",
+                CLIPPY,
+                &format!("{CLIPPY}{INSTALL}"),
+            ),
+            replace(&without_install, DENY, &format!("{DENY}{INSTALL}")),
+            replace(
+                &without_install,
+                DENY,
+                "      - uses: EmbarkStudios/cargo-deny-action@v2\n",
+            ),
+            replace(&workflow, "tool: cargo-deny@0.20.2", "tool: cargo-nextest"),
+            replace(&workflow, INSTALL, &format!("{INSTALL}        if: false\n")),
+            replace(&workflow, DENY, &format!("{DENY}        if: false\n")),
+            replace(&workflow, "  deny:\n", "  deny:\n    if: false\n"),
             format!(
                 "{}\n  other:\n    runs-on: ubuntu-latest\n    steps:\n      - run: cargo --version\n",
-                replace(
+                in_job(
                     &workflow,
+                    "deny",
                     "runs-on: ubuntu-latest",
                     "runs-on: windows-latest"
                 )
                 .trim_end()
             ),
+            // Code review fixes (CR-01, CR-02, CR-03, CR-07). First, no lint
+            // job of its own: fmt and Clippy moved into the suite's job.
+            format!(
+                "{}{}",
+                &workflow[..workflow.find("\n  lint:\n").unwrap()],
+                workflow[workflow.find("\n  ci:\n").unwrap()..].replace(
+                    "      - run: cargo ci\n",
+                    &format!(
+                        "      - run: cargo fmt --all --check\n{CLIPPY}      - run: cargo ci\n"
+                    )
+                )
+            ),
+            replace(
+                &workflow,
+                "  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' || github.sha }}\n",
+                "  group: ci-${{ github.ref }}-${{ github.event_name == 'push' || github.sha }}\n",
+            ),
+            in_job(
+                &workflow,
+                "ci",
+                "    timeout-minutes: 30\n",
+                "    timeout-minutes: 30\n    concurrency:\n      group: x-${{ github.ref }}\n      cancel-in-progress: true\n",
+            ),
+            replace(
+                &workflow,
+                "      - run: cargo ci\n",
+                "      - run: cargo ci\n        shell: cat {0}\n",
+            ),
+            in_job(
+                &workflow,
+                "ci",
+                "    timeout-minutes: 30\n",
+                "    timeout-minutes: 30\n    defaults:\n      run:\n        shell: cat {0}\n",
+            ),
+            replace(
+                &workflow,
+                CLIPPY,
+                &format!("{CLIPPY}        working-directory: crates/hash\n"),
+            ),
+            replace(
+                &workflow,
+                "          tool: cargo-deny@0.20.2\n",
+                "          tool: cargo-deny@0.20.2\n          checksum: false\n",
+            ),
+            replace(
+                &workflow,
+                "tool: cargo-deny@0.20.2",
+                "tool: cargo-deny-unrelated",
+            ),
+            // Commands that outlive their own failure.
             format!("{workflow}      - run: cargo deny check || true\n"),
             format!("{workflow}      - run: cargo deny check ||true\n"),
             format!("{workflow}      - run: cargo deny check || :\n"),
             format!("{workflow}      - run: cargo deny check || exit 0\n"),
             format!("{workflow}      - run: cargo deny check ||\n          true\n"),
             format!("{workflow}      - run: set +e\n"),
-            replace(
-                &workflow,
-                "uses: EmbarkStudios/cargo-deny-action@v2",
-                "uses: taiki-e/install-action@cargo-deny",
-            ),
-            replace(
-                &workflow,
-                "      - uses: EmbarkStudios/cargo-deny-action@v2\n",
-                "      - uses: EmbarkStudios/cargo-deny-action@v2\n        with:\n          command: fetch\n",
-            ),
-            replace(
-                &workflow,
-                "      - uses: EmbarkStudios/cargo-deny-action@v2\n",
-                "      - run: cargo deny fetch\n",
-            ),
-            replace(
-                &workflow,
-                "      - uses: EmbarkStudios/cargo-deny-action@v2\n",
-                "      - run: cargo deny fetch && echo check\n",
-            ),
-            replace(&workflow, "  deny:\n", "  deny:\n    if: false\n"),
-            replace(
-                &workflow,
-                "      - run: cargo ci\n",
-                "      - run: cargo ci\n        if: false\n",
-            ),
-            replace(
-                &workflow,
-                "        os: [ubuntu-latest, windows-latest]\n",
-                "        os: [ubuntu-latest, windows-latest]\n        exclude:\n          - os: windows-latest\n",
-            ),
-            replace(
-                &workflow,
-                "    runs-on: ${{ matrix.os }}\n",
-                "    runs-on: ${{ matrix.os }}\n    continue-on-error: true\n",
-            ),
         ];
         for mutant in mutants {
             assert!(
@@ -855,28 +1102,8 @@ sprint 1
             );
         }
 
-        // A deny step that narrows the checks, the workspace or the
+        // A deny check that narrows the checks, the workspace or the
         // configuration does not count as the deny job's check.
-        const DENY: &str = "      - uses: EmbarkStudios/cargo-deny-action@v2\n";
-        for narrowed in [
-            "command: check bans",
-            "command: check bans licenses sources",
-            "command-arguments: advisories",
-            "arguments: --exclude winnow",
-            "manifest-path: other/Cargo.toml",
-            "log-level: warn --exclude winnow",
-            "log-level: warn --exclude-dev",
-        ] {
-            let mutant = replace(
-                &workflow,
-                DENY,
-                &format!("{DENY}        with:\n          {narrowed}\n"),
-            );
-            assert!(
-                !workflow::problems(&mutant).is_empty(),
-                "this deny step must not count:\n{narrowed}"
-            );
-        }
         for narrowed in [
             "cargo deny check sources",
             "cargo deny check advisories bans",
@@ -884,6 +1111,8 @@ sprint 1
             "cargo deny check --config other.toml",
             "cargo deny --offline check",
             "cargo deny check check",
+            "cargo deny fetch",
+            "cargo deny fetch && echo check",
         ] {
             let mutant = replace(&workflow, DENY, &format!("      - run: {narrowed}\n"));
             assert!(
@@ -891,17 +1120,8 @@ sprint 1
                 "this deny step must not count:\n{narrowed}"
             );
         }
-        // Inputs the rule cannot read, and settings that change where or how
-        // the step runs.
+        // Settings that change where or how the check runs.
         for (from, to) in [
-            (
-                DENY,
-                "      - uses: EmbarkStudios/cargo-deny-action@v2\n        with: {command: check bans}\n",
-            ),
-            (
-                DENY,
-                "      - with:\n          command: check bans\n        uses: EmbarkStudios/cargo-deny-action@v2\n",
-            ),
             (
                 DENY,
                 "      - run: cargo deny check\n        working-directory: crates/hash\n",
@@ -911,8 +1131,8 @@ sprint 1
                 "      - run: cargo deny check\n        shell: cat {0}\n",
             ),
             (
-                "    runs-on: ubuntu-latest\n",
-                "    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: crates/hash\n",
+                "    timeout-minutes: 10\n",
+                "    timeout-minutes: 10\n    defaults:\n      run:\n        working-directory: crates/hash\n",
             ),
             (
                 "jobs:\n",
@@ -926,12 +1146,10 @@ sprint 1
             );
         }
         // A trigger filter can keep CI from ever running.
-        const PUSH: &str = "    branches: [dev, main]\n";
-        const PR: &str = "  pull_request:\n";
         for (from, filter) in [
             (PUSH, "    paths-ignore: ['**']\n"),
             (PUSH, "    paths: ['nothing/**']\n"),
-            (PUSH, "    branches-ignore: [dev, main]\n"),
+            (PUSH, "    branches-ignore: [main]\n"),
             (PR, "    types: [closed]\n"),
             (PR, "    paths-ignore: ['**']\n"),
             (PR, "    branches: [nothing]\n"),
@@ -946,10 +1164,7 @@ sprint 1
         }
         // A later `!` pattern excludes a branch the list names.
         for (from, to) in [
-            (
-                PUSH,
-                "    branches: [dev, main, '!dev', '!main']\n".to_owned(),
-            ),
+            (PUSH, "    branches: [main, '!main']\n".to_owned()),
             (PR, format!("{PR}    branches: [dev, main, '!**']\n")),
         ] {
             let mutant = replace(&workflow, from, &to);
@@ -963,11 +1178,8 @@ sprint 1
         let both = replace(&workflow, PR, &format!("{PR}    branches: [dev, main]\n"));
         assert_eq!(workflow::problems(&both), Vec::<String>::new());
 
-        // The forms of a full check: the action's defaults written out, and
-        // plain commands.
+        // The forms of a full check: plain commands.
         for full in [
-            "      - uses: EmbarkStudios/cargo-deny-action@v2\n        with:\n          command: check\n          \
-             arguments: --all-features\n          log-level: warn\n",
             "      - run: cargo deny check\n",
             "      - run: cargo deny --all-features --locked check\n",
         ] {
