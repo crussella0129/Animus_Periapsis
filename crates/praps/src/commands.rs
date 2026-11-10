@@ -39,7 +39,7 @@ pub fn run(command: &Command, args: &[&OsStr], out: &mut impl Write, err: &mut i
             }
         },
         Action::Init => init(dir(0), out, err),
-        Action::Fsck => fsck(dir(0), out, err),
+        Action::Verify => verify(dir(0), out, err),
         // The parser answers these two itself; they are here so that every
         // action has a body.
         Action::Help => {
@@ -214,7 +214,7 @@ fn status(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
     }
 }
 
-/// The store `fsck` checks: `DIR/.praps/store` when `DIR` holds a `.praps`
+/// The store `verify` checks: `DIR/.praps/store` when `DIR` holds a `.praps`
 /// entry, whatever state that store is in, so damage there is reported
 /// rather than hidden by checking `DIR` instead (code review CR-09);
 /// otherwise `DIR` itself, as a bare store.
@@ -229,13 +229,13 @@ fn store_dir(dir: &Path) -> PathBuf {
     }
 }
 
-fn fsck(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
+fn verify(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
     let store_dir = store_dir(dir);
     // `inspect`, not `open`: checking only reads, so it works on a read-only
     // store and changes nothing.
     let report = match Store::inspect(RealFs, &store_dir, HashAlg::DEFAULT).and_then(|s| s.fsck()) {
         Ok(report) => report,
-        Err(error) => return fail("fsck", dir, error, err),
+        Err(error) => return fail("verify", dir, error, err),
     };
     for leftover in &report.leftovers {
         let _ = writeln!(out, "{leftover}: left by an interrupted write (harmless)");

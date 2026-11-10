@@ -77,8 +77,8 @@ fn praps_end_to_end() {
         ok(&["status"], &root),
         ["M README.md", "A src/lib.rs", "D src/main.rs"]
     );
-    assert_eq!(ok(&["fsck"], &root), ["clean"]);
-    assert_eq!(ok(&["fsck", "project"], &dir), ["clean"]);
+    assert_eq!(ok(&["verify"], &root), ["clean"]);
+    assert_eq!(ok(&["verify", "project"], &dir), ["clean"]);
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -118,7 +118,7 @@ fn praps_status_reports_a_non_utf8_name() {
     // Twice: still reported, still untracked, still untouched.
     assert_eq!(ok(&["status"], &root).len(), 2);
     assert_eq!(fs::read(root.join(&name)).unwrap(), b"untouched");
-    assert_eq!(ok(&["fsck"], &root), ["clean"]);
+    assert_eq!(ok(&["verify"], &root), ["clean"]);
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -176,7 +176,7 @@ fn praps_status_reports_non_utf8_names_and_directories() {
         fs::read(root.join(&names[2].0).join("inner")).unwrap(),
         b"inside"
     );
-    assert_eq!(ok(&["fsck"], &root), ["clean"]);
+    assert_eq!(ok(&["verify"], &root), ["clean"]);
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -239,7 +239,7 @@ fn praps_history_end_to_end() {
         assert!(after.contains(line), "{line} was removed");
     }
     assert!(!root.join(".praps/working-copy").exists());
-    assert_eq!(ok(&["fsck"], &root), ["clean"]);
+    assert_eq!(ok(&["verify"], &root), ["clean"]);
     let _ = fs::remove_dir_all(&dir);
 }
 

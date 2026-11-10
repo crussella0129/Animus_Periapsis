@@ -20,7 +20,7 @@ pointer file: the op heads are the valid ops that no other valid op names as
 a parent, recomputed from `ops/` whenever they are needed.
 
 Files named `tmp-<16 hex digits>` are files being written. A crash can leave
-one behind; nothing reads them, and `praps fsck` lists them as harmless.
+one behind; nothing reads them, and `praps verify` lists them as harmless.
 
 ## The write sequence
 
@@ -60,7 +60,7 @@ the put checked was present, is durable too. `put_object` needs no separate
 re-sync, even for a reference another writer has not acknowledged. Closure
 then holds by induction over acknowledged puts. An object that a crash
 leaves behind unacknowledged, with a reference lost, is reachable from no op,
-and `fsck` lists it as a leftover, not as corruption.
+and `praps verify` lists it as a leftover, not as corruption.
 
 `commit_op` writes in another directory, `ops/`, so it re-syncs the view
 with `objects/` before writing the op. It also re-syncs each parent op with

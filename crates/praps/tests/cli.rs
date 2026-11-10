@@ -104,16 +104,16 @@ fn stdout(output: &Output) -> String {
 }
 
 #[test]
-fn fsck_exits_zero_on_a_healthy_store() {
+fn verify_exits_zero_on_a_healthy_store() {
     let repo = repo("healthy");
     let before = tree(&repo.dir);
-    let output = praps(&["fsck", "repo"], &repo.dir);
+    let output = praps(&["verify", "repo"], &repo.dir);
     assert_eq!(code(&output), 0, "{output:?}");
     assert_eq!(stdout(&output), "clean\n");
     // Checking changes nothing: the tree is the same, and a second run says
     // the same.
     assert_eq!(tree(&repo.dir), before);
-    assert_eq!(praps(&["fsck", "repo"], &repo.dir).stdout, output.stdout);
+    assert_eq!(praps(&["verify", "repo"], &repo.dir).stdout, output.stdout);
 }
 
 /// Every path under `dir` with its content (`None` for a directory).
@@ -136,14 +136,14 @@ fn tree(dir: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
 }
 
 #[test]
-fn fsck_without_dir_checks_the_current_directory() {
+fn verify_without_dir_checks_the_current_directory() {
     let repo = repo("cwd");
-    let output = praps(&["fsck"], &repo.dir.join("repo"));
+    let output = praps(&["verify"], &repo.dir.join("repo"));
     assert_eq!(code(&output), 0, "{output:?}");
 }
 
 #[test]
-fn fsck_lists_corrupt_files_and_exits_one() {
+fn verify_lists_corrupt_files_and_exits_one() {
     let repo = repo("corrupt");
     let root = repo.dir.join("repo");
     let op_path = root.join("ops").join(file_name(&repo.op));
@@ -155,7 +155,7 @@ fn fsck_lists_corrupt_files_and_exits_one() {
     let mut flipped = object_bytes.clone();
     flipped[4] ^= 0x01;
     fs::write(&object_path, &flipped).unwrap();
-    let output = praps(&["fsck", "repo"], &repo.dir);
+    let output = praps(&["verify", "repo"], &repo.dir);
     assert_eq!(code(&output), 1, "{output:?}");
     let text = stdout(&output);
     assert!(
@@ -170,13 +170,13 @@ fn fsck_lists_corrupt_files_and_exits_one() {
     // Restored, it is clean again.
     fs::write(&op_path, &op_bytes).unwrap();
     fs::write(&object_path, &object_bytes).unwrap();
-    assert_eq!(code(&praps(&["fsck", "repo"], &repo.dir)), 0);
+    assert_eq!(code(&praps(&["verify", "repo"], &repo.dir)), 0);
 
     // A crash's leftover temporary file is reported but is not corruption.
     RealFs
         .create_new(&root.join("ops").join("tmp-0000000000000000"))
         .unwrap();
-    let output = praps(&["fsck", "repo"], &repo.dir);
+    let output = praps(&["verify", "repo"], &repo.dir);
     assert_eq!(code(&output), 0, "{output:?}");
     assert!(
         stdout(&output).contains("tmp-0000000000000000: left by an interrupted write"),
@@ -185,14 +185,14 @@ fn fsck_lists_corrupt_files_and_exits_one() {
 }
 
 #[test]
-fn fsck_on_a_non_store_exits_one() {
+fn verify_on_a_non_store_exits_one() {
     let dir = claim("plain");
     fs::write(dir.join("a-file"), b"not a directory").unwrap();
     for target in ["nonexistent", ".", "a-file"] {
-        let output = praps(&["fsck", target], &dir);
+        let output = praps(&["verify", target], &dir);
         assert_eq!(code(&output), 1, "{target}: {output:?}");
         assert!(output.stdout.is_empty());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("praps fsck"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("praps verify"));
     }
     let _ = fs::remove_dir_all(&dir);
 }
@@ -204,7 +204,7 @@ fn usage_errors_exit_two() {
     // a command has an answer of its own (Sprint 6 T-006): see
     // `praps_alone_lists_every_command` and
     // `unknown_words_get_the_nearest_commands`.
-    for args in [&["fsck", "--fix"][..], &["fsck", "repo", "extra"][..]] {
+    for args in [&["verify", "--fix"][..], &["verify", "repo", "extra"][..]] {
         let output = praps(args, &repo.dir);
         assert_eq!(code(&output), 2, "{args:?}: {output:?}");
         assert!(output.stdout.is_empty(), "{args:?}");
@@ -359,16 +359,16 @@ fn praps_status_with_several_heads_fails() {
 }
 
 #[test]
-fn praps_fsck_checks_a_working_copy() {
-    let dir = claim("fsck-wc");
+fn praps_verify_checks_a_working_copy() {
+    let dir = claim("verify-wc");
     let root = dir.join("repo");
     assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
     write(&root, "f", b"x");
     assert_eq!(code(&praps(&["status", "repo"], &dir)), 0);
-    let output = praps(&["fsck", "repo"], &dir);
+    let output = praps(&["verify", "repo"], &dir);
     assert_eq!(code(&output), 0, "{output:?}");
     assert_eq!(stdout(&output).trim(), "clean");
-    // Corrupt one object of the repository's store: fsck on the working copy
+    // Corrupt one object of the repository's store: verify on the working copy
     // finds it.
     let objects = root.join(".praps/store/objects");
     let victim = fs::read_dir(&objects)
@@ -380,7 +380,7 @@ fn praps_fsck_checks_a_working_copy() {
     let mut bytes = fs::read(&victim).unwrap();
     *bytes.last_mut().unwrap() ^= 0x01;
     fs::write(&victim, &bytes).unwrap();
-    let output = praps(&["fsck"], &root);
+    let output = praps(&["verify"], &root);
     assert_eq!(code(&output), 1, "{output:?}");
     assert!(stdout(&output).contains("does not hash to its name"));
     let _ = fs::remove_dir_all(&dir);
@@ -414,15 +414,15 @@ fn praps_rejects_flags_and_extra_arguments() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// When `DIR/.praps/store` cannot be opened, `fsck DIR` reports that, not a
+/// When `DIR/.praps/store` cannot be opened, `verify DIR` reports that, not a
 /// bare-store error about `DIR` (code review CR-09; test critique C-004).
 #[test]
-fn praps_fsck_reports_a_broken_repository_store() {
-    let dir = claim("fsck-broken");
+fn praps_verify_reports_a_broken_repository_store() {
+    let dir = claim("verify-broken");
     let root = dir.join("repo");
     assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
     fs::remove_dir_all(root.join(".praps/store/ops")).unwrap();
-    let output = praps(&["fsck", "repo"], &dir);
+    let output = praps(&["verify", "repo"], &dir);
     assert_eq!(code(&output), 1, "{output:?}");
     let err = String::from_utf8_lossy(&output.stderr);
     assert!(err.contains(".praps") && err.contains("store"), "{err}");
@@ -971,6 +971,81 @@ fn idempotent_commands_repeat_exactly() {
         assert_eq!(second.stdout, first.stdout, "{name}: stdout");
         assert_eq!(second.stderr, first.stderr, "{name}: stderr");
         assert_eq!(tree(&root), after_first, "{name}: the second run wrote");
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+// --------------------------------------- `verify` replaces `fsck` (Sprint 6 T-007)
+
+/// The old name of the integrity check is refused like any word that is
+/// not a command, and the answer names the new one (INT-0037 AC-1).
+#[test]
+fn fsck_is_answered_with_verify() {
+    let repo = repo("old-name");
+    let before = tree(&repo.dir);
+    for args in [&["fsck"][..], &["fsck", "repo"][..]] {
+        let output = praps(args, &repo.dir);
+        assert_eq!(code(&output), 2, "{args:?}: {output:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        let err = stderr(&output);
+        assert!(err.starts_with("praps: `fsck` is not a command\n"), "{err}");
+        assert!(
+            err.lines()
+                .any(|line| line.starts_with("`fsck`: ") && line.contains("`praps verify`")),
+            "{err}"
+        );
+        assert_eq!(err.lines().last(), Some(LIST_HINT));
+    }
+    assert_eq!(tree(&repo.dir), before, "nothing was checked or written");
+    let names: Vec<String> = listed(&repo.dir)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    assert!(names.iter().any(|name| name == "verify"));
+    assert!(!names.iter().any(|name| name == "fsck"));
+}
+
+/// The documents that tell a reader what to type name only commands `praps`
+/// has: every code span that starts `praps WORD` names a command in the
+/// list, and the word `fsck` appears only as the store's own function,
+/// `Store::fsck`, or in a file's name.
+#[test]
+fn docs_name_only_commands_praps_has() {
+    let dir = claim("docs");
+    let names: Vec<String> = listed(&dir).into_iter().map(|(name, _)| name).collect();
+    // Commands a document may name as work to come. None is named yet.
+    const TO_COME: [&str; 0] = [];
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for doc in [
+        "README.md",
+        "docs/spec/working-copy.md",
+        "docs/spec/storage-durability.md",
+    ] {
+        let text = fs::read_to_string(root.join(doc)).unwrap();
+        let mut spans = 0;
+        for (at, _) in text.match_indices("`praps ") {
+            let word: String = text[at + "`praps ".len()..]
+                .chars()
+                .take_while(char::is_ascii_lowercase)
+                .collect();
+            spans += 1;
+            assert!(
+                names.contains(&word) || TO_COME.contains(&word.as_str()),
+                "{doc}: `praps {word}` is not a command `praps` lists"
+            );
+        }
+        assert!(spans > 0, "{doc} names no command");
+        for (number, line) in text.lines().enumerate() {
+            for (at, _) in line.match_indices("fsck") {
+                let before = &line[..at];
+                let after = &line[at + "fsck".len()..];
+                assert!(
+                    before.ends_with("Store::") || after.starts_with(".rs"),
+                    "{doc}:{}: `fsck` names neither `Store::fsck` nor a file: {line}",
+                    number + 1
+                );
+            }
+        }
     }
     let _ = fs::remove_dir_all(&dir);
 }

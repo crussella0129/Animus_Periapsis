@@ -32,7 +32,7 @@ Periapsis can record a working copy and return it to any earlier state:
 | `praps log [DIR]` | Snapshots, then lists every operation, newest first |
 | `praps undo [DIR]` | Snapshots, then undoes the last operation, writing the files back; a second `undo` undoes the first |
 | `praps restore OP [DIR]` | Snapshots, then returns the working copy to the state operation `OP` (an id or unique prefix) left |
-| `praps fsck [DIR]` | Checks the store of a repository, or a bare store: checksums and references |
+| `praps verify [DIR]` | Checks the store of a repository, or a bare store: checksums and references |
 
 Nothing is lost: `undo` and `restore` are operations themselves, and the
 edits they replace stay reachable. A write that a crash interrupts is
@@ -46,9 +46,9 @@ workspaces come later.
 | `hash` | Algorithm-tagged hashes: BLAKE3 by default, SHA-256 as a second algorithm |
 | `codec` | Canonical binary encoding and object envelopes |
 | `sim` | Filesystem and randomness, real and deterministically simulated with crashes |
-| `store` | The crash-safe object store and op log, with `fsck` |
+| `store` | The crash-safe object store and op log, with its integrity check |
 | `workspace` | The working copy: init, snapshot (with `.gitignore` rules), new, status, log, undo and restore |
-| `praps` | The Periapsis command (`praps init`, `new`, `status`, `log`, `undo`, `restore`, `fsck`) |
+| `praps` | The Periapsis command (`praps init`, `new`, `status`, `log`, `undo`, `restore`, `verify`) |
 | `book` | Checks the Book's typed acceptance criteria |
 | `xtask` | Project tooling behind `cargo ci`, `cargo policy` and `cargo reach` |
 

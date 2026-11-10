@@ -717,7 +717,7 @@ fn invalid_op_files_are_refused() {
     fs.overwrite(&op_path, &bytes).unwrap();
     let error = ws.snapshot().unwrap_err();
     assert!(
-        matches!(&error, Error::Corrupt(what) if what.contains("praps fsck")),
+        matches!(&error, Error::Corrupt(what) if what.contains("praps verify")),
         "{error}"
     );
     let error = Workspace::init(Arc::clone(&fs), Path::new(ROOT), 24)

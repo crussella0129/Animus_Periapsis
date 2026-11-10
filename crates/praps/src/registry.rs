@@ -16,7 +16,7 @@ pub enum Action {
     Undo,
     Restore,
     Init,
-    Fsck,
+    Verify,
     Help,
     Version,
 }
@@ -182,8 +182,8 @@ pub const COMMANDS: &[Command] = &[
         ],
     },
     Command {
-        action: Action::Fsck,
-        name: "fsck",
+        action: Action::Verify,
+        name: "verify",
         group: Group::Care,
         summary: "Check that everything stored is intact",
         about: "Reads every stored file and checks it against its name and what it refers \
@@ -196,7 +196,7 @@ pub const COMMANDS: &[Command] = &[
         }],
         flags: &[],
         idempotent: true,
-        examples: &[("praps fsck", "check this repository's store")],
+        examples: &[("praps verify", "check this repository's store")],
     },
     Command {
         action: Action::Help,
@@ -344,6 +344,22 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    /// INT-0037 AC-1: no command is named by a word the chapter refuses.
+    #[test]
+    fn registry_refuses_other_systems_words() {
+        for refused in [
+            "fsck",
+            "rebase",
+            "checkout",
+            "stash",
+            "reflog",
+            "cherry-pick",
+        ] {
+            assert!(find(refused).is_none(), "`{refused}` is a command");
+        }
+        assert!(find("verify").is_some());
     }
 
     #[test]

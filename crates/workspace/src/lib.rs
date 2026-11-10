@@ -439,7 +439,7 @@ fn corrupt(what: impl fmt::Display) -> Error {
 fn refuse_invalid(log: &OpLog) -> Result<(), Error> {
     if log.invalid > 0 {
         return Err(corrupt(format!(
-            "{} of {} op files do not hash to their names or do not decode (run `praps fsck`)",
+            "{} of {} op files do not hash to their names or do not decode (run `praps verify`)",
             log.invalid,
             log.ops.len() + log.invalid
         )));

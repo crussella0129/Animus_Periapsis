@@ -5,12 +5,12 @@
 //! Both are printed from the registry ([`registry`]), which is also the only
 //! table dispatch reads (INT-0022 AC-11, INT-0037).
 //!
-//! Every command but `init`, `fsck`, `help` and `version` opens the working
+//! Every command but `init`, `verify`, `help` and `version` opens the working
 //! copy: it finishes an interrupted write (printing a `note:` on stderr for
-//! anything it left), then snapshots it (INT-0014, INT-0009). `fsck` only
+//! anything it left), then snapshots it (INT-0014, INT-0009). `verify` only
 //! reads (INT-0007 AC-4), and `init` on an existing repository writes
 //! nothing. Exit codes follow the project's convention: 0 success (for
-//! `fsck`, clean), 1 a repository error (not a repository, several op heads,
+//! `verify`, clean), 1 a repository error (not a repository, several op heads,
 //! corruption, nothing to undo, an unknown or ambiguous op, a hazard or an
 //! entry in the way), 2 a usage error or a word that is not a command.
 //!
@@ -239,7 +239,14 @@ mod tests {
 
     /// Words this project refuses or has retired as command names
     /// (INT-0037): none is in the registry, so none dispatches.
-    const RETIRED: [&str; 5] = ["rebase", "checkout", "stash", "reflog", "cherry-pick"];
+    const RETIRED: [&str; 6] = [
+        "fsck",
+        "rebase",
+        "checkout",
+        "stash",
+        "reflog",
+        "cherry-pick",
+    ];
 
     #[test]
     fn help_and_version_have_two_spellings_each() {

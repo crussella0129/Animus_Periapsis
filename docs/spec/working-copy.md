@@ -70,7 +70,7 @@ whole chain of changes to build a tree. Both wait for the storage form
 ## Snapshot
 
 Every command that opens the working copy snapshots it first: `praps new` and
-`praps status`. `praps fsck` only reads, and `praps init` on an existing
+`praps status`. `praps verify` only reads, and `praps init` on an existing
 repository writes nothing, so neither snapshots. An edit made before one of
 them is captured by the next command that does.
 
@@ -78,7 +78,7 @@ A snapshot does the following:
 1. **Loads the state**, or takes the one its command already read
    ([Reading the op log](#reading-the-op-log)). If `ops/` holds an op file
    that does not hash to its name or does not decode, it stops and points to
-   `praps fsck`. It finds
+   `praps verify`. It finds
    the single op head. With no op it reports
    that the repository is not initialised. With several op heads it stops,
    names every head, and writes nothing. Concurrent ops are not merged

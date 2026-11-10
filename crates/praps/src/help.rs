@@ -112,8 +112,8 @@ pub const OTHER_WORDS: &[(&[&str], &str)] = &[
          starts another",
     ),
     (
-        &["check"],
-        "`praps fsck` checks that everything stored is intact",
+        &["fsck", "check"],
+        "`praps verify` checks that everything stored is intact",
     ),
     (
         &[
