@@ -3,7 +3,7 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0022
 - **State:** planned
-- **Work evidence:** [Sprint 6 T-004 build plan](../sprints/s6/sprint-plans/build-plan.md#t-004-the-command-registry-dispatch-help-and-suggestions-from-one-table)
+- **Work evidence:** [Sprint 6 T-006 build plan](../sprints/s6/sprint-plans/build-plan.md#t-006-the-command-registry-dispatch-help-and-suggestions-from-one-table)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none
@@ -21,10 +21,17 @@ message crosses in byte ranges. An API-only workspace therefore reads and
 writes any content without loss ([INT-0034](INT-0034-any-content.md)).
 
 Command names are the simplest words that say what they do. A command is
-**idempotent** when running it again changes nothing (`status`, `log`, `diff`);
-idempotent commands take no flags, so their default behaviour is their only
-behaviour. Flags exist only on non-idempotent commands, where they make a state
-change explicit. The project's own tooling follows the same rule
+**idempotent** when it only reports: run again, it changes nothing and prints
+the same (`status`, `log`, `ops`, `diff`, `verify`, `help`). Idempotent
+commands take no flags, so their default behaviour is their only behaviour.
+Every other command is asked to change something, and flags exist only
+there, where they make a state change explicit. `init` and `describe` belong
+to that second class although a repeat finds nothing left to do: what each
+prints says whether it did anything, so a repeat does not print the same.
+Every command that opens the working copy records it first. That recording
+is not something the command was asked for, so it does not move a command
+out of the first class. The registry marks each command's class, and `help`
+shows it. The project's own tooling follows the same rule
 ([INT-0003](INT-0003-engineering-baseline.md) AC-9).
 
 Since `diff` takes no flags, how it shows a file depends only on the file and
@@ -111,6 +118,15 @@ result with it or without.
   `help` and `version` commands ([INT-0037](INT-0037-command-set.md)). They
   are not flags of any command, so AC-8 stands: the registry declares no
   flag for an idempotent command.
+- Sprint 6 changes what `praps log` lists, from operations to changes, as
+  the owner chose on 2026-11-10 ([INT-0037](INT-0037-command-set.md)). That
+  listing is provisional: plain lines, one for each change, not fitted to the
+  terminal and judged by no panel. It does not meet AC-4, and nothing is
+  claimed for AC-5 to AC-7. Those four criteria are about the designed
+  layout, which a later sprint builds on a renderer that takes the terminal's
+  width. The sampling seed of AC-5 and the rubric of AC-6 are registered
+  before that sprint's first layout change, and the provisional listing is
+  the layout the panel compares the new one with.
 - Until the service exists, each agent command is a process that opens the
   repository itself. That is why the cost of opening must not grow with the
   store ([INT-0008](INT-0008-compact-history-storage.md) AC-8).
@@ -121,4 +137,5 @@ result with it or without.
 - 2026-11-01: revised while `proposed`, on owner direction: the command is `praps`, short for periapsis, replacing `peri` ([INT-0003](INT-0003-engineering-baseline.md)). AC-1, AC-2, AC-4, AC-6 and AC-7 are reworded for the new name only.
 - 2026-11-01: revised while `proposed`, on owner direction: the interfaces must carry and show any content. The Intent says file contents cross `praps mcp` as exact bytes, as base64 when they are not UTF-8 and in byte ranges when large, and that `diff`, which takes no flags, shows a file through the diff layer chosen for its kind, else by size and hash; AC-10 checks the round trip.
 - 2026-11-10: revised while `proposed` (Sprint 6 Plan, on owner direction of 2026-11-09 for a far more intuitive command set and for thousands of agents): the Intent says the registry is the one description of each command, points to [INT-0037](INT-0037-command-set.md) for the command set and [INT-0038](INT-0038-live-view.md) for the live view, and adds an optional local service that many agents share. AC-11 and AC-12 are added.
-- 2026-11-10: `proposed` → `planned` (Sprint 6 build plan T-004: the registry, with dispatch, help and usage generated from it; AC-8 and AC-11. `praps mcp`, the schemas and the service wait for later sprints).
+- 2026-11-10: `proposed` → `planned` (Sprint 6 build plan T-006: the registry, with dispatch, help and usage generated from it; AC-8 and AC-11. `praps mcp`, the schemas and the service wait for later sprints).
+- 2026-11-10: revised while `planned` (Sprint 6 plan critique, round 1, C-004 and C-006; `semantic`): the Intent defines the idempotent class as the commands that only report, names `init` and `describe` as outside it, and says the registry marks the class and `help` shows it; AC-8 and AC-9 are unchanged and now apply to that class. Consequences record that Sprint 6's `log` listing is provisional, that it does not meet AC-4, and when the seed and the rubric of AC-5 and AC-6 are registered.

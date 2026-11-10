@@ -3,7 +3,7 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0014
 - **State:** active
-- **Work evidence:** [Sprint 2 T-005 build plan](../sprints/s2/sprint-plans/build-plan.md#t-005-the-workspace-crate-init-snapshot-new-and-status), [Sprint 2 T-006 build plan](../sprints/s2/sprint-plans/build-plan.md#t-006-praps-init-praps-new-and-praps-status), [Sprint 2 T-007 build plan](../sprints/s2/sprint-plans/build-plan.md#t-007-snapshot-crash-scenario-and-edit-corpora), [Sprint 2 T-008 build plan](../sprints/s2/sprint-plans/build-plan.md#t-008-working-copy-spec-readme-credits-and-backlog), [Sprint 3 T-004 build plan](../sprints/s3/sprint-plans/build-plan.md#t-004-specify-writing-the-working-copy-undo-restore-and-log), [Sprint 3 T-006 build plan](../sprints/s3/sprint-plans/build-plan.md#t-006-materialise-the-working-copy-record-and-resume), [Sprint 3 T-009 build plan](../sprints/s3/sprint-plans/build-plan.md#t-009-reversibility-and-hazard-corpora-the-materialise-crash-scenario-and-the-extended-edit-corpus), [Sprint 4 T-006 build plan](../sprints/s4/sprint-plans/build-plan.md#t-006-plant-and-register-points-in-store-and-workspace-and-move-the-two-writer-race-to-a-named-point), [Sprint 4 T-009 build plan](../sprints/s4/sprint-plans/build-plan.md#t-009-report-skipped-names-from-every-command-that-snapshots-backlog-t-019), [Sprint 6 T-003 build plan](../sprints/s6/sprint-plans/build-plan.md#t-003-a-command-reads-the-op-log-once), [Sprint 6 T-005 build plan](../sprints/s6/sprint-plans/build-plan.md#t-005-commands-find-their-working-copy-from-any-directory-inside-it), [Sprint 6 T-006 build plan](../sprints/s6/sprint-plans/build-plan.md#t-006-describe-log-for-changes-ops-for-operations-and-verify)
+- **Work evidence:** [Sprint 2 T-005 build plan](../sprints/s2/sprint-plans/build-plan.md#t-005-the-workspace-crate-init-snapshot-new-and-status), [Sprint 2 T-006 build plan](../sprints/s2/sprint-plans/build-plan.md#t-006-praps-init-praps-new-and-praps-status), [Sprint 2 T-007 build plan](../sprints/s2/sprint-plans/build-plan.md#t-007-snapshot-crash-scenario-and-edit-corpora), [Sprint 2 T-008 build plan](../sprints/s2/sprint-plans/build-plan.md#t-008-working-copy-spec-readme-credits-and-backlog), [Sprint 3 T-004 build plan](../sprints/s3/sprint-plans/build-plan.md#t-004-specify-writing-the-working-copy-undo-restore-and-log), [Sprint 3 T-006 build plan](../sprints/s3/sprint-plans/build-plan.md#t-006-materialise-the-working-copy-record-and-resume), [Sprint 3 T-009 build plan](../sprints/s3/sprint-plans/build-plan.md#t-009-reversibility-and-hazard-corpora-the-materialise-crash-scenario-and-the-extended-edit-corpus), [Sprint 4 T-006 build plan](../sprints/s4/sprint-plans/build-plan.md#t-006-plant-and-register-points-in-store-and-workspace-and-move-the-two-writer-race-to-a-named-point), [Sprint 4 T-009 build plan](../sprints/s4/sprint-plans/build-plan.md#t-009-report-skipped-names-from-every-command-that-snapshots-backlog-t-019), [Sprint 6 T-003 build plan](../sprints/s6/sprint-plans/build-plan.md#t-003-a-command-reads-the-op-log-once), [Sprint 6 T-004 build plan](../sprints/s6/sprint-plans/build-plan.md#t-004-open-checks-the-op-log-before-it-resumes-an-interrupted-write), [Sprint 6 T-005 build plan](../sprints/s6/sprint-plans/build-plan.md#t-005-undo-and-restore-scan-the-working-copy-once), [Sprint 6 T-008 build plan](../sprints/s6/sprint-plans/build-plan.md#t-008-commands-find-their-working-copy-from-any-directory-inside-it), [Sprint 6 T-010 build plan](../sprints/s6/sprint-plans/build-plan.md#t-010-describe-sets-the-description-of-the-current-change)
 - **Completion evidence:** [Sprint 2 T-005 completion](../work/completed-tasks.md#t-005-sprint-2), [Sprint 2 T-006 completion](../work/completed-tasks.md#t-006-sprint-2), [Sprint 2 T-007 completion](../work/completed-tasks.md#t-007-sprint-2), [Sprint 2 T-008 completion](../work/completed-tasks.md#t-008-sprint-2)
 - **Code evidence:** [crates/workspace](../../crates/workspace/src/lib.rs), [praps](../../crates/praps/src/main.rs)
 - **Test evidence:** [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md), [Sprint 3 test report](../sprints/s3/sprint-tests/test-report.md), [Sprint 4 test report](../sprints/s4/sprint-tests/test-report.md)
@@ -110,8 +110,13 @@ Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
   the stat cache, content is kept only for blobs the store does not have yet.
 
 - Every command that opens the working copy resumes an interrupted write
-  before anything else, through the record in `.praps/`; `init` never resumes, so a
-  repeated `init` still writes nothing. A write uses deterministic temporary
+  before it does anything of its own, through the record in `.praps/`; `init`
+  never resumes, so a repeated `init` still writes nothing. From Sprint 6 it
+  first checks that every op file is whole, and stops if one is not, leaving
+  the record in place (T-004). Before, resume looked for the record's target
+  among the valid ops only. A target whose file was damaged then looked like
+  a write that had never begun, and the record was dropped, though files
+  might already have been written. A write uses deterministic temporary
   names, `.praps-tmp-<n>`, which exist only while the record names them. No
   name is silently ignored: a user's file with that prefix is tracked like any
   other (Sprint 3 plan critique, C-012, C-013). While a record exists, its
@@ -130,14 +135,25 @@ Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
   removes that cost, and AC-5 the budget it must meet.
 - From Sprint 6 a command reads the op log once and keeps what it derives
   while it runs (T-003). Before, it read the whole log three to six times.
-  Each public command of the `workspace` crate still starts from the log as
-  it is on disk, so it sees what another process wrote before it began.
+  A command starts from the log as it is on disk when it begins, so it sees
+  what another process wrote before then. There is one exception: the first
+  command on a workspace just opened uses the reading that opening made, so
+  that a `praps` process, which opens and runs one command, reads the log
+  once. An operation another process writes between the opening and that
+  command is treated as one written while the command ran: both stand, the
+  log has two heads, and the next command says so.
 - From Sprint 6 `praps` finds the working copy from any directory inside it,
-  and `init` refuses to make a repository inside one (T-005). Without that,
+  and `init` refuses to make a repository inside one (T-008). Without that,
   `praps status` in a subdirectory said the directory was not a repository
   and suggested `praps init`, which would have nested one.
+- The top of a working copy is the directory that holds `.praps/store`. A
+  directory named `.praps` below the top that holds no store is tracked like
+  any other directory. One that holds a store is the top of a repository of
+  its own: commands run inside it act on it, and the working copy around it
+  still tracks its files as content. What should happen there is not decided
+  (backlog T-031).
 - From Sprint 6 `describe` sets the working-copy change's description
-  (T-006). A snapshot carries the description forward, as it carries the
+  (T-010). A snapshot carries the description forward, as it carries the
   change ID.
 
 ## Transition history
@@ -152,4 +168,5 @@ Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
 - 2026-11-07: revised while `active` (Sprint 3 plan critique, round 1): Consequences record that every command except `init` resumes an interrupted write, and that temporary names are deterministic and never ignored.
 - 2026-11-07: revised while `active` (Sprint 3 plan critique, round 2): every command that opens the working copy resumes, not only those that write it.
 - 2026-11-07: revised while `active` (Sprint 3 plan critique, round 3): temporary names belong to `praps` while a record exists, and every way resume drops a record removes them.
-- 2026-11-10: revised while `active` (Sprint 6 Plan, on owner direction of 2026-11-09 for thousands of agents, speed and a more intuitive command set): the Intent adds three rules (a workspace is cheap, nothing unchanged is read, a command works anywhere inside a working copy). AC-5's budget is fixed by reference to [INT-0036](INT-0036-measured-speed.md), and AC-7 and AC-8 are added. Consequences record Sprint 6's measurements and its three tasks in this chapter's code.
+- 2026-11-10: revised while `active` (Sprint 6 Plan, on owner direction of 2026-11-09 for thousands of agents, speed and a more intuitive command set): the Intent adds three rules (a workspace is cheap, nothing unchanged is read, a command works anywhere inside a working copy). AC-5's budget is fixed by reference to [INT-0036](INT-0036-measured-speed.md), and AC-7 and AC-8 are added. Consequences record Sprint 6's measurements and its tasks in this chapter's code.
+- 2026-11-10: revised while `active` (Sprint 6 plan critique, round 1, C-001 and C-008; `semantic`): Consequences now say that opening checks the op log before it resumes, and why; that the first command after opening uses the reading opening made, and what follows if another process writes in between; and what marks the top of a working copy, with a `.praps` directory below the top left as it is today.

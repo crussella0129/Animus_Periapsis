@@ -8,6 +8,6 @@
 - **Bundle version:** 0.22.0
 - **Exit status:** in-progress
 - **Token count:** (filled at Loop Phase if observable)
-- **Summary:** (one-line description of sprint goal, filled after Plan Phase)
-- **Intents:** (filled after Plan Phase)
+- **Summary:** The owner's direction for scale, speed and use written into the Book, and its first steps in code: one read of the op log for each command, and a command set that explains itself (`help`, `describe`, `log` for changes, `ops`, `verify`, commands that work from any directory inside a working copy, a hint on every refusal); plus the Sprint 5 CI record
+- **Intents:** [INT-0037](../../intents/INT-0037-command-set.md), [INT-0022](../../intents/INT-0022-agent-and-human-interfaces.md), [INT-0035](../../intents/INT-0035-scale-and-asynchrony.md), [INT-0014](../../intents/INT-0014-working-copy-and-workspaces.md), [INT-0009](../../intents/INT-0009-reversible-by-default.md), [INT-0005](../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0003](../../intents/INT-0003-engineering-baseline.md), [INT-0004](../../intents/INT-0004-windows-and-linux.md), [INT-0001](../../intents/INT-0001-periapsis-charter.md), [INT-0002](../../intents/INT-0002-typed-acceptance-criteria.md), [INT-0006](../../intents/INT-0006-format-v1.md)
 - **Completion evidence:** (filled at Loop Phase)

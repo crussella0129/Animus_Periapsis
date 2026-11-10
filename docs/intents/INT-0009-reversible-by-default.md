@@ -3,7 +3,7 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0009
 - **State:** active
-- **Work evidence:** [Sprint 3 T-004 build plan](../sprints/s3/sprint-plans/build-plan.md#t-004-specify-writing-the-working-copy-undo-restore-and-log), [Sprint 3 T-006 build plan](../sprints/s3/sprint-plans/build-plan.md#t-006-materialise-the-working-copy-record-and-resume), [Sprint 3 T-007 build plan](../sprints/s3/sprint-plans/build-plan.md#t-007-log-undo-and-restore-in-workspace), [Sprint 3 T-008 build plan](../sprints/s3/sprint-plans/build-plan.md#t-008-praps-log-praps-undo-and-praps-restore-op), [Sprint 3 T-009 build plan](../sprints/s3/sprint-plans/build-plan.md#t-009-reversibility-and-hazard-corpora-the-materialise-crash-scenario-and-the-extended-edit-corpus), [Sprint 3 T-010 build plan](../sprints/s3/sprint-plans/build-plan.md#t-010-readme-credits-and-backlog), [Sprint 6 T-006 build plan](../sprints/s6/sprint-plans/build-plan.md#t-006-describe-log-for-changes-ops-for-operations-and-verify)
+- **Work evidence:** [Sprint 3 T-004 build plan](../sprints/s3/sprint-plans/build-plan.md#t-004-specify-writing-the-working-copy-undo-restore-and-log), [Sprint 3 T-006 build plan](../sprints/s3/sprint-plans/build-plan.md#t-006-materialise-the-working-copy-record-and-resume), [Sprint 3 T-007 build plan](../sprints/s3/sprint-plans/build-plan.md#t-007-log-undo-and-restore-in-workspace), [Sprint 3 T-008 build plan](../sprints/s3/sprint-plans/build-plan.md#t-008-praps-log-praps-undo-and-praps-restore-op), [Sprint 3 T-009 build plan](../sprints/s3/sprint-plans/build-plan.md#t-009-reversibility-and-hazard-corpora-the-materialise-crash-scenario-and-the-extended-edit-corpus), [Sprint 3 T-010 build plan](../sprints/s3/sprint-plans/build-plan.md#t-010-readme-credits-and-backlog), [Sprint 6 T-005 build plan](../sprints/s6/sprint-plans/build-plan.md#t-005-undo-and-restore-scan-the-working-copy-once), [Sprint 6 T-009 build plan](../sprints/s6/sprint-plans/build-plan.md#t-009-log-lists-changes-and-ops-lists-operations), [Sprint 6 T-010 build plan](../sprints/s6/sprint-plans/build-plan.md#t-010-describe-sets-the-description-of-the-current-change)
 - **Completion evidence:** [Sprint 3 T-004 completion](../work/completed-tasks.md#t-004-sprint-3), [Sprint 3 T-006 completion](../work/completed-tasks.md#t-006-sprint-3), [Sprint 3 T-007 completion](../work/completed-tasks.md#t-007-sprint-3), [Sprint 3 T-008 completion](../work/completed-tasks.md#t-008-sprint-3), [Sprint 3 T-009 completion](../work/completed-tasks.md#t-009-sprint-3), [Sprint 3 T-010 completion](../work/completed-tasks.md#t-010-sprint-3)
 - **Code evidence:** [crates/workspace](../../crates/workspace/src/lib.rs), [materialise.rs](../../crates/workspace/src/materialise.rs), [record.rs](../../crates/workspace/src/record.rs), [praps](../../crates/praps/src/main.rs)
 - **Test evidence:** [Sprint 3 test report](../sprints/s3/sprint-tests/test-report.md)
@@ -96,6 +96,16 @@ With many writers, three rules keep this true
   replica stores its own working operations and the shared ones it follows.
 - Since Sprint 6 the command that lists operations is `ops`, and `log` lists
   changes ([INT-0037](INT-0037-command-set.md)).
+- A command that overwrites the working copy records it once, just before it
+  plans the write (Sprint 6, T-005). As built in Sprint 3, `undo` and
+  `restore` recorded it twice, which read every file a second time. Once is
+  enough for AC-2: an edit made before the command is in that snapshot, and
+  the write reads each path again just before it removes or replaces it and
+  leaves a path that has changed since
+  ([INT-0014](INT-0014-working-copy-and-workspaces.md)).
+- `describe` is an operation like any other, so `undo` after it gives back
+  the description the change had before, and `restore` can return to either
+  (Sprint 6, T-010).
 - Writing the working copy is not atomic, so it is journalled: a record in
   `.praps/`, written durably before the op that needs it, lets the next
   command finish an interrupted write instead of snapshotting a half-written
@@ -109,3 +119,4 @@ With many writers, three rules keep this true
 - 2026-11-07: revised while `planned` (Sprint 3 plan critique, round 1, C-001): the `undo` Consequence names H as the head at the command's start, before its snapshot.
 - 2026-11-07: `planned` → `active` (Sprint 3 build, T-004 starts: the working-copy spec for undo, restore and log).
 - 2026-11-10: revised while `active` (Sprint 6 Plan, on owner direction of 2026-11-09 for thousands of agents): the Intent scopes `undo` and `restore` to what the actor owns, separates local from shared operations, and says packing is not erasure. AC-6 and AC-7 are added. Consequences record that Sprint 3's `undo` and `restore` act on the whole view, which is right only for one writer, and the rename of the operation list to `ops`. The Completion and Code evidence fields, left at `none` since Sprint 3, now name that sprint's tasks and code.
+- 2026-11-10: revised while `active` (Sprint 6 plan critique, round 1, C-002; `editorial`: no criterion changes): Consequences record that a command which overwrites the working copy snapshots it once, with the reason one snapshot keeps AC-2, and that `describe` is an operation `undo` and `restore` reverse. Work evidence names Sprint 6's T-005, T-009 and T-010.

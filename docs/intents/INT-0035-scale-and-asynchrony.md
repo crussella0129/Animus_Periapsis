@@ -176,7 +176,12 @@ How fast each command is, against other systems, is
   Phase 1 work, not later work.
 - The canonical merge of [INT-0010](INT-0010-lock-free-concurrency.md) comes
   before further single-user features: until it exists, nothing works with
-  two agents.
+  two agents. There is one exception, which the owner approved with Sprint
+  6's plan on 2026-11-10: that sprint builds the command set of
+  [INT-0037](INT-0037-command-set.md) first. The command set is one of the
+  three aims of the direction this chapter answers, and the merge needs
+  decisions that still wait on the owner: who owns which entries of the
+  view. The merge is the next work after it (backlog T-029).
 - The simulator needs counts of cost, a way to run a thousand processes, and
   a clock and a network
   ([INT-0005](INT-0005-deterministic-simulation-testing.md)).
@@ -191,3 +196,4 @@ How fast each command is, against other systems, is
 ## Transition history
 - 2026-11-09: created as `proposed` (Sprint 6 research; owner direction of 2026-11-09 for thousands of agents, decentralised and asynchronous).
 - 2026-11-10: `proposed` → `planned` (Sprint 6 build plan T-003: a command reads the op log once, a first step toward cost rule 2. It meets no criterion of this chapter. The criteria wait for the merge, the packed storage form, the stat cache and the simulator at scale: backlog T-029 to T-032).
+- 2026-11-10: revised while `planned` (Sprint 6 plan critique, round 1, C-017; `editorial`: no criterion changes): the Consequence that puts the merge before further single-user features names Sprint 6's command-set work as the exception the owner approved, and why.
