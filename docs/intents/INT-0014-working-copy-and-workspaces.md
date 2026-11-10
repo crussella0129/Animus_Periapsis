@@ -158,12 +158,12 @@ Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
 - A write removes each directory it emptied, if it can. Running commands
   from inside the working copy makes one case common: the directory a shell
   stands in is one the write empties. From Sprint 6 a removal that fails
-  does not stop the write (T-012). The directory is left, with a note.
+  does not stop the write (Sprint 6's T-012). The directory is left, with a note.
   Directories are not tracked, so the working copy still equals the target.
   The one exception is a file the write must put at that path or at a path
   above it, which a directory left there would keep it from putting: there
   the write stops, as before, and the next command finishes it once the
-  directory can be removed. T-012 tests a directory that is another
+  directory can be removed. That task tests a directory that is another
   process's current directory on Windows and on Linux, and records what
   each system does. Where a system removes it, the shell that stood there
   has no current directory, and a command run from it says so (T-008).
