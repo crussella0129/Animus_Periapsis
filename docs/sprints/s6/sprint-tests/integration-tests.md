@@ -1,22 +1,22 @@
 # Sprint 6 integration test results
 
-Tested head: `4152526`. Windows 11 (NTFS) ran in the working checkout. WSL Ubuntu (Linux 6.6.114.1-microsoft-standard-WSL2, ext4) ran in a fresh clone at the head, with its own target directory. rustc 1.99.1 and cargo-deny 0.20.2 on both. No two timed runs overlapped.
+Tested head: `bbffce6`. Windows 11 (NTFS) ran in the working checkout. WSL Ubuntu (Linux 6.6.114.1-microsoft-standard-WSL2, ext4) ran in a clone on ext4 with its own target directory. The clone was made fresh for the first run, at `80a3e7e`, and then checked out at `4152526` and at `bbffce6` in turn, so only its first run built from nothing. rustc 1.99.1 and cargo-deny 0.20.2 on both. No two timed runs overlapped.
 
 ## The suite on both platforms
 
 | | Windows | WSL |
 |---|---|---|
 | `cargo ci` | all 6 steps passed | all 6 steps passed |
-| Wall time | 316 s | 188 s (the build was warm from a run at `80a3e7e`, which took 209 s) |
-| `test:` line | 37 units, 587 passed, 0 failed, 0 ignored | 37 units, 589 passed, 0 failed, 0 ignored |
+| Wall time | 288 s | 186 s (the first run in the clone, a cold build at `80a3e7e`, took 209 s) |
+| `test:` line | 37 units, 588 passed, 0 failed, 0 ignored | 37 units, 590 passed, 0 failed, 0 ignored |
 | Executables | 46 built, 46 run | 46 built, 46 run |
 | Tree after the run | clean | clean |
 | `cargo book`, first line | `book: docs (typed-acceptance 1, strict)` | the same |
 | `cargo book`, last line | `38 chapters, 267 criteria, 0 violations` | the same |
 | `cargo deny check` | `advisories ok, bans ok, licenses ok, sources ok` | the same |
-| `cargo reach`, then `git status` | not run by itself; the `reach` step of `cargo ci` passed | wrote `docs/reach.md` with no difference |
+| `cargo reach`, then `git status` | wrote `docs/reach.md` with no difference | wrote `docs/reach.md` with no difference |
 
-- **Totals against Sprint 5.** 501 and 502 at `b0675f6`; 587 and 589 now. The difference is the 87 test functions this sprint adds, one of them for Unix only. No test was removed, and the eight renamed tests are listed in [unit-tests.md](unit-tests.md).
+- **Totals against Sprint 5.** 501 and 502 at `b0675f6`; 588 and 590 now. The difference is the 88 test functions this sprint adds, one of them for Unix only. No test was removed, and the eight renamed tests are listed in [unit-tests.md](unit-tests.md).
 - **The store matrices.** `matrix_runs_are_reproducible` and `writers_matrix_is_reproducible` passed with Sprint 5's literals on both systems.
 - **The slowest units on Windows:** `materialise_crash` 285 s, `describe_crash` 166 s, `crash` 162 s, `writers` 118 s, `cli` 63 s. The new unit, `describe_crash`, is the second slowest.
 
@@ -39,7 +39,7 @@ Tested head: `4152526`. Windows 11 (NTFS) ran in the working checkout. WSL Ubunt
 
 - T-001 changed only records, and `cargo book` passed at its commit.
 - T-005's follow-up `d4137e4` changed one sentence of the spec and one comment. An edit script had failed without a visible error, so the task's own commit lacked them; the completion entry says so.
-- Two commits follow T-013, both made during Test: `80a3e7e` adds one case to a test, and `4152526` holds the fixes from the code review. `cargo ci` passed on both systems at each.
+- Three commits follow T-013, all made during Test: `80a3e7e` adds one case to a test; `4152526` holds the fixes from the code review; `bbffce6` holds the tests the first test critique asked for. `cargo ci` passed on both systems at each: 587 and 589 at the first two, in 327 s and 316 s on Windows and 209 s and 188 s in WSL.
 
 In WSL, at each task from T-008 on, the `praps` tests were also run, and from T-010 the tests of the working copy that the task touched. Each completion entry gives its counts.
 
@@ -52,6 +52,8 @@ In WSL, at each task from T-008 on, the `praps` tests were also run, and from T-
 ## Cost before and after
 
 This is a record, not a test. It traces to no clause: [INT-0036](../../../intents/INT-0036-measured-speed.md) is not planned and its suite does not exist.
+
+The probe and the simulator count were run at `4152526`. `bbffce6` changes tests only.
 
 **The probe.** A working copy of 100 files of 2 KiB. Each step edits one file and runs `praps new`, which adds two operations and one change. At each length the probe takes the median of five runs of `status` with nothing changed, of the operation list (`log` in the Sprint 5 binary, `ops` now) and, at the head, of the change list (`log`). Both binaries are release builds, run one after the other on the same machine in the same session. The script is at the end of this file. Its command line is `python probe6.py BINARY WORK_DIR OPLIST_COMMAND [CHANGES_COMMAND]`: `log` for the Sprint 5 binary, and `ops log` for the head's.
 

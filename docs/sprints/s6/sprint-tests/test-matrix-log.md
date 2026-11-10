@@ -1,6 +1,6 @@
 # Sprint 6 Test Matrix Log
 
-The result lines of the three working-copy matrices (Snapshot, Materialise, Describe), run optimised with `--nocapture` at the tested head `4152526`:
+The result lines of the three working-copy matrices (Snapshot, Materialise, Describe), run optimised with `--nocapture` at `4152526`. The tested head, `bbffce6`, adds tests only and changes no source the matrices run; their three literal tests passed there on both systems.
 
 ```
 cargo test -p workspace --test crash --test materialise_crash --test describe_crash -- --nocapture
@@ -14,7 +14,7 @@ The two store matrices were not run with `--nocapture` this sprint. Their tests 
 
 A cell is one crash point: one for each syscall of the scenario and one after the last, for each of 40 seeds in each of two directory modes. So fewer cells means the same scenario makes fewer syscalls.
 
-| Matrix | At | Cells | Cells for one seed in one mode | Digest |
+| Matrix | At | Cells | Cells ÷ 80 (the average for one seed in one mode) | Digest |
 |---|---|---|---|---|
 | Snapshot | `b0675f6` (Sprint 5) | 25,360 | 317 | `blake3:c1e39cb10607ff208e0f2774eee8770659aad590dbc8c71abd76522b69013ea3` |
 | Snapshot | after T-003, and at the head | 24,320 | 304 | `blake3:b6fca2372d26d8a0b40000df18c57b226eb976d4b9597d2deb2a95a629e84e1c` |
@@ -23,10 +23,10 @@ A cell is one crash point: one for each syscall of the scenario and one after th
 | Materialise | after T-005, and at the head | 34,400 | 430 | `blake3:5645fdf5829cc41aaf387ef8e05e2a00912417c5272f15548e062a48c8e5a7ab` |
 | Describe | new in T-010, and at the head | 28,720 | 359 | `blake3:686dfb8f7cf9c8e10f15223549fa00b237669767c97e3f1c903962dd7f6c0f1a` |
 
-- **T-003** took 13 syscalls out of each Snapshot run and 66 out of each Materialise run: a command reads the op log once.
-- **T-005** took 16 more out of each Materialise run: `undo` and `restore` scan the working copy once.
+- **T-003** took, on average, 13 crash points out of each Snapshot run and 66 out of each Materialise run: a command reads the op log once.
+- **T-005** took 16 more, on average, out of each Materialise run: `undo` and `restore` scan the working copy once.
 - **No count rose.** T-004, T-006 to T-009 and T-011 to T-013 moved no cell: the three tests that assert these literals passed unchanged at each of those commits.
-- The count for one seed in one mode is the total divided by 80. Each total divides exactly; that every seed makes the same number of syscalls was not checked seed by seed.
+- The fourth column is the total divided by 80: an average, not a count taken from one run. The test plan asks for one seed's syscall count; that was not printed. Each total divides exactly, which is what equal runs would give.
 
 ## Violations and controls
 

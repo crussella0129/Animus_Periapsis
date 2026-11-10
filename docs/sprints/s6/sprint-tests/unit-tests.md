@@ -1,17 +1,17 @@
 # Sprint 6 unit test results
 
-Tested head: `4152526` (the last commit that changes code or tests). The same Windows 11 machine ran both systems: NTFS in the working checkout, and WSL Ubuntu (Linux 6.6.114.1-microsoft-standard-WSL2, ext4) in a fresh clone at the head. rustc 1.99.1 on both. The runs did not overlap.
+Tested head: `bbffce6`, the last commit that changes code or tests. Two commits made during Test lie between T-013 and it: `4152526`, the fixes from the code review, and `bbffce6`, the tests the first test critique asked for, which changes no source outside tests. The same Windows 11 machine ran both systems: NTFS in the working checkout, and WSL Ubuntu (Linux 6.6.114.1-microsoft-standard-WSL2, ext4) in a clone on ext4, checked out at the head. rustc 1.99.1 on both. The runs did not overlap.
 
 ## Totals
 
 | System | `test:` line | `ci:` line |
 |---|---|---|
-| Windows | 37 units, 587 passed, 0 failed, 0 ignored | all 6 steps passed |
-| WSL | 37 units, 589 passed, 0 failed, 0 ignored | all 6 steps passed |
+| Windows | 37 units, 588 passed, 0 failed, 0 ignored | all 6 steps passed |
+| WSL | 37 units, 590 passed, 0 failed, 0 ignored | all 6 steps passed |
 
 46 of 46 test executables were built and run on both. The suite as a whole is in [integration-tests.md](integration-tests.md).
 
-**Against Sprint 5.** At `b0675f6` the totals were 501 and 502. The source holds 472 test functions there and 559 at the head: 87 more. Linux gained all 87 (589). Windows gained 86 (587), because one of them, `a_removed_current_directory_is_reported`, is for Unix only. Linux now has two tests Windows has not: that one, and the test that needs a real symbolic link on ext4, as before.
+**Against Sprint 5.** At `b0675f6` the totals were 501 and 502. The source holds 472 test functions there and 560 at the head: 88 more. Linux gained all 88 (590). Windows gained 87 (588), because one of them, `a_removed_current_directory_is_reported`, is for Unix only. Linux now has two tests Windows has not: that one, and the test that needs a real symbolic link on ext4, as before.
 
 **No test was removed.** Eight names are gone from the source, and each is a rename with its assertions kept, except where the build plan says an assertion changes:
 
@@ -36,22 +36,30 @@ The list was made by reading every `#[test]` function at both commits with `git 
 | T-003 | `store/tests/store.rs`, `workspace/tests/workspace.rs` | `op_log_lists_once_and_counts_invalid_files`; `open_and_one_command_read_the_op_log_once`, `a_later_command_reads_the_op_log_once_more`, `an_operation_written_after_open_leaves_two_heads`, `the_next_command_builds_on_another_handles_op`, `accessors_read_what_is_stored` |
 | T-004 | `workspace/tests/materialise.rs` | `a_damaged_op_stops_open_before_resume` |
 | T-005 | `workspace/tests/history.rs` | `undo_and_restore_read_an_untouched_file_once` |
-| T-006 | `praps/src/registry.rs`, `help.rs`, `main.rs`; `praps/tests/cli.rs` | six registry tests, six help tests, three parser tests; `praps_alone_lists_every_command`, `praps_help_explains_every_command`, `praps_help_for_an_unknown_word_suggests`, `help_and_version_spellings`, `unknown_words_get_the_nearest_commands`, `other_systems_words_are_answered`, `idempotent_commands_repeat_exactly` |
+| T-006 | `praps/src/registry.rs`, `help.rs`, `main.rs`; `praps/tests/cli.rs` | 14 in the binary crate: five registry tests (the four the plan names and `usage_lines_name_each_argument`), six help tests (the four the plan names, `help_holds_every_part` and `unknown_words_end_with_the_way_to_the_list`), three parser tests (the two the plan names and `help_and_version_have_two_spellings_each`); `praps_alone_lists_every_command`, `praps_help_explains_every_command`, `praps_help_for_an_unknown_word_suggests`, `help_and_version_spellings`, `unknown_words_get_the_nearest_commands`, `other_systems_words_are_answered`, `idempotent_commands_repeat_exactly` |
 | T-007 | `praps/tests/cli.rs`, `praps/src/registry.rs` | `fsck_is_answered_with_verify`, `docs_name_only_commands_praps_has`, `registry_refuses_other_systems_words` |
 | T-008 | `praps/src/place.rs`; `praps/tests/cli.rs` | five search tests on the simulator; `no_repository_above_the_test_directories`, `help_and_version_need_no_repository`, `commands_act_the_same_from_below`, `refusals_name_the_working_copy`, `a_missing_directory_is_not_searched_above`, `a_removed_current_directory_is_reported` (Linux), `init_inside_a_working_copy_is_refused`, `praps_init_completes_an_interrupted_init`, `verify_chooses_its_store_in_order`, `a_praps_entry_without_a_store_is_ordinary` |
 | T-009 | `workspace/tests/history.rs`; `praps/src/commands.rs`; `praps/tests/cli.rs` | `changes_follow_first_parents_newest_first`, `changes_carry_each_description`, `listing_cost_grows_in_a_straight_line`; `first_line_is_escaped`; `praps_log_lists_changes_newest_first` |
 | T-010 | `workspace/tests/history.rs`; `praps/tests/cli.rs` | `describe_sets_the_description`, `describe_records_the_working_copy_first`, `describe_with_the_same_text_writes_nothing`, `a_snapshot_keeps_the_description`, `new_starts_without_a_description`, `describe_is_undone_and_restored`; `praps_describe_sets_and_reports`, `praps_describe_says_when_nothing_changed`, `praps_log_escapes_the_first_line` |
 | T-011 | `praps/src/hint.rs`; `workspace/tests/workspace.rs`; `praps/tests/cli.rs` | `every_error_kind_has_a_hint`, `hints_take_one_of_three_forms`, `hints_name_registry_commands`, `quoted_text_is_shown_only_when_it_is_plain`; `messages_say_only_what_is_wrong`; `every_refusal_prints_one_hint`, `describe_with_unquoted_words_hints_quotes`, `describe_with_a_directory_as_its_last_word_takes_one_word` |
-| T-012 | `workspace/tests/materialise.rs` | `a_directory_that_cannot_be_removed_is_left`, `a_directory_in_the_way_of_a_file_stops_the_write`, `a_directory_below_a_file_to_put_stops_the_write`, `a_directory_already_gone_is_passed_over`, `a_crash_during_a_removal_still_stops_the_write` |
+| T-012 | `workspace/tests/materialise.rs` | `a_directory_that_cannot_be_removed_is_left`, `a_directory_in_the_way_of_a_file_stops_the_write`, `a_directory_below_a_file_to_put_stops_the_write`, `a_directory_already_gone_is_passed_over`, `a_crash_during_a_removal_still_stops_the_write`, `a_crash_is_not_taken_for_a_refusal` |
 | T-013 | `praps/tests/cli.rs` | `readme_lists_what_praps_lists` |
 
-The four tests of the Describe crash scenario and the five new end-to-end tests are in [integration-tests.md](integration-tests.md) and [e2e-tests.md](e2e-tests.md).
+The rows above name 79 tests. With the four tests of the Describe crash scenario and the five new end-to-end tests they are the 88. Those nine are in [integration-tests.md](integration-tests.md) and [e2e-tests.md](e2e-tests.md).
 
 **Where the tests differ from the test plan:**
 - The hint tests are in `praps/src/hint.rs`, a module the plan did not name, and not in `commands.rs`.
-- `every_refusal_prints_one_hint` covers more refusals than the plan lists. It does not reach those that need a directory the user may not read or enter, or a change with several parents. It reaches a hazard and text with no UTF-8 form on Windows only, and a removed current directory on Linux only. The unit test `hints_take_one_of_three_forms` reads the hint of every kind.
-- `a_directory_already_gone_is_passed_over` and `quoted_text_is_shown_only_when_it_is_plain` are not in the plan. The first covers a case found while writing T-012; the second pins which words a hint may show.
-- `a_crash_during_a_removal_still_stops_the_write` shows the outcome only. After a crash the simulator fails every later syscall, so the write stops whether or not the code tells a crash from a refusal. The code review found this (finding 4), and the test's comment now says so.
+- `every_refusal_prints_one_hint` makes 30 refusals through the binary on Linux and 27 on Windows, more than the plan lists, and asserts the count. Of the 32 kinds in the hint table:
+  - 25 are made on both systems, a change with several parents among them;
+  - five more on Linux only: a removed current directory, and four that need a directory closed by its mode (a store that cannot be listed, a directory above that cannot be searched, `init` stopped by the filesystem, and `verify` on a directory it cannot read);
+  - two more on Windows only: a hazard, and text with no UTF-8 form;
+  - **one is made on neither: a top that cannot be made the current directory.** Nothing in the test can close a directory to entry without closing its store too. Its hint is read only by the unit test, which pairs it with an example message by hand. Backlog T-036 carries it.
+  - The table has two rows the corpus counts once each way: "usage error" is made twice (too many arguments, and a flag), and text given as several words that cannot be shown is made in `describe_with_unquoted_words_hints_quotes`.
+- Tests not in the plan: `a_directory_already_gone_is_passed_over` and `quoted_text_is_shown_only_when_it_is_plain` (a case found while writing T-012, and which words a hint may show); `a_crash_is_not_taken_for_a_refusal` (below); and the four tests named in the T-006 row.
+- `a_crash_during_a_removal_still_stops_the_write` shows the outcome only: after a crash the simulator fails every later syscall, so the write stops whether or not the code tells a crash from a refusal (code review, finding 4). `a_crash_is_not_taken_for_a_refusal` closes that. Its filesystem fails only the removal, with the simulator's crash error, and lets every later call through. With the arm that tells a crash from a refusal taken out of `materialise.rs`, that test fails and the older one passes; this was run once, by hand, and the source put back.
+- `op_log_lists_once_and_counts_invalid_files`: the plan says three ops and one read of each of five files. The test damages one of its three ops, so it asserts the two that are whole, three invalid files, and one read of each of the four files whose names are ids.
+- `a_missing_directory_is_not_searched_above` runs the clause for every command that takes a directory, each with the directory in the place it takes it: `status`, `new`, `log`, `ops`, `undo`, `restore OP`, `describe TEXT` and `verify`, for a directory that is not there and for a file.
+- `a_later_command_reads_the_op_log_once_more` also runs a later command that commits: one listing and one read of each op file, all before its first write, then one more read of its parent and one of its own name.
 
 ## Negative controls
 
@@ -83,7 +91,7 @@ At the head the same `undo` exits 0 ([e2e-tests.md](e2e-tests.md)).
   It found one definition each of `parent_dir` and `dir_exists` (`sim/src/fs.rs`), `hex` with its writer `write_hex` (`hash/src/lib.rs`), the join of a repository path onto a root, `on_disk`, and the listing of a directory by name, `listing` (`workspace/src/materialise.rs`). The second `listing` there is a method of the lazy reader that calls the first. A search for the two-digit hex format (`02x`, `:x}`) outside `xtask` found 14 places: `hash::write_hex` itself; ten that print one byte in an error message (`codec/src/error.rs`, `hash/src/lib.rs`); two escapes in a name (`sim/src/name.rs`); and the algorithm id that starts a store file's name (`store/src/names.rs`). None formats a string of bytes.
 - **`t003_changes_no_assertion` (T-003).** Yes. The code review read `git show 0ca3cea -- crates/*/tests`: two files gained tests at their ends, and the only lines removed under any `tests/` directory are the cell count and digest of Snapshot and of Materialise.
 - **`store_tests_only_gain`.** Yes. `git diff b0675f6..80a3e7e -- crates/store/tests` is 67 insertions and no deletion, one test appended. The later commit `4152526` does not touch that directory.
-- **`ci_sprint5_record_matches_github` (T-001).** On 2026-11-10, during Test, the three runs and their fifteen jobs were fetched again with `gh api …/actions/runs/<run>` and `…/jobs`, and the six `cargo ci` logs with `gh run view --job <job> --log`. Every event, head, conclusion, attempt, start and end time, runner image and version, `test:` line and `ci:` line equals what [ci-sprint5.md](ci-sprint5.md) records. `gh run list --branch main` still shows the merge's run as the latest on `main`. The toolchain and cache cells of the record were not read again.
+- **`ci_sprint5_record_matches_github` (T-001).** On 2026-11-10, during Test, the three runs and their fifteen jobs were fetched again with `gh api …/actions/runs/<run>` and `…/jobs`, and the six `cargo ci` logs with `gh run view --job <job> --log`. The other nine logs were then read for their runner image and version. Every event, head, conclusion, attempt, start and end time, `test:` line and `ci:` line, and the image and version of all fifteen jobs, equals what [ci-sprint5.md](ci-sprint5.md) records. `gh run list --branch main` still shows the merge's run as the latest on `main`. The toolchain and cache cells of the record were not read again.
 - **`sign_offs_are_the_owners_words` (T-001).** The record's search was run again and finds the same 17 criteria. The record marks none as signed, and the conversation of this sprint holds no words of the owner that sign one: the owner's approval of the plan chose three things (the name `verify`, `log` and `ops`, and the GitHub actions) and nothing else.
 - **`backlog_carries_what_is_pending`.** `docs/work/tasks.md` holds T-035 with the runs after the tested head, eight sign-offs and the three samples of INT-0003 AC-11. T-024, T-025 and T-018 are named there only inside T-035's own text, as work done. `cargo book` passes.
 - **`specs_match_the_code` (T-013).** In `docs/spec/working-copy.md`:
@@ -104,7 +112,7 @@ At the head the same `undo` exits 0 ([e2e-tests.md](e2e-tests.md)).
 
 ## The hint table
 
-Printed by `hints_take_one_of_three_forms` with `--nocapture` at the head. Backticks inside a cell are shown as apostrophes. A ` / ` stands for a line break.
+Printed by `hints_take_one_of_three_forms` with `--nocapture` at `4152526`; `bbffce6` changes no hint. Backticks inside a cell are shown as apostrophes. A ` / ` stands for a line break.
 
 | Kind | Message | Hint |
 |---|---|---|
@@ -143,4 +151,4 @@ Printed by `hints_take_one_of_three_forms` with `--nocapture` at the head. Backt
 
 32 kinds: 17 name a command, 12 say what to put right, 3 say there is no remedy yet
 
-The code review read the table as it stood at `80a3e7e`, with 31 rows. It rejected two rows and found one refusal missing from it; commit `4152526` changed those hints and added the row. Its verdict on each row is in [code-review.md](code-review.md).
+The code review read the table as it stood at `80a3e7e`, with 31 rows. It rejected two rows and found one refusal missing from it; commit `4152526` changed five hints and added the row. A second reader then judged those five rows as they stand. Both sets of verdicts are in [code-review.md](code-review.md).

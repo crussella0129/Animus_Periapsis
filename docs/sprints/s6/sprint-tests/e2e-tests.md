@@ -1,12 +1,12 @@
 # Sprint 6 end-to-end test results
 
-Tested head: `4152526`. The tests in `crates/praps/tests/e2e.rs` run the built `praps` binary on the real filesystem: NTFS on Windows 11, and ext4 in WSL Ubuntu. All 10 passed on both, inside `cargo ci` and again by themselves.
+Tested head: `bbffce6`. The tests in `crates/praps/tests/e2e.rs` run the built `praps` binary on the real filesystem: NTFS on Windows 11, and ext4 in WSL Ubuntu. All 10 passed on both, inside `cargo ci` and again by themselves.
 
 ## Through the binary
 
 | Test | Task | What it shows | Windows | WSL |
 |---|---|---|---|---|
-| `praps_first_session_end_to_end` | T-010 | A session that uses only words `praps` printed. `praps` alone gives the list, and every word used after it is checked to be in that list. `praps help WORD` gives the usage line of each of nine commands. Then: `init`; two files and `status`; `describe`; `new`; two edits and `status`; a second `describe` of several lines; `log` (two changes, each with its first line); `ops` (six operations); `undo` (the second description is gone, no file changes); `restore` of the describing operation (it is back); `restore` of the first description's operation (the files of that time); `undo` (the later files return); `verify` (`clean`). Every command exits 0, and each output is compared with what the step names. At the end every operation is still listed, with the four the session added. | pass | pass |
+| `praps_first_session_end_to_end` | T-010 | A session that uses only words `praps` printed. `praps` alone gives the list, and every word used after it is checked to be in that list. `praps help WORD` gives the usage line of each of nine commands. `praps help init` gives the example `praps init project`, which is run as printed. Then: two files and `status`; `describe`; `new`; two edits and `status`; a second `describe` of several lines; `log` (two changes, each with its first line); `ops` (six operations); `undo` (the second description is gone, no file changes); `restore` of the describing operation (it is back); `restore` of the first description's operation (the files of that time); `undo` (the later files return); `verify` (`clean`). Every command exits 0, and each output is compared with what the step names. At the end every operation is still listed, with the four the session added. | pass | pass |
 | `praps_first_session_from_below` | T-010 | The same session with every command after `init` run from `src/app`, two levels below the top. The same assertions hold. | pass | pass |
 | `praps_end_to_end_from_below` | T-008 | The history session from two levels down ends with the same files and the same number of operations as from the top. | pass | pass |
 | `undo_from_a_directory_another_process_stands_in` | T-012 | See below. | pass | pass |
@@ -14,7 +14,9 @@ Tested head: `4152526`. The tests in `crates/praps/tests/e2e.rs` run the built `
 | `praps_end_to_end`, `praps_history_end_to_end`, `praps_status_reports_a_non_utf8_name`, `praps_status_reports_non_utf8_names_and_directories` | earlier sprints | Unchanged but for `verify` and `ops` where they used `fsck` and `log`. | pass | pass |
 | `stand_in_the_current_directory` | T-012 | Not a test of its own: it is the process the test below starts. Run as a test it does nothing. | pass | pass |
 
-**Where the first session differs from the test plan.** The plan's outline has `praps help init` give an example that is then run, and `undo` take back the `new`. The session as written asks for help on nine commands and checks each usage line, runs `init` as that help shows it, and undoes and restores a description and a write of files instead. It meets the plan's clause: only words `praps` printed, every command exits 0, and each output holds what its step names.
+**Where these tests differ from the test plan.**
+- The plan's outline of the first session has `undo` take back the `new`. The session as written undoes and restores a description and a write of files instead. It meets the plan's clause: only words `praps` printed, every command exits 0, and each output holds what its step names.
+- The plan's `undo_from_a_directory_another_process_stands_in` has a file at `d1/d2/f`, with the helper process and `undo` in `d1/d2`, two levels down. The test has `work/file` and `work/deep/other`, with both in `work`, one level down, so that the write must remove a directory below the one stood in as well.
 
 ## `undo` from a directory another process stands in
 
