@@ -1927,6 +1927,25 @@ fn every_refusal_prints_one_hint() {
         "`praps status`",
     );
 
+    // A shell whose current directory has been removed.
+    #[cfg(unix)]
+    refused(
+        "a current directory that cannot be read",
+        Command::new("sh")
+            .args([
+                "-c",
+                &format!(
+                    "mkdir gone && cd gone && rmdir ../gone && exec '{}' status",
+                    env!("CARGO_BIN_EXE_praps")
+                ),
+            ])
+            .current_dir(&plain)
+            .output()
+            .unwrap(),
+        1,
+        "change to a directory that exists",
+    );
+
     // The errors of the `workspace` crate: exit 1.
     assert_eq!(code(&praps(&["init", "fresh"], &dir)), 0);
     refused(
@@ -2097,7 +2116,7 @@ fn every_refusal_prints_one_hint() {
         1,
         "put back the files named above",
     );
-    assert!(kinds >= 24, "{kinds} kinds of refusal were checked");
+    assert!(kinds >= 25, "{kinds} kinds of refusal were checked");
     let _ = fs::remove_dir_all(&dir);
 }
 
