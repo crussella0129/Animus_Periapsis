@@ -11,7 +11,7 @@ Tested head: `bbffce6`, the last commit that changes code or tests. Two commits 
 
 46 of 46 test executables were built and run on both. The suite as a whole is in [integration-tests.md](integration-tests.md).
 
-**Against Sprint 5.** At `b0675f6` the totals were 501 and 502. The source holds 472 test functions there and 560 at the head: 88 more. Linux gained all 88 (590). Windows gained 87 (588), because one of them, `a_removed_current_directory_is_reported`, is for Unix only. Linux now has two tests Windows has not: that one, and the test that needs a real symbolic link on ext4, as before.
+**Against Sprint 5.** At `b0675f6` the totals were 501 and 502. The source holds 472 test functions there and 560 at the head, by a script that takes the function after each `#[test]`: 88 more. (`git grep '#[test]'` finds 475 and 563 attributes, three more at both commits; the difference is the same.) Linux gained all 88 (590). Windows gained 87 (588), because one of them, `a_removed_current_directory_is_reported`, is for Unix only. Linux now has two tests Windows has not: that one, and the test that needs a real symbolic link on ext4, as before.
 
 **No test was removed.** Eight names are gone from the source, and each is a rename with its assertions kept, except where the build plan says an assertion changes:
 
@@ -50,11 +50,14 @@ The rows above name 79 tests. With the four tests of the Describe crash scenario
 **Where the tests differ from the test plan:**
 - The hint tests are in `praps/src/hint.rs`, a module the plan did not name, and not in `commands.rs`.
 - `every_refusal_prints_one_hint` makes 30 refusals through the binary on Linux and 27 on Windows, more than the plan lists, and asserts the count. Of the 32 kinds in the hint table:
-  - 25 are made on both systems, a change with several parents among them;
+  - 23 are made on both systems, by 25 refusals: "usage error" is made twice (too many arguments, and a flag), and so is "a word that is not a command" (a mistyped word, and another system's word). A change with several parents is among the 23;
   - five more on Linux only: a removed current directory, and four that need a directory closed by its mode (a store that cannot be listed, a directory above that cannot be searched, `init` stopped by the filesystem, and `verify` on a directory it cannot read);
   - two more on Windows only: a hazard, and text with no UTF-8 form;
-  - **one is made on neither: a top that cannot be made the current directory.** Nothing in the test can close a directory to entry without closing its store too. Its hint is read only by the unit test, which pairs it with an example message by hand. Backlog T-036 carries it.
-  - The table has two rows the corpus counts once each way: "usage error" is made twice (too many arguments, and a flag), and text given as several words that cannot be shown is made in `describe_with_unquoted_words_hints_quotes`.
+  - one more, text given as several words that cannot be shown, is made in `describe_with_unquoted_words_hints_quotes`;
+  - **one is made nowhere: a top that cannot be made the current directory.** It was not made by file modes, which cannot close a directory to entry without closing its store too, and a very long path on Windows was not tried. Its evidence is the unit test of its hint's form, with an example message paired by hand, and the second reader's reading of where it is printed. Backlog T-036 carries it.
+
+  That is 23 + 5 + 2 + 1 + 1 = 32. So 31 of the 32 kinds are printed by `praps` in a test on at least one system.
+- **Three places that print a hint are run by no test**, though the hint each prints is printed elsewhere by one that is: a directory given that exists but cannot be listed (`must_exist`); `verify` where the directory's own `.praps/store` cannot be listed (the corpus makes that refusal for `status`); and `verify` stopped by the filesystem while reading a store it has already chosen (the corpus makes the failure one step earlier). All three go through the one function that prints a refusal. Backlog T-036 carries them.
 - Tests not in the plan: `a_directory_already_gone_is_passed_over` and `quoted_text_is_shown_only_when_it_is_plain` (a case found while writing T-012, and which words a hint may show); `a_crash_is_not_taken_for_a_refusal` (below); and the four tests named in the T-006 row.
 - `a_crash_during_a_removal_still_stops_the_write` shows the outcome only: after a crash the simulator fails every later syscall, so the write stops whether or not the code tells a crash from a refusal (code review, finding 4). `a_crash_is_not_taken_for_a_refusal` closes that. Its filesystem fails only the removal, with the simulator's crash error, and lets every later call through. With the arm that tells a crash from a refusal taken out of `materialise.rs`, that test fails and the older one passes; this was run once, by hand, and the source put back.
 - `op_log_lists_once_and_counts_invalid_files`: the plan says three ops and one read of each of five files. The test damages one of its three ops, so it asserts the two that are whole, three invalid files, and one read of each of the four files whose names are ids.
@@ -151,4 +154,4 @@ Printed by `hints_take_one_of_three_forms` with `--nocapture` at `4152526`; `bbf
 
 32 kinds: 17 name a command, 12 say what to put right, 3 say there is no remedy yet
 
-The code review read the table as it stood at `80a3e7e`, with 31 rows. It rejected two rows and found one refusal missing from it; commit `4152526` changed five hints and added the row. A second reader then judged those five rows as they stand. Both sets of verdicts are in [code-review.md](code-review.md).
+The code review read the table as it stood at `80a3e7e`, with 31 rows. It rejected two rows and found one refusal missing from it; commit `4152526` changed four hints and added the row. A second reader then judged those five rows as they stand. Both sets of verdicts are in [code-review.md](code-review.md).

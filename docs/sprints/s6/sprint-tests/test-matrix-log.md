@@ -6,7 +6,7 @@ The result lines of the three working-copy matrices (Snapshot, Materialise, Desc
 cargo test -p workspace --test crash --test materialise_crash --test describe_crash -- --nocapture
 ```
 
-Windows 11 (NTFS, the working checkout) and WSL Ubuntu (ext4, a fresh clone) printed the same 39 lines: sorted, the two outputs are equal line for line. They are given once, below, in the order Windows printed them.
+Windows 11 (NTFS, the working checkout) and WSL Ubuntu (ext4, in the clone made for this sprint's runs and checked out at that commit) printed the same 39 lines: sorted, the two outputs are equal line for line. They are given once, below, in the order Windows printed them.
 
 The two store matrices were not run with `--nocapture` this sprint. Their tests assert the cell counts and digests as literals, 32,840 cells with `blake3:d36b8c9c…` and 44,836 cells with `blake3:253b1eab…`, and both passed on both systems at every task's commit and at the head. No file under `crates/store/tests` changed but for one test added.
 
