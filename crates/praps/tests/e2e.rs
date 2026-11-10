@@ -6,7 +6,8 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use sim::Rng;
 
@@ -555,4 +556,123 @@ fn praps_first_session_end_to_end() {
 #[test]
 fn praps_first_session_from_below() {
     first_session(true);
+}
+
+/// The variable that makes this test binary, started again, a process that
+/// stands in its current directory: it names a directory for two signal
+/// files.
+const STAND: &str = "PRAPS_E2E_STAND";
+
+/// Not a test of its own. `undo_from_a_directory_another_process_stands_in`
+/// starts this binary again with [`STAND`] set. That process writes
+/// `standing`, then keeps its current directory until `release` appears.
+/// Run without the variable, as a test, it does nothing.
+#[test]
+fn stand_in_the_current_directory() {
+    let Some(signals) = std::env::var_os(STAND) else {
+        return;
+    };
+    let signals = PathBuf::from(signals);
+    fs::write(signals.join("standing"), b"").unwrap();
+    let started = Instant::now();
+    while !signals.join("release").exists() && started.elapsed() < Duration::from_secs(120) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// `undo`, run from a directory that its write empties, while another
+/// process has that directory as its current directory. Where the system
+/// then refuses to remove the directory (Windows), the write goes on: the
+/// working copy's files equal the target's, the directory is left empty,
+/// and a note names it. Where the system removes it (Linux), it is gone
+/// and there is no note. Either way `praps` exits 0 and the record is
+/// dropped (INT-0037 AC-3; INT-0014; Sprint 6 T-012). Run with
+/// `--nocapture`, it prints which happened.
+#[test]
+fn undo_from_a_directory_another_process_stands_in() {
+    let dir = claim("stood-in");
+    let root = dir.join("project");
+    ok(&["init", "project"], &dir);
+    write(&root, "keep", b"k");
+    assert_eq!(ok(&["status"], &root), ["A keep"]);
+    write(&root, "work/file", b"w");
+    write(&root, "work/deep/other", b"o");
+    assert_eq!(ok(&["status"], &root).len(), 3);
+    let work = root.join("work");
+
+    let signals = dir.join("signals");
+    fs::create_dir(&signals).unwrap();
+    let mut holder = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "stand_in_the_current_directory"])
+        .env(STAND, &signals)
+        .current_dir(&work)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let started = Instant::now();
+    while !signals.join("standing").exists() {
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "the process that stands in the directory did not start"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    // The undo takes back the recording of `work/…`, so its write removes
+    // both files and then the two directories they leave empty.
+    let output = praps(&["undo"], &work);
+    fs::write(signals.join("release"), b"").unwrap();
+    assert!(holder.wait().unwrap().success());
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let err = String::from_utf8_lossy(&output.stderr).into_owned();
+    let notes: Vec<&str> = err
+        .lines()
+        .filter(|line| line.starts_with("note: "))
+        .collect();
+    assert_eq!(fs::read(root.join("keep")).unwrap(), b"k");
+    assert!(!work.join("file").exists(), "{err}");
+    assert!(!work.join("deep").exists(), "{err}");
+    if work.exists() {
+        assert_eq!(fs::read_dir(&work).unwrap().count(), 0, "left empty");
+        assert_eq!(notes.len(), 1, "{err}");
+        assert!(
+            notes[0].starts_with("note: work: the directory is empty but could not be removed"),
+            "{err}"
+        );
+        println!(
+            "undo from a directory another process stands in: the directory was left; {}",
+            notes[0]
+        );
+    } else {
+        assert!(notes.is_empty(), "{err}");
+        println!("undo from a directory another process stands in: the directory was removed");
+    }
+    assert_eq!(
+        err.lines().count(),
+        notes.len(),
+        "nothing else on stderr: {err}"
+    );
+    assert!(
+        !root.join(".praps/working-copy").exists(),
+        "the record was dropped"
+    );
+
+    // The write is finished: the next command has nothing to resume, and
+    // sees the target's files and nothing else.
+    let status = praps(&["status"], &root);
+    assert_eq!(status.status.code(), Some(0), "{status:?}");
+    assert!(status.stderr.is_empty(), "{status:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&status.stdout),
+        "A keep
+"
+    );
+    assert_eq!(ok(&["verify"], &root), ["clean"]);
+    // What was undone is still there to return to.
+    ok(&["undo"], &root);
+    assert_eq!(fs::read(work.join("file")).unwrap(), b"w");
+    assert_eq!(fs::read(work.join("deep/other")).unwrap(), b"o");
+    let _ = fs::remove_dir_all(&dir);
 }

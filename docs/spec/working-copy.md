@@ -340,6 +340,24 @@ With nothing blocking, materialise does the following, in order:
 6. remove the record;
 7. sync `.praps`.
 
+A directory that step 2 cannot remove is left, empty, and a note names it.
+On Windows a directory cannot be removed while a process has it as its
+current directory, which is common now that a command may be run from any
+directory inside the working copy. Directories are not tracked, so an empty
+one changes nothing a snapshot records, and the write goes on to steps 3 to
+7.
+
+There is one exception. If the write must put a file at the directory's
+path, or at a path above it, that file could not be put while the directory
+stays. The write then stops with a failure that names the directory, the
+record is kept, and each later command resumes the write and stops the same
+way until the directory can be removed. Going on there would drop the record with a file of T
+missing, and the next snapshot would record it as deleted.
+
+A removal that fails because the process crashed is not a refusal: it stops
+the write like a crash at any other step. A directory that is already gone
+when step 2 comes to remove it is passed over.
+
 Just before a path is removed (step 1) or renamed over (step 4), it is read
 again. If it no longer holds F's bytes (or, for a path F did not have, is no
 longer absent), it was edited during the write: it is kept, the temporary

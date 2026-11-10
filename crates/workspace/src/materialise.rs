@@ -441,9 +441,19 @@ fn unchanged(fs: &impl Fs, path: &Path, from: Option<&File>, alg: HashAlg) -> io
     }
 }
 
+/// Whether the write must put a file at `dir` or at a path above it: the
+/// file could then not be put while `dir` stays a directory.
+fn needed_for_a_file(dir: &str, plan: &Plan) -> bool {
+    plan.write.iter().any(|(path, _, _)| {
+        dir.strip_prefix(path.as_str())
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    })
+}
+
 /// Applies `plan`: steps 1 to 5 of "Materialise". `content` gives each
 /// blob's bytes. Returns a note for each path left because it changed after
-/// the plan. The caller then drops the record and syncs `.praps`.
+/// the plan, and for each emptied directory that could not be removed and
+/// was left. The caller then drops the record and syncs `.praps`.
 pub fn apply(
     fs: &impl Fs,
     root: &Path,
@@ -488,7 +498,35 @@ pub fn apply(
             Err(error) => return Err(error),
         }
         fs.sync_dir(&path)?;
-        fs.remove_dir(&path)?;
+        match fs.remove_dir(&path) {
+            Ok(()) => {}
+            // Gone since it was listed: that is what was wanted, as for a
+            // file in step 1.
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            // A crash is not a refusal: the write stops, and resume
+            // finishes it.
+            Err(error) if sim::is_crash(&error) => return Err(error),
+            // The directory cannot be removed: another process stands in
+            // it, say. Where a file is due at its path, or at a path above
+            // it, the write cannot go on. It stops with the record kept,
+            // and a later command finishes it once the directory can go.
+            Err(error) if needed_for_a_file(dir, plan) => {
+                return Err(io::Error::new(
+                    error.kind(),
+                    format!(
+                        "{dir}: the directory could not be removed, and the write must put a file there or above it ({error})"
+                    ),
+                ));
+            }
+            // Anywhere else the directory is left, empty. Directories are
+            // not tracked, so it changes nothing a snapshot records.
+            Err(error) => {
+                notes.push(format!(
+                    "{dir}: the directory is empty but could not be removed, and was left ({error})"
+                ));
+                continue;
+            }
+        }
         fs.sync_dir(&on_disk(root, split(dir).0))?;
     }
     // 3. Create the missing directories, shallowest first.
