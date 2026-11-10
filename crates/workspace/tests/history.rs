@@ -636,3 +636,53 @@ fn a_failed_snapshot_reports_nothing_stale() {
     assert!(matches!(ws.status(), Err(Error::SeveralHeads(h)) if h.len() == 2));
     assert!(ws.reported().is_empty(), "{:?}", ws.reported());
 }
+
+/// `undo` and `restore` record the working copy once, just before they plan
+/// the write: a tracked file the move leaves as it is, which only a
+/// snapshot's scan reads, is read once. An edit made before the command is
+/// still in an op of its own before the op that moves the working copy, and
+/// `restore` brings it back (Sprint 6 T-005; INT-0009 AC-2).
+#[test]
+fn undo_and_restore_read_an_untouched_file_once() {
+    let (mut ws, fs) = fresh(60);
+    put(&fs, "keep/k", b"kept");
+    put(&fs, "a", b"1");
+    ws.snapshot().unwrap();
+    put(&fs, "a", b"2");
+    ws.snapshot().unwrap();
+    let reads_of_kept = |from: usize| {
+        fs.trace()[from..]
+            .iter()
+            .filter(|line| *line == "read repo/keep/k")
+            .count()
+    };
+
+    put(&fs, "a", b"edited before undo");
+    let start = fs.trace().len();
+    let (_, new) = ws.undo().unwrap();
+    assert_eq!(reads_of_kept(start), 1, "undo scans once");
+    assert_eq!(content(&fs, "a").unwrap(), b"1");
+    assert_eq!(content(&fs, "keep/k").unwrap(), b"kept");
+    // The edit is in the op before the one that moved the working copy.
+    let before_undo = *ws.store().ops().unwrap()[&new].parents.first().unwrap();
+
+    put(&fs, "a", b"edited before restore");
+    let start = fs.trace().len();
+    let (_, new) = ws.restore(&hex(&before_undo)).unwrap();
+    assert_eq!(reads_of_kept(start), 1, "restore scans once");
+    assert_eq!(content(&fs, "a").unwrap(), b"edited before undo");
+    let before_restore = *ws.store().ops().unwrap()[&new].parents.first().unwrap();
+    ws.restore(&hex(&before_restore)).unwrap();
+    assert_eq!(content(&fs, "a").unwrap(), b"edited before restore");
+
+    // `restore_view`, called by itself, still records the working copy
+    // first, once.
+    put(&fs, "a", b"edited before restore_view");
+    let view = view_of(&ws, &before_undo);
+    let start = fs.trace().len();
+    let new = ws.restore_view(&view).unwrap();
+    assert_eq!(reads_of_kept(start), 1, "restore_view scans once");
+    let recorded = *ws.store().ops().unwrap()[&new].parents.first().unwrap();
+    ws.restore(&hex(&recorded)).unwrap();
+    assert_eq!(content(&fs, "a").unwrap(), b"edited before restore_view");
+}

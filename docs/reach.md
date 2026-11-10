@@ -9,31 +9,31 @@ Each row is a simulation scenario, by the sprint that added it. Each column is a
 | store (S1) | 227040 | 24160 | 657200 | 23200 | 0 | 0 | 0 | 0 |
 | two writers (S1) | 28600 | 6760 | 96920 | 10000 | 0 | 0 | 0 | 0 |
 | Snapshot (S2) | 431840 | 47600 | 1082283 | 47280 | 132529 | 0 | 0 | 0 |
-| Materialise (S3) | 550395 | 37920 | 1556696 | 70000 | 132640 | 66860 | 31678 | 9918 |
+| Materialise (S3) | 521595 | 36640 | 1474776 | 67440 | 107280 | 63660 | 30398 | 9918 |
 | four writers (S4) | 542894 | 43876 | 1963196 | 181522 | 0 | 0 | 0 | 0 |
 
 ## Points
 
 | Point | Unit | Sprint | Hits |
 |---|---|---:|---:|
-| `store.commit_op.dir_synced` | `store::commit_op` | 1 | 335203 |
+| `store.commit_op.dir_synced` | `store::commit_op` | 1 | 329443 |
 | `store.commit_op.present_synced` | `store::commit_op` | 1 | 11030 |
-| `store.commit_op.references_resynced` | `store::commit_op` | 1 | 384039 |
-| `store.commit_op.renamed` | `store::commit_op` | 1 | 343789 |
-| `store.commit_op.temp_synced` | `store::commit_op` | 1 | 348477 |
-| `store.commit_op.temp_written` | `store::commit_op` | 1 | 358231 |
-| `store.init.layout_created` | `store::init` | 1 | 160316 |
-| `store.put_object.dir_synced` | `store::put_object` | 1 | 1308513 |
+| `store.commit_op.references_resynced` | `store::commit_op` | 1 | 378279 |
+| `store.commit_op.renamed` | `store::commit_op` | 1 | 338029 |
+| `store.commit_op.temp_synced` | `store::commit_op` | 1 | 342717 |
+| `store.commit_op.temp_written` | `store::commit_op` | 1 | 352471 |
+| `store.init.layout_created` | `store::init` | 1 | 159036 |
+| `store.put_object.dir_synced` | `store::put_object` | 1 | 1288033 |
 | `store.put_object.present_synced` | `store::put_object` | 1 | 17583 |
-| `store.put_object.renamed` | `store::put_object` | 1 | 1326179 |
-| `store.put_object.temp_synced` | `store::put_object` | 1 | 1343697 |
-| `store.put_object.temp_written` | `store::put_object` | 1 | 1360323 |
-| `store.sync_layout.synced` | `store::sync_layout` | 1 | 332002 |
-| `workspace.snapshot.committed` | `workspace::snapshot` | 2 | 90129 |
-| `workspace.snapshot.scanned` | `workspace::snapshot` | 2 | 175040 |
-| `workspace.apply.path_removed` | `workspace::materialise` | 3 | 28436 |
-| `workspace.apply.path_written` | `workspace::materialise` | 3 | 38424 |
-| `workspace.record.dropped` | `workspace::record` | 3 | 15838 |
-| `workspace.record.written` | `workspace::record` | 3 | 15840 |
+| `store.put_object.renamed` | `store::put_object` | 1 | 1305699 |
+| `store.put_object.temp_synced` | `store::put_object` | 1 | 1323217 |
+| `store.put_object.temp_written` | `store::put_object` | 1 | 1339843 |
+| `store.sync_layout.synced` | `store::sync_layout` | 1 | 329442 |
+| `workspace.snapshot.committed` | `workspace::snapshot` | 2 | 87569 |
+| `workspace.snapshot.scanned` | `workspace::snapshot` | 2 | 152240 |
+| `workspace.apply.path_removed` | `workspace::materialise` | 3 | 27156 |
+| `workspace.apply.path_written` | `workspace::materialise` | 3 | 36504 |
+| `workspace.record.dropped` | `workspace::record` | 3 | 15198 |
+| `workspace.record.written` | `workspace::record` | 3 | 15200 |
 | `workspace.resume.dropped` | `workspace::resume` | 3 | 1920 |
 | `workspace.resume.started` | `workspace::resume` | 3 | 7998 |

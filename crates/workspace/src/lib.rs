@@ -555,9 +555,8 @@ impl<F: Fs> Workspace<F> {
     /// The entries the latest snapshot reported and left alone, sorted, as
     /// [`Status::reported`] gives them (INT-0004 AC-7). Every command that
     /// snapshots (`log`, `undo`, `restore`, `new_change`, `status`) sets
-    /// it, and it stays set when the command then fails. A command that
-    /// snapshots twice (`undo`, through [`Workspace::restore_view`]) scans
-    /// the same files both times, so it holds one report, not two.
+    /// it, and it stays set when the command then fails. Each command
+    /// snapshots once, so it holds one report.
     pub fn reported(&self) -> &[Reported] {
         &self.reported
     }
@@ -645,15 +644,18 @@ impl<F: Fs> Workspace<F> {
     /// drops the record. Returns the new op. `undo` and `restore` choose the
     /// view ("History commands" in the spec).
     pub fn restore_view(&mut self, view_id: &HashRef) -> Result<HashRef, Error> {
-        let state = self.begin()?;
+        let mut state = self.begin()?;
+        self.snapshot_in(&mut state)?;
         self.restore_view_in(state, view_id)
     }
 
-    /// [`Workspace::restore_view`] from the state a command already holds.
-    /// It takes the state for good: the op it commits moves the head, and
-    /// nothing follows it in a command.
-    fn restore_view_in(&mut self, mut state: State, view_id: &HashRef) -> Result<HashRef, Error> {
-        self.snapshot_in(&mut state)?;
+    /// Moves the working copy to the view `view_id` names, from the state a
+    /// command already holds, which that command has just snapshotted: the
+    /// working copy is scanned once for a command, and the write then
+    /// reads each path again before it removes or replaces it. It takes
+    /// the state for good: the op it commits moves the head, and nothing
+    /// follows it in a command.
+    fn restore_view_in(&mut self, state: State, view_id: &HashRef) -> Result<HashRef, Error> {
         let loaded = &state.at;
         let view = View::from_envelope(&self.store.get_object(view_id)?)
             .map_err(|error| corrupt(format!("view {view_id}: {error}")))?;
@@ -1031,8 +1033,8 @@ impl<F: Fs> Workspace<F> {
         Ok(entries)
     }
 
-    /// Undoes the last op: takes H, the single head now, snapshots, and
-    /// moves to the view of H's parent with [`Workspace::restore_view`].
+    /// Undoes the last op: takes H, the single head now, snapshots once, and
+    /// moves to the view of H's parent as [`Workspace::restore_view`] does.
     /// Returns H's parent and the new op. With no parent it fails with
     /// [`Error::NothingToUndo`], having written only the snapshot.
     pub fn undo(&mut self) -> Result<(HashRef, HashRef), Error> {
