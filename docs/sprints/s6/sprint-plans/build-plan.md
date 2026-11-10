@@ -1,3 +1,5 @@
+Finalized - DO NOT EDIT
+
 # Sprint 6 Build Plan
 
 The owner approved this plan's outline on 2026-11-10, with three choices: `verify` as the name of the integrity check; `log` for changes and `ops` for operations; and, on GitHub, one run on demand in T-001 and the sprint's pull request opened during Test.
