@@ -859,3 +859,63 @@ fn workspace_points_mark_each_stage() {
         restarted.clear_points();
     }
 }
+
+/// Everything on the filesystem outside `.praps`, by path.
+fn outside_praps(fs: &SimFs) -> BTreeMap<String, sim::Node> {
+    fs.snapshot()
+        .into_iter()
+        .filter(|(path, _)| !path.starts_with("repo/.praps"))
+        .collect()
+}
+
+/// `open` checks that every op file is whole before it resumes an
+/// interrupted write. With the record's target op damaged, resume would
+/// take the write for one that never began and drop the record, though
+/// files were already written; the half-written working copy would then be
+/// recorded as the user's edits once the op file was repaired. Instead
+/// `open` stops, the record stays, and no file changes; with the op file
+/// put right, it resumes and finishes (Sprint 6 T-004; INT-0014 AC-1).
+#[test]
+fn a_damaged_op_stops_open_before_resume() {
+    for seed in 0..10 {
+        // A restore that crashed after its op was committed and its removals
+        // were made, as it renamed the first written file into place.
+        let (fs, _) = crash_at(140 + seed, "rename repo/.praps-tmp-");
+        let record_path = praps().join(record::RECORD);
+        let record_bytes = fs.read(&record_path).unwrap();
+        let record = record::read(&fs, &praps()).unwrap().unwrap().unwrap();
+        let op_path = Path::new(ROOT)
+            .join(".praps/store/ops")
+            .join(store::names::file_name(&record.target));
+        let whole = fs.read(&op_path).unwrap();
+        let mut damaged = whole.clone();
+        *damaged.last_mut().unwrap() ^= 1;
+        fs.overwrite(&op_path, &damaged).unwrap();
+        let before = outside_praps(&fs);
+        assert_ne!(
+            files_on_disk(&fs),
+            expect(&[("a", "file", false), ("keep", "1", false)]),
+            "seed {seed}: the write was interrupted part way"
+        );
+
+        let error = Workspace::open(&fs, Path::new(ROOT), seed).err().unwrap();
+        assert!(matches!(error, Error::Corrupt(_)), "seed {seed}: {error}");
+        assert_eq!(
+            fs.read(&record_path).unwrap(),
+            record_bytes,
+            "seed {seed}: the record stays as it was"
+        );
+        assert_eq!(outside_praps(&fs), before, "seed {seed}: no file changed");
+
+        // With the op file's bytes put back, the next open finishes the write.
+        fs.overwrite(&op_path, &whole).unwrap();
+        let ws = Workspace::open(&fs, Path::new(ROOT), seed).unwrap();
+        assert!(ws.notes().is_empty(), "seed {seed}: {:?}", ws.notes());
+        assert_eq!(
+            files_on_disk(&fs),
+            expect(&[("a", "file", false), ("keep", "1", false)]),
+            "seed {seed}"
+        );
+        assert!(!fs.snapshot().contains_key("repo/.praps/working-copy"));
+    }
+}

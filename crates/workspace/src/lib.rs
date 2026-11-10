@@ -490,10 +490,10 @@ impl<F: Fs> Workspace<F> {
     }
 
     /// Opens the repository at `root`: makes `.praps` and the root durable
-    /// as `init` does, opens the store, finishes an interrupted write, and
-    /// checks that the op log has exactly one head. It reads the op log
-    /// once, and keeps what it read for the first command. `seed` drives
-    /// the change IDs it mints.
+    /// as `init` does, opens the store, checks that every op file is whole,
+    /// finishes an interrupted write, and checks that the op log has exactly
+    /// one head. It reads the op log once, and keeps what it read for the
+    /// first command. `seed` drives the change IDs it mints.
     pub fn open(fs: F, root: &Path, seed: u64) -> Result<Self, Error> {
         if !dir_exists(&fs, &root.join(PRAPS_DIR).join(STORE_DIR))? {
             return Err(Error::NotInitialised(root.to_path_buf()));
@@ -508,6 +508,11 @@ impl<F: Fs> Workspace<F> {
         })?;
         let mut workspace = Self::new(store, root, seed);
         let log = workspace.store.op_log()?;
+        // Before resume, which looks for the record's target among the
+        // valid ops: a target whose file is damaged would look like a write
+        // that never began, and its record would be dropped though files
+        // may already have been written.
+        refuse_invalid(&log)?;
         workspace.resume(&log.ops)?;
         workspace.kept = Some(workspace.state_of(log)?);
         Ok(workspace)

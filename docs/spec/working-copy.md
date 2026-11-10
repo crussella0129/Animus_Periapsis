@@ -314,8 +314,15 @@ mode is kept as described in [The executable bit](#the-executable-bit).
 
 ### Resume
 
-Every command that opens the working copy (every one but `init`) first looks
-for a record:
+Every command that opens the working copy (every one but `init`) first
+checks that every file in `ops/` is a whole op, and stops if one is not,
+leaving the record and every file as they are. Resume looks for the record's
+target among the valid ops, so without that check a target whose file was
+damaged would look like a write that never began: the record would be
+dropped, though files might already have been written, and the half-written
+working copy would be snapshotted as edits once the op file was repaired.
+
+It then looks for a record:
 - **The target op is the current single head.** Resume removes the files
   at the diff's temporary names (never an F or T path, and never anything
   but a file), then materialises F → T again with the same rules. A
