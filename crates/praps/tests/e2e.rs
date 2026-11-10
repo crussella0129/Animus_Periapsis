@@ -309,3 +309,67 @@ fn praps_commands_report_skipped_names() {
     assert_eq!(fs::read(root.join(&name)).unwrap(), b"untouched");
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// The history session again, with every command after `init` run from a
+/// directory two levels below the top: the same files come and go, the same
+/// number of ops is listed, and the store stays clean (INT-0037 AC-3;
+/// Sprint 6 T-008).
+#[test]
+fn praps_end_to_end_from_below() {
+    let ops_listed = |from_below: bool| {
+        let dir = claim(if from_below { "below" } else { "top" });
+        let root = dir.join("project");
+        ok(&["init", "project"], &dir);
+        // The directory the commands run from is ignored, so that it is in
+        // both sessions without being part of either's history.
+        write(&root, ".gitignore", b"*.log\nhere/\n");
+        write(&root, "here/deep/keep.log", b"a place to stand");
+        let cwd = if from_below {
+            root.join("here/deep")
+        } else {
+            root.clone()
+        };
+        write(&root, "README.md", b"# project\n");
+        write(&root, "src/main.rs", b"fn main() {}\n");
+        assert_eq!(
+            ok(&["status"], &cwd),
+            ["A .gitignore", "A README.md", "A src/main.rs"]
+        );
+        let read = |path: &str| fs::read(root.join(path)).ok();
+
+        ok(&["new"], &cwd);
+        write(&root, "README.md", b"# project\n\nMore.\n");
+        fs::remove_file(root.join("src/main.rs")).unwrap();
+        write(&root, "docs/guide.md", b"guide");
+        assert_eq!(
+            ok(&["status"], &cwd),
+            ["M README.md", "A docs/guide.md", "D src/main.rs"]
+        );
+
+        let undone = ok(&["undo"], &cwd);
+        assert!(undone[0].starts_with("undid the last op"), "{undone:?}");
+        assert_eq!(read("README.md").unwrap(), b"# project\n");
+        assert_eq!(read("src/main.rs").unwrap(), b"fn main() {}\n");
+        assert_eq!(read("docs/guide.md"), None);
+        assert!(!root.join("docs").exists());
+
+        let log = ok(&["log"], &cwd);
+        let edits = log[1].split(' ').next().unwrap();
+        ok(&["restore", edits], &cwd);
+        assert_eq!(read("README.md").unwrap(), b"# project\n\nMore.\n");
+        assert_eq!(read("src/main.rs"), None);
+        assert_eq!(read("docs/guide.md").unwrap(), b"guide");
+        assert_eq!(
+            ok(&["status"], &cwd),
+            ["M README.md", "A docs/guide.md", "D src/main.rs"]
+        );
+        assert_eq!(ok(&["verify"], &cwd), ["clean"]);
+        assert!(!root.join(".praps/working-copy").exists());
+        // No repository was made where the commands ran.
+        assert!(!cwd.join(".praps").exists() || cwd == root);
+        let listed = ok(&["log"], &cwd).len();
+        let _ = fs::remove_dir_all(&dir);
+        listed
+    };
+    assert_eq!(ops_listed(true), ops_listed(false));
+}

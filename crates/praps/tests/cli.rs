@@ -307,16 +307,22 @@ fn praps_status_lists_changes() {
 #[test]
 fn praps_status_outside_a_repository_fails() {
     let dir = claim("status-outside");
-    for args in [&["status"][..], &["new"][..], &["status", "nowhere"][..]] {
+    // A directory that is not there has a test of its own,
+    // `a_missing_directory_is_not_searched_above` (Sprint 6 T-008).
+    for args in [&["status"][..], &["new"][..]] {
         let output = praps(args, &dir);
         assert_eq!(code(&output), 1, "{args:?}: {output:?}");
         assert!(output.stdout.is_empty());
         let err = String::from_utf8_lossy(&output.stderr);
         assert!(
-            err.contains("not an initialised Periapsis repository"),
+            err.contains("no Periapsis repository here or in any directory above"),
             "{err}"
         );
     }
+    assert!(
+        fs::read_dir(&dir).unwrap().next().is_none(),
+        "nothing written"
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -1046,6 +1052,464 @@ fn docs_name_only_commands_praps_has() {
                 );
             }
         }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+// --------------------------- finding the working copy (Sprint 6 T-008)
+
+/// Copies the directory `from` to `to`, byte for byte.
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), &target).unwrap();
+        }
+    }
+}
+
+/// Every file under `top` by its path from `top`, with its content.
+fn files_under(top: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
+    tree(top)
+        .into_iter()
+        .map(|(path, content)| (path.strip_prefix(top).unwrap().to_path_buf(), content))
+        .collect()
+}
+
+/// The tests make their directories under the system's temporary
+/// directory, and several of them rely on no directory above those being a
+/// working copy. A stray repository there fails this test by name.
+#[test]
+fn no_repository_above_the_test_directories() {
+    let dir = claim("above");
+    for above in dir.ancestors() {
+        assert!(
+            !above.join(".praps").join("store").is_dir(),
+            "{} is a Periapsis repository above the tests' directories",
+            above.display()
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `help` and `version` look at no directory, so they need no repository.
+#[test]
+fn help_and_version_need_no_repository() {
+    let dir = claim("no-repo");
+    for args in [
+        &[][..],
+        &["help"][..],
+        &["help", "status"][..],
+        &["version"][..],
+    ] {
+        let output = praps(args, &dir);
+        assert_eq!(code(&output), 0, "{args:?}: {output:?}");
+        assert!(output.stderr.is_empty(), "{args:?}");
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A repository with some history and directories two levels deep, used as
+/// the template the next tests copy. Returns its top.
+fn template(dir: &Path) -> PathBuf {
+    let top = dir.join("template");
+    assert_eq!(code(&praps(&["init", "template"], dir)), 0);
+    write(&top, "a", b"1");
+    write(&top, "d1/d2/deep", b"deep");
+    assert_eq!(code(&praps(&["status"], &top)), 0);
+    assert_eq!(code(&praps(&["new"], &top)), 0);
+    write(&top, "a", b"2");
+    assert_eq!(code(&praps(&["status"], &top)), 0);
+    top
+}
+
+/// A command that opens a working copy does the same thing wherever inside
+/// it the command is run: at the top with no directory, from two levels
+/// down, and from outside with a directory below the top given. Its
+/// stdout, its exit code, its stderr (once each copy's own top path is
+/// replaced by a marker) and the files it leaves are equal (INT-0037 AC-3).
+#[test]
+fn commands_act_the_same_from_below() {
+    let dir = claim("below");
+    let template = template(&dir);
+    let first_op = logged_ops(&template).last().unwrap().clone();
+    type Edit = fn(&Path);
+    let corpus: Vec<(&str, Vec<String>, Edit)> = vec![
+        ("status with an edit", vec!["status".into()], |top| {
+            write(top, "d1/new", b"n")
+        }),
+        ("status with none", vec!["status".into()], |_| {}),
+        ("log", vec!["log".into()], |top| write(top, "a", b"3")),
+        ("undo", vec!["undo".into()], |top| write(top, "a", b"3")),
+        ("restore", vec!["restore".into(), first_op.clone()], |_| {}),
+        ("verify", vec!["verify".into()], |_| {}),
+        ("a refusal", vec!["restore".into(), "0000".into()], |_| {}),
+        (
+            "a usage error",
+            vec!["status".into(), "--short".into()],
+            |_| {},
+        ),
+    ];
+    for (n, (name, args, edit)) in corpus.iter().enumerate() {
+        let mut results = Vec::new();
+        for (place, sub, given) in [
+            ("at the top", "", None),
+            ("from two levels down", "d1/d2", None),
+            ("with a directory below given", "..", Some("d1")),
+        ] {
+            let top = dir.join(format!("copy-{n}-{}", results.len()));
+            copy_tree(&template, &top);
+            edit(&top);
+            // `..` stands for "outside": the copy's parent, with the
+            // directory given by its path from there.
+            let (cwd, given) = match given {
+                Some(below) => (
+                    dir.clone(),
+                    Some(top.join(below).to_str().unwrap().to_owned()),
+                ),
+                None if sub.is_empty() => (top.clone(), None),
+                None => (top.join(sub), None),
+            };
+            let mut line: Vec<&str> = args.iter().map(String::as_str).collect();
+            if let Some(given) = &given {
+                line.push(given);
+            }
+            let output = praps(&line, &cwd);
+            // The top's path as the test spells it, and as the system does
+            // (where a temporary directory has a short and a long name).
+            let spelled = top.display().to_string();
+            let resolved = fs::canonicalize(&top).unwrap().display().to_string();
+            let resolved = resolved.trim_start_matches(r"\\?\").to_owned();
+            let marked = |text: &[u8]| {
+                String::from_utf8_lossy(text)
+                    .replace(&spelled, "<top>")
+                    .replace(&resolved, "<top>")
+            };
+            results.push((
+                place,
+                code(&output),
+                marked(&output.stdout),
+                marked(&output.stderr),
+                files_under(&top),
+            ));
+        }
+        let (_, code0, out0, err0, files0) = &results[0];
+        for (place, code, out, err, files) in &results[1..] {
+            assert_eq!(code, code0, "{name}, {place}: exit code");
+            assert_eq!(out, out0, "{name}, {place}: stdout");
+            assert_eq!(err, err0, "{name}, {place}: stderr");
+            assert_eq!(files, files0, "{name}, {place}: the files left");
+        }
+    }
+
+    // `new` draws a random change ID: the ID is masked, and the state
+    // compared is the number of ops, the files outside `.praps` and what
+    // `status` then prints.
+    let mut results = Vec::new();
+    for sub in ["", "d1/d2"] {
+        let top = dir.join(format!("copy-new-{}", results.len()));
+        copy_tree(&template, &top);
+        write(&top, "a", b"3");
+        let output = praps(&["new"], &top.join(sub));
+        assert_eq!(code(&output), 0, "{output:?}");
+        let line = stdout(&output);
+        let id = line.trim().strip_prefix("new change ").unwrap();
+        assert_eq!(id.len(), 32, "{line}");
+        let outside: Vec<_> = files_under(&top)
+            .into_iter()
+            .filter(|(path, _)| !path.starts_with(".praps"))
+            .collect();
+        results.push((
+            logged_ops(&top).len(),
+            outside,
+            stdout(&praps(&["status"], &top)),
+        ));
+    }
+    assert_eq!(results[0], results[1], "new: from the top and from below");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A refusal names the working copy by the directory given, when one was
+/// given and it is the top, and by the top's full path otherwise.
+#[test]
+fn refusals_name_the_working_copy() {
+    let dir = claim("naming");
+    let top = template(&dir);
+    let full = top.display().to_string();
+    let refused = |args: &[&str], cwd: &Path| {
+        let output = praps(args, cwd);
+        assert_eq!(code(&output), 1, "{args:?}: {output:?}");
+        stderr(&output)
+    };
+    // The top given as a directory: named as given.
+    let err = refused(&["restore", "0000", "template"], &dir);
+    assert!(err.starts_with("praps restore: template: "), "{err}");
+    // No directory given, at the top and from below: the top's full path.
+    for cwd in [top.clone(), top.join("d1"), top.join("d1/d2")] {
+        let err = refused(&["restore", "0000"], &cwd);
+        assert!(
+            err.starts_with(&format!("praps restore: {full}: ")),
+            "from {}: {err}",
+            cwd.display()
+        );
+    }
+    // A directory below the top given: the top's full path too.
+    let err = refused(&["restore", "0000", "template/d1"], &dir);
+    assert!(
+        err.starts_with(&format!("praps restore: {full}: ")),
+        "{err}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A directory that is not there, or is not a directory, is refused by the
+/// name given, and the working copy above it is not acted on.
+#[test]
+fn a_missing_directory_is_not_searched_above() {
+    let dir = claim("missing");
+    let top = template(&dir);
+    write(&top, "a-file", b"a file, not a directory");
+    write(&top, "a", b"an edit that must not be recorded");
+    let before = tree(&top);
+    for (given, why) in [
+        ("nowhere", "no such directory"),
+        ("a-file", "not a directory"),
+    ] {
+        for command in ["status", "new", "log", "undo"] {
+            let output = praps(&[command, given], &top);
+            assert_eq!(code(&output), 1, "{command} {given}: {output:?}");
+            assert!(output.stdout.is_empty(), "{command} {given}");
+            let err = stderr(&output);
+            assert!(
+                err.starts_with(&format!("praps {command}: {given}: {why}")),
+                "{command} {given}: {err}"
+            );
+        }
+    }
+    assert_eq!(tree(&top), before, "nothing was recorded or written");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A shell whose current directory has been removed: the command says the
+/// current directory cannot be read, and exits 1.
+#[cfg(unix)]
+#[test]
+fn a_removed_current_directory_is_reported() {
+    let dir = claim("gone");
+    let script = format!(
+        "mkdir gone && cd gone && rmdir ../gone && exec '{}' status",
+        env!("CARGO_BIN_EXE_praps")
+    );
+    let output = Command::new("sh")
+        .args(["-c", &script])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(code(&output), 1, "{output:?}");
+    assert!(output.stdout.is_empty());
+    let err = stderr(&output);
+    assert!(
+        err.starts_with("praps status: the current directory cannot be read"),
+        "{err}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `init` never makes or completes a repository inside a working copy,
+/// whatever the directory it is given holds; at the top it still says the
+/// repository is there (INT-0037 AC-3).
+#[test]
+fn init_inside_a_working_copy_is_refused() {
+    let dir = claim("nested");
+    let top = template(&dir);
+    // A directory with a half-made store, and a whole repository, both
+    // inside the working copy. Each was made outside and moved in.
+    let half = dir.join("half");
+    fs::create_dir_all(half.join(".praps/store/objects")).unwrap();
+    fs::create_dir_all(half.join(".praps/store/ops")).unwrap();
+    fs::rename(&half, top.join("half")).unwrap();
+    assert_eq!(code(&praps(&["init", "whole"], &dir)), 0);
+    fs::rename(dir.join("whole"), top.join("whole")).unwrap();
+    let before = tree(&top);
+    let full = top.display().to_string();
+
+    let cases: [(&[&str], PathBuf); 6] = [
+        (&["init"], top.join("d1")),
+        (&["init"], top.join("d1/d2")),
+        (&["init", "d1/new"], top.clone()),
+        (&["init", "template/d1"], dir.clone()),
+        (&["init"], top.join("half")),
+        (&["init"], top.join("whole")),
+    ];
+    for (args, cwd) in cases {
+        let output = praps(args, &cwd);
+        assert_eq!(
+            code(&output),
+            1,
+            "{args:?} in {}: {output:?}",
+            cwd.display()
+        );
+        assert!(output.stdout.is_empty(), "{args:?}");
+        let err = stderr(&output);
+        assert!(err.starts_with("praps init: "), "{err}");
+        assert!(
+            err.contains(&format!("inside the working copy at {full}")),
+            "{args:?} in {}: {err}",
+            cwd.display()
+        );
+    }
+    assert_eq!(tree(&top), before, "nothing was written");
+    // At the top itself, `init` answers as before and writes nothing.
+    let output = praps(&["init"], &top);
+    assert_eq!(code(&output), 0, "{output:?}");
+    assert!(stdout(&output).contains("already a Periapsis repository"));
+    assert_eq!(tree(&top), before);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Outside any working copy, `init` completes a repository whose `init`
+/// was interrupted: one left with an empty `.praps`, and one left with a
+/// store that holds no operation.
+#[test]
+fn praps_init_completes_an_interrupted_init() {
+    let dir = claim("interrupted");
+    fs::create_dir_all(dir.join("empty/.praps")).unwrap();
+    fs::create_dir_all(dir.join("no-op/.praps/store/objects")).unwrap();
+    fs::create_dir_all(dir.join("no-op/.praps/store/ops")).unwrap();
+    for name in ["empty", "no-op"] {
+        let root = dir.join(name);
+        // Before: no command can use it.
+        assert_eq!(code(&praps(&["status"], &root)), 1, "{name}");
+        let output = praps(&["init", name], &dir);
+        assert_eq!(code(&output), 0, "{name}: {output:?}");
+        assert!(
+            stdout(&output).starts_with("initialised a Periapsis repository"),
+            "{name}: {output:?}"
+        );
+        assert_eq!(
+            fs::read_dir(root.join(".praps/store/ops")).unwrap().count(),
+            1
+        );
+        write(&root, "f", b"x");
+        assert_eq!(lines(&praps(&["status"], &root)), ["A f"], "{name}");
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// The store `verify` checks, by the four rules in order, and a directory
+/// that is not there.
+#[test]
+fn verify_chooses_its_store_in_order() {
+    let dir = claim("verify-order");
+    let top = template(&dir);
+    let flip = |file: &Path| {
+        let mut bytes = fs::read(file).unwrap();
+        *bytes.last_mut().unwrap() ^= 1;
+        fs::write(file, bytes).unwrap();
+    };
+    let first_file = |objects: &Path| {
+        fs::read_dir(objects)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path()
+    };
+
+    // A directory that is not there, inside a working copy: refused by
+    // name; the working copy is not checked.
+    let output = praps(&["verify", "nowhere"], &top);
+    assert_eq!(code(&output), 1, "{output:?}");
+    assert!(output.stdout.is_empty());
+    assert!(
+        stderr(&output).starts_with("praps verify: nowhere: no such directory"),
+        "{output:?}"
+    );
+
+    // Rule 3: a directory inside the working copy, and one that holds a
+    // `.praps` with no store, each check the working copy's store.
+    fs::create_dir_all(top.join("sub/.praps")).unwrap();
+    fs::write(top.join("sub/.praps/x"), b"x").unwrap();
+    for cwd in [top.join("d1"), top.join("d1/d2"), top.join("sub")] {
+        let output = praps(&["verify"], &cwd);
+        assert_eq!(code(&output), 0, "from {}: {output:?}", cwd.display());
+        assert_eq!(stdout(&output), "clean\n");
+    }
+
+    // Rule 2: a bare store inside the working copy, damaged: the check
+    // given that directory reports the damage, and the working copy's own
+    // store is still clean.
+    let bare = Store::init(RealFs, &top.join("d1/store"), HashAlg::DEFAULT, 3).and_then(|mut s| {
+        s.put_object(&blob(b"content"))?;
+        Ok(())
+    });
+    bare.unwrap();
+    flip(&first_file(&top.join("d1/store/objects")));
+    for (args, cwd) in [
+        (&["verify", "d1/store"][..], top.clone()),
+        (&["verify"][..], top.join("d1/store")),
+    ] {
+        let output = praps(args, &cwd);
+        assert_eq!(code(&output), 1, "{args:?}: {output:?}");
+        assert!(
+            stdout(&output).contains("does not hash to its name"),
+            "{args:?}: {output:?}"
+        );
+    }
+    assert_eq!(stdout(&praps(&["verify"], &top.join("d1"))), "clean\n");
+
+    // Rule 1: a top that also holds ordinary directories named `objects`
+    // and `ops`: its `.praps/store` is the store checked.
+    fs::create_dir_all(top.join("objects")).unwrap();
+    fs::create_dir_all(top.join("ops")).unwrap();
+    fs::write(top.join("objects/not-an-object"), b"x").unwrap();
+    let output = praps(&["verify"], &top);
+    assert_eq!(code(&output), 0, "{output:?}");
+    assert_eq!(stdout(&output), "clean\n");
+    // And damage in that store is what it reports.
+    flip(&first_file(&top.join(".praps/store/objects")));
+    let output = praps(&["verify", "template"], &dir);
+    assert_eq!(code(&output), 1, "{output:?}");
+    assert!(stdout(&output).contains("does not hash to its name"));
+
+    // Rule 4: a directory in no working copy that is not a store.
+    let plain = dir.join("plain");
+    fs::create_dir(&plain).unwrap();
+    let output = praps(&["verify"], &plain);
+    assert_eq!(code(&output), 1, "{output:?}");
+    assert!(
+        stderr(&output).contains("is not a Periapsis store"),
+        "{output:?}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// An entry named `.praps` below the top that is a file, or a directory
+/// with no `store` in it, is tracked like any other entry, and a command
+/// run beside it acts on the working copy above. On Linux the file is the
+/// case where a name on the way to `.praps/store` is not a directory.
+#[test]
+fn a_praps_entry_without_a_store_is_ordinary() {
+    let dir = claim("ordinary");
+    let top = dir.join("top");
+    assert_eq!(code(&praps(&["init", "top"], &dir)), 0);
+    write(&top, "sub/.praps/x", b"inside a directory named .praps");
+    write(&top, "other/.praps", b"a file named .praps");
+    let expected = ["A other/.praps", "A sub/.praps/x"];
+    for cwd in [top.join("sub"), top.join("other"), top.clone()] {
+        let output = praps(&["status"], &cwd);
+        assert_eq!(code(&output), 0, "from {}: {output:?}", cwd.display());
+        assert_eq!(lines(&output), expected, "from {}", cwd.display());
+    }
+    // `init` beside them is still inside the working copy.
+    for cwd in [top.join("sub"), top.join("other")] {
+        let output = praps(&["init"], &cwd);
+        assert_eq!(code(&output), 1, "{output:?}");
+        assert!(stderr(&output).contains("inside the working copy at"));
     }
     let _ = fs::remove_dir_all(&dir);
 }

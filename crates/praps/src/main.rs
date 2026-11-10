@@ -20,6 +20,7 @@
 
 mod commands;
 mod help;
+mod place;
 mod registry;
 
 use std::ffi::{OsStr, OsString};
