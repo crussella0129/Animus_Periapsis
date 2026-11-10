@@ -1100,7 +1100,7 @@ fn a_directory_that_cannot_be_removed_is_left() {
     let notes = ws.notes().to_vec();
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(
-        notes[0].starts_with("d/sub: the directory is empty but could not be removed"),
+        notes[0].starts_with("d/sub: the directory could not be removed, and was left"),
         "{notes:?}"
     );
     assert!(
@@ -1209,6 +1209,10 @@ fn a_directory_below_a_file_to_put_stops_the_write() {
 /// the write stops, the record is kept, and the next open finishes the
 /// write, removing the directory. The directory here is in the way of
 /// nothing, so a refusal to remove it would have been passed over.
+///
+/// This test shows the outcome, not which arm of the write gave it: after
+/// a crash the simulator fails every later syscall, so the write stops
+/// whether or not it tells a crash from a refusal (code review, finding 4).
 #[test]
 fn a_crash_during_a_removal_still_stops_the_write() {
     for seed in 0..10 {

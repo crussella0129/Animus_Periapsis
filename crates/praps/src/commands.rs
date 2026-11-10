@@ -171,7 +171,7 @@ fn top_above(command: &str, full: &Path, err: &mut impl Write) -> Result<Option<
                 "{}: a directory above it could not be searched for a repository: {error}",
                 full.display()
             ),
-            &hint::unreadable_directory(),
+            &hint::unreadable_above(),
             err,
         )),
     }
@@ -221,7 +221,7 @@ fn locate_or(
                 return Err(refuse(
                     command,
                     format_args!("{}: {error}", top.display()),
-                    &hint::unreadable_directory(),
+                    &hint::cannot_enter(),
                     err,
                 ));
             }
@@ -563,8 +563,21 @@ fn store_for(given: Option<&Path>, err: &mut impl Write) -> Result<(PathBuf, Str
             ));
         }
     }
-    if Store::inspect(RealFs, dir, HashAlg::DEFAULT).is_ok() {
-        return Ok((dir.to_path_buf(), named, false));
+    match Store::inspect(RealFs, dir, HashAlg::DEFAULT) {
+        Ok(_) => return Ok((dir.to_path_buf(), named, false)),
+        // Not a store: the search goes on.
+        Err(error) if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {}
+        // Whether it is one could not be read. Going on would check, and
+        // perhaps call clean, a store that was not asked about (code
+        // review, finding 1).
+        Err(error) => {
+            return Err(refuse(
+                "verify",
+                format_args!("{named}: {error}"),
+                &hint::unreadable_store(),
+                err,
+            ));
+        }
     }
     must_exist("verify", dir, &hint::store_or_working_copy(), err)?;
     match top_above("verify", &full, err)? {
@@ -588,10 +601,11 @@ fn verify(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u
         Ok(report) => report,
         Err(error) => {
             // A directory that is no store is one to make or to name
-            // rightly; a working copy's store that is no store is damaged.
+            // rightly; a working copy's store that is no store was left by
+            // an interrupted `init`, or has lost its directories.
             let hint = match (error.kind() == ErrorKind::NotFound, of_working_copy) {
                 (true, false) => hint::not_a_store(),
-                (true, true) => hint::damaged_store(),
+                (true, true) => hint::unfinished_store(),
                 (false, _) => hint::unreadable_store(),
             };
             return refuse("verify", format_args!("{shown}: {error}"), &hint, err);

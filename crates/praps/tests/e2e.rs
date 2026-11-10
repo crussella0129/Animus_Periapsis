@@ -638,7 +638,7 @@ fn undo_from_a_directory_another_process_stands_in() {
         assert_eq!(fs::read_dir(&work).unwrap().count(), 0, "left empty");
         assert_eq!(notes.len(), 1, "{err}");
         assert!(
-            notes[0].starts_with("note: work: the directory is empty but could not be removed"),
+            notes[0].starts_with("note: work: the directory could not be removed, and was left"),
             "{err}"
         );
         println!(

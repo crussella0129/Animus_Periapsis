@@ -518,11 +518,11 @@ pub fn apply(
                     ),
                 ));
             }
-            // Anywhere else the directory is left, empty. Directories are
-            // not tracked, so it changes nothing a snapshot records.
+            // Anywhere else the directory is left. Directories are not
+            // tracked, so it changes nothing a snapshot records.
             Err(error) => {
                 notes.push(format!(
-                    "{dir}: the directory is empty but could not be removed, and was left ({error})"
+                    "{dir}: the directory could not be removed, and was left ({error})"
                 ));
                 continue;
             }

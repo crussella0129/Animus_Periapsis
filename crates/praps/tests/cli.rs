@@ -1794,10 +1794,14 @@ fn named_in(hint: &str) -> Vec<String> {
 
 /// Every refusal ends with exactly one line that starts `hint:`, after what
 /// was wrong, and a command the hint names is one `praps` lists (INT-0037
-/// AC-4). The corpus is every kind of refusal a command line can reach:
-/// usage errors, words that are not commands, each way of not finding a
-/// working copy, the errors of the `workspace` crate, and each way `verify`
-/// fails.
+/// AC-4). The corpus is the refusals these tests can make happen through
+/// the binary: usage errors, words that are not commands, ways of not
+/// finding a working copy, errors of the `workspace` crate, and ways
+/// `verify` fails. It does not reach the refusals that need a directory the
+/// user may not read or enter, nor a change with several parents; a hazard
+/// and text with no UTF-8 form are reached on Windows only, and a removed
+/// current directory on Linux only. The unit test
+/// `hints_take_one_of_three_forms` reads the hint of every kind.
 #[test]
 fn every_refusal_prints_one_hint() {
     let dir = claim("hints");
@@ -2114,7 +2118,7 @@ fn every_refusal_prints_one_hint() {
         "verify: a working copy's store that is no store",
         praps(&["verify"], &many),
         1,
-        "put back the files named above",
+        "`praps init` there if its `init` was interrupted",
     );
     assert!(kinds >= 25, "{kinds} kinds of refusal were checked");
     let _ = fs::remove_dir_all(&dir);

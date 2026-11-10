@@ -68,7 +68,11 @@ pub fn for_error(error: &workspace::Error) -> Hint {
             "in that directory to finish making it a repository",
         ),
         Error::SeveralHeads(_) => Hint::NoRemedy("join operations made at the same time"),
-        Error::Corrupt(_) => run("praps verify", "to list what is damaged"),
+        Error::Corrupt(_) => run(
+            "praps verify",
+            "to list what is damaged in the store; this build cannot repair what it finds, or \
+             what the message names outside the store",
+        ),
         Error::Merge(_) => Hint::NoRemedy("read a change that has several parents"),
         Error::Hazards(_) => Hint::NoRemedy("write those paths on this filesystem"),
         Error::Blocked(_) => {
@@ -141,6 +145,20 @@ pub fn unreadable_directory() -> Hint {
     Hint::Fix("make that directory readable, then run the command again")
 }
 
+/// A directory above the starting one whose `.praps/store` could not be
+/// listed. The message names only where the search started.
+pub fn unreadable_above() -> Hint {
+    Hint::Fix(
+        "make the store of each repository above that directory readable, then run the \
+         command again",
+    )
+}
+
+/// The top of the working copy could not be made the current directory.
+pub fn cannot_enter() -> Hint {
+    Hint::Fix("make that directory one you may enter, then run the command again")
+}
+
 /// No repository at the directory asked about or above it.
 pub fn no_repository() -> Hint {
     run(
@@ -185,7 +203,16 @@ pub fn not_a_store() -> Hint {
 
 /// `verify` stopped by the filesystem while it read the store.
 pub fn unreadable_store() -> Hint {
-    Hint::Fix("make every file of the store readable, then run the command again")
+    Hint::Fix("make the store's directories readable, then run the command again")
+}
+
+/// `verify` on a working copy whose store lacks `objects` or `ops`.
+pub fn unfinished_store() -> Hint {
+    run(
+        "praps init",
+        "there if its `init` was interrupted; if the store was whole before, put it back from \
+         a copy of the repository",
+    )
 }
 
 /// `verify` found problems.
@@ -344,12 +371,12 @@ mod tests {
                 "praps status: /home/me/work: a directory above it could not be searched for a \
                  repository: Permission denied (os error 13)"
                     .to_owned(),
-                unreadable_directory(),
+                unreadable_above(),
             ),
             (
                 "a top that cannot be entered",
                 "praps status: /home/me/work: Permission denied (os error 13)".to_owned(),
-                unreadable_directory(),
+                cannot_enter(),
             ),
             (
                 "a current directory that cannot be read",
@@ -380,6 +407,13 @@ mod tests {
                 "praps verify: plain: plain is not a Periapsis store (it needs objects/ and ops/)"
                     .to_owned(),
                 not_a_store(),
+            ),
+            (
+                "`verify` on a working copy's store that is no store",
+                "praps verify: work: work/.praps/store is not a Periapsis store (it needs \
+                 objects/ and ops/)"
+                    .to_owned(),
+                unfinished_store(),
             ),
             (
                 "`verify` stopped by the filesystem",
@@ -464,7 +498,7 @@ mod tests {
             forms[2]
         );
         assert!(forms.iter().all(|count| *count > 0), "{forms:?}");
-        assert_eq!(table.len(), VARIANTS.len() + 21);
+        assert_eq!(table.len(), VARIANTS.len() + 22);
     }
 
     /// Every command a hint names, wherever in the line, is one the

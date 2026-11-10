@@ -62,7 +62,8 @@ file, or a directory with no `store` in it, is tracked like any other entry.
 
 `praps verify DIR` checks the first of: the store of DIR, if DIR is a top;
 DIR itself, if it holds `objects` and `ops`; the store of the nearest top
-above DIR; DIR itself, which then fails as not a store.
+above DIR; DIR itself, which then fails as not a store. If whether DIR holds
+them cannot be read, `verify` stops there and checks no other store.
 
 Every refusal ends with one line that starts `hint:` and says what to do
 next ([INT-0037](../intents/INT-0037-command-set.md) AC-4).
