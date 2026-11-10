@@ -154,15 +154,17 @@ Evidence:
 - Only NTFS on a local disk (Windows) and ext4 (WSL Ubuntu) are tested. ReFS,
   FAT, network shares (where a directory flush fails with an error) and
   macOS are not.
-- Concurrent writers in separate processes (INT-0007 AC-5) are not yet
-  tested. Two writers in one process are. The second commits an op at a fixed
-  boundary: right after the first renames its view into place, in even seeds,
-  or its op, in odd seeds, and before the first syncs that directory.
-- The simulator models a whole-system crash, in which everything not yet
-  durable is resolved at once. A process that dies while the system keeps
-  running leaves its unsynced changes visible to the next process; the store
-  answers that case by design (`open` syncs the layout, and every write
-  re-syncs what it depends on) rather than by a simulated run.
+- Concurrent writers (INT-0007 AC-5) are tested in two ways since Sprint 4,
+  and neither is a proof. On the simulator, four processes write under a
+  seeded scheduler, with kills and crashes ([Simulation](simulation.md));
+  the interleavings tried are those the seeds draw. On the real filesystem,
+  four operating-system processes commit to one store
+  (`crates/store/tests/real_writers.rs`); there the kernel decides the
+  interleavings, so that run is evidence and cannot be replayed.
+- A process that dies while the system keeps running leaves its unsynced
+  changes visible to the next process. The simulator runs that case too
+  since Sprint 4, as a kill, in the four-writer scenario. No test kills a
+  real process in the middle of a write.
 
 A reviewer accepting INT-0004 AC-5 accepts these assumptions with the
 evidence above.

@@ -2195,3 +2195,42 @@ fn describe_with_a_directory_as_its_last_word_takes_one_word() {
     assert_eq!(change.changes.len(), 1);
     let _ = fs::remove_dir_all(&dir);
 }
+
+// ------------------------------------- the README says what `praps` says (T-013)
+
+/// The README's command table holds one row for each command `praps`
+/// lists, in the order `praps` lists them, and no other: each row is the
+/// command's usage line, as `praps help` prints it, and its summary, as the
+/// list prints it (INT-0037 AC-2; INT-0003 AC-10).
+#[test]
+fn readme_lists_what_praps_lists() {
+    let dir = claim("readme");
+    let expected: Vec<(String, String)> = listed(&dir)
+        .into_iter()
+        .map(|(name, summary)| {
+            let help = stdout(&praps(&["help", &name], &dir));
+            let usage = help.lines().next().unwrap();
+            (usage.strip_prefix("usage: ").unwrap().to_owned(), summary)
+        })
+        .collect();
+    assert!(expected.len() >= 11, "{expected:?}");
+    let readme =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../README.md")).unwrap();
+    // The rows of the table whose header is `| Command | What it does |`.
+    let rows: Vec<(String, String)> = readme
+        .lines()
+        .skip_while(|line| *line != "| Command | What it does |")
+        .skip(2)
+        .take_while(|line| line.starts_with("| "))
+        .map(|line| {
+            let cells: Vec<&str> = line.trim_matches('|').split(" | ").collect();
+            assert_eq!(cells.len(), 2, "{line}");
+            (
+                cells[0].trim().trim_matches('`').to_owned(),
+                cells[1].trim().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(rows, expected);
+    let _ = fs::remove_dir_all(&dir);
+}

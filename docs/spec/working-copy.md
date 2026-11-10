@@ -33,6 +33,40 @@ On a repository that already has an op, `init` writes nothing. Running it
 again therefore completes an interrupted `init`. Opening a repository makes
 `.praps` and the root durable in the same way.
 
+## Finding the working copy
+
+A directory is the **top** of a working copy when listing its `.praps/store`
+succeeds. A command that opens a working copy (`status`, `describe`, `new`,
+`log`, `ops`, `undo`, `restore`) acts on the nearest top among the directory
+it is given, or the current directory when it is given none, and the
+directories above that one. So a command does the same thing wherever inside
+the working copy it is run.
+
+- **Above the starting directory.** `praps` then makes the top its current
+  directory and runs as if started there, so what it writes and syncs is what
+  a run from the top writes and syncs.
+- **A directory that is not there**, or is not a directory, is refused by the
+  name given. Nothing above it is acted on.
+- **No top there or above** is a refusal that says so.
+- **A `.praps/store` that cannot be listed** for a reason other than absence
+  stops the search. A repository further up is never used in its place.
+- **Names.** A refusal names the working copy by the directory given, when
+  one was given and it is the top, and by the top's full path otherwise.
+- **Links.** The directories above are taken from the starting directory's
+  full path as written. A symbolic link in it is not resolved first.
+
+`praps init` never makes a repository inside another: with a top above the
+directory it is given, it writes nothing and names that working copy,
+whatever the directory holds. An entry named `.praps` below the top that is a
+file, or a directory with no `store` in it, is tracked like any other entry.
+
+`praps verify DIR` checks the first of: the store of DIR, if DIR is a top;
+DIR itself, if it holds `objects` and `ops`; the store of the nearest top
+above DIR; DIR itself, which then fails as not a store.
+
+Every refusal ends with one line that starts `hint:` and says what to do
+next ([INT-0037](../intents/INT-0037-command-set.md) AC-4).
+
 ## The working-copy change
 
 The view names the working-copy change of workspace `default`. A
@@ -69,9 +103,10 @@ whole chain of changes to build a tree. Both wait for the storage form
 
 ## Snapshot
 
-Every command that opens the working copy snapshots it first: `praps new` and
-`praps status`. `praps verify` only reads, and `praps init` on an existing
-repository writes nothing, so neither snapshots. An edit made before one of
+Every command that opens the working copy snapshots it first: `status`,
+`describe`, `new`, `log`, `ops`, `undo` and `restore`. `praps verify` only
+reads, `praps init` on an existing repository writes nothing, and `help` and
+`version` look at no directory, so none of those snapshots. An edit made before one of
 them is captured by the next command that does.
 
 A snapshot does the following:

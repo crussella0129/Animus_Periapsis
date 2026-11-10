@@ -22,24 +22,38 @@ Phase 1 is under way. The format is specified in
 [`docs/spec/format-v1.md`](docs/spec/format-v1.md), the crash-tested store in
 [`docs/spec/storage-durability.md`](docs/spec/storage-durability.md), and the
 working copy in [`docs/spec/working-copy.md`](docs/spec/working-copy.md).
-Periapsis can record a working copy and return it to any earlier state:
+Periapsis can record a working copy, describe its changes and return it to
+any earlier state. `praps` alone lists its commands, and this table is that
+list:
 
 | Command | What it does |
 |---|---|
-| `praps init [DIR]` | Makes `DIR` (default: `.`) a repository, or says it already is one |
-| `praps status [DIR]` | Snapshots the working copy, following `.gitignore` rules, and lists what changed against its parent (`A`, `M`, `D`), plus entries it cannot track |
-| `praps new [DIR]` | Snapshots, then starts a new working-copy change on top of the current one |
-| `praps log [DIR]` | Snapshots, then lists every operation, newest first |
-| `praps undo [DIR]` | Snapshots, then undoes the last operation, writing the files back; a second `undo` undoes the first |
-| `praps restore OP [DIR]` | Snapshots, then returns the working copy to the state operation `OP` (an id or unique prefix) left |
-| `praps verify [DIR]` | Checks the store of a repository, or a bare store: checksums and references |
+| `praps status [DIR]` | List what the working copy changes |
+| `praps describe TEXT [DIR]` | Say what the current change is for |
+| `praps new [DIR]` | Start the next change |
+| `praps log [DIR]` | List the changes that lead to the working copy, newest first |
+| `praps undo [DIR]` | Take back the last operation |
+| `praps ops [DIR]` | List every operation, newest first |
+| `praps restore OP [DIR]` | Return to the state an operation left |
+| `praps init [DIR]` | Make a directory a repository |
+| `praps verify [DIR]` | Check that everything stored is intact |
+| `praps help [WORD]` | Explain the commands, or one command |
+| `praps version` | Name this build |
+
+`praps help WORD` explains one command, with an example. A command works
+from any directory inside the working copy, records the working copy before
+it does anything else, and follows `.gitignore` rules. A command that cannot
+do what was asked says what was wrong and ends with a `hint:` line that says
+what to do next.
 
 Nothing is lost: `undo` and `restore` are operations themselves, and the
 edits they replace stay reachable. A write that a crash interrupts is
 finished by the next command, and names the filesystem cannot hold (case
 collisions, Windows device names) are refused before anything is written.
 Checking out another change, merging concurrent operations and several
-workspaces come later.
+workspaces come later: today two commands that run at the same time leave
+two operation heads, and every later command stops until a build can join
+them.
 
 | Crate | What it does |
 |---|---|
@@ -47,8 +61,8 @@ workspaces come later.
 | `codec` | Canonical binary encoding and object envelopes |
 | `sim` | Filesystem and randomness, real and deterministically simulated with crashes |
 | `store` | The crash-safe object store and op log, with its integrity check |
-| `workspace` | The working copy: init, snapshot (with `.gitignore` rules), new, status, log, undo and restore |
-| `praps` | The Periapsis command (`praps init`, `new`, `status`, `log`, `undo`, `restore`, `verify`) |
+| `workspace` | The working copy: init, snapshot (with `.gitignore` rules), describe, new, status, the lists of changes and operations, undo and restore |
+| `praps` | The Periapsis command: its registry of commands, help, hints and the commands themselves |
 | `book` | Checks the Book's typed acceptance criteria |
 | `xtask` | Project tooling behind `cargo ci`, `cargo policy` and `cargo reach` |
 
