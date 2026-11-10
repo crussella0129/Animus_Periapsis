@@ -209,6 +209,12 @@ Both `undo` and `restore` then:
    view is the target view, the exact view object, unchanged;
 4. materialise F → T.
 
+Each of them scans the working copy once: the snapshot named above is the
+only one. An edit made before the command is in that snapshot, in an op of
+its own, and step 4 reads each path again just before it removes or replaces
+it and leaves one that has changed since
+([Materialise](#materialise)).
+
 No command removes an op (INT-0009 AC-1).
 
 ### The record

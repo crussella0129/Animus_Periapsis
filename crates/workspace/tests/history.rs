@@ -532,7 +532,7 @@ fn snapshotting_commands_return_reports() {
     assert_eq!(ws.reported(), expected, "log");
     let mut ws = reopen(3);
     let (undone, _) = ws.undo().unwrap();
-    // `undo` snapshots twice; its report is one, not two.
+    // `undo` snapshots once, so its report is one.
     assert_eq!(ws.reported(), expected, "undo");
     let mut ws = reopen(4);
     ws.restore(&undone.to_string()[7..19]).unwrap();
