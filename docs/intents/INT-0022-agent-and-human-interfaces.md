@@ -4,10 +4,10 @@
 - **Intent ID:** INT-0022
 - **State:** active
 - **Work evidence:** [Sprint 6 T-006 build plan](../sprints/s6/sprint-plans/build-plan.md#t-006-the-command-registry-dispatch-help-and-suggestions-from-one-table)
-- **Completion evidence:** none
-- **Code evidence:** none
+- **Completion evidence:** [Sprint 6 T-006 completion](../work/completed-tasks.md#t-006-sprint-6)
+- **Code evidence:** [registry.rs](../../crates/praps/src/registry.rs), [main.rs](../../crates/praps/src/main.rs)
 - **Test evidence:** [Sprint 6 test report](../sprints/s6/sprint-tests/test-report.md)
-- **Documentation evidence:** none
+- **Documentation evidence:** [README](../../README.md)
 
 ## Intent
 One engine, two faces. `praps` is the human CLI (later a TUI): calm, readable
@@ -144,3 +144,4 @@ result with it or without.
 - 2026-11-10: revised while `planned` (Sprint 6 plan critique, round 1, C-004 and C-006; `semantic`): the Intent defines the idempotent class as the commands that only report, names `init` and `describe` as outside it, and says the registry marks the class and `help` shows it; AC-8 and AC-9 are unchanged and now apply to that class. Consequences record that Sprint 6's `log` listing is provisional, that it does not meet AC-4, and when the seed and the rubric of AC-5 and AC-6 are registered.
 - 2026-11-10: revised while `planned` (Sprint 6 plan critique, round 2, C-008; `semantic`): the idempotent class is defined by the repeat alone, that it changes nothing and prints the same, so that a command which writes on its first run, as `status` and `cargo reach` do, has a settled class. "The commands that report" stays as a description of the `praps` commands in it.
 - 2026-11-10: `planned` → `active` (Sprint 6 build, T-006 starts: the command registry).
+- 2026-11-10: kept `active` at the close of Sprint 6. AC-8 and AC-11 pass. AC-9 passes for the six commands built whose help says they are idempotent, and stays open for the rest. Its other criteria are not tested: `praps mcp`, the schemas and the renderer are not built.

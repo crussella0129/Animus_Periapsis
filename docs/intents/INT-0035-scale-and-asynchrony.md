@@ -4,10 +4,10 @@
 - **Intent ID:** INT-0035
 - **State:** active
 - **Work evidence:** [Sprint 6 T-003 build plan](../sprints/s6/sprint-plans/build-plan.md#t-003-a-command-reads-the-op-log-once), [Sprint 6 T-009 build plan](../sprints/s6/sprint-plans/build-plan.md#t-009-log-lists-changes-and-ops-lists-operations)
-- **Completion evidence:** none
-- **Code evidence:** none
+- **Completion evidence:** [Sprint 6 T-003 completion](../work/completed-tasks.md#t-003-sprint-6), [Sprint 6 T-009 completion](../work/completed-tasks.md#t-009-sprint-6)
+- **Code evidence:** [crates/workspace](../../crates/workspace/src/lib.rs), [crates/store](../../crates/store/src/lib.rs)
 - **Test evidence:** [Sprint 6 test report](../sprints/s6/sprint-tests/test-report.md)
-- **Documentation evidence:** none
+- **Documentation evidence:** [working-copy spec](../spec/working-copy.md#reading-the-op-log)
 
 ## Intent
 Periapsis serves thousands of agents working on one project at the same time,
@@ -198,3 +198,4 @@ How fast each command is, against other systems, is
 - 2026-11-10: `proposed` → `planned` (Sprint 6 build plan T-003: a command reads the op log once, a first step toward cost rule 2. It meets no criterion of this chapter. The criteria wait for the merge, the packed storage form, the stat cache and the simulator at scale: backlog T-029 to T-032).
 - 2026-11-10: revised while `planned` (Sprint 6 plan critique, round 1, C-017; `editorial`: no criterion changes): the Consequence that puts the merge before further single-user features names Sprint 6's command-set work as the exception the owner approved, and why.
 - 2026-11-10: `planned` → `active` (Sprint 6 build, T-003 starts: a command reads the op log once).
+- 2026-11-10: kept `active` at the close of Sprint 6. No criterion of this chapter is met. Two steps were taken: a command reads the op log once, and the cost of the two listings follows their length. Two commands that run at the same time still leave two op heads; the canonical merge is backlog T-029.
