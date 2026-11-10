@@ -761,3 +761,84 @@ fn every_syscall_has_no_effect_at_its_crash_point() {
         }
     }
 }
+
+// ------------------------------------------------------------- forwarders
+
+/// Calls each of the trait's 16 methods through `fs` and checks that every
+/// one reached the simulator `under` it: each syscall by its trace line, the
+/// two queries by what was set, and the point by its count.
+fn every_method(fs: impl Fs, under: &SimFs) {
+    let (d, a, b, e) = (
+        Path::new("d"),
+        Path::new("d/a"),
+        Path::new("d/b"),
+        Path::new("d/e"),
+    );
+    let mut seen = under.trace().len();
+    let mut step = |call: &dyn Fn() -> bool, line: &str| {
+        assert!(call(), "{line} failed");
+        let trace = under.trace();
+        assert_eq!(trace.len(), seen + 1, "{line}: one syscall, {trace:?}");
+        assert_eq!(trace[seen], line);
+        seen += 1;
+    };
+    step(&|| fs.create_dir(d).is_ok(), "create_dir d");
+    step(&|| fs.create_new(a).is_ok(), "create_new d/a");
+    step(&|| fs.write(a, b"one").is_ok(), "write d/a");
+    step(&|| fs.overwrite(a, b"two").is_ok(), "overwrite d/a");
+    step(&|| fs.set_executable(a, true).is_ok(), "set_executable d/a");
+    step(&|| fs.sync_file(a).is_ok(), "sync_file d/a");
+    step(&|| fs.rename(a, b).is_ok(), "rename d/a");
+    step(&|| fs.sync_dir(d).is_ok(), "sync_dir d");
+    step(
+        &|| fs.read(b).is_ok_and(|bytes| bytes == b"two"),
+        "read d/b",
+    );
+    step(&|| fs.list(d).is_ok_and(|names| names == ["b"]), "list d");
+    step(
+        &|| fs.scan(d).is_ok_and(|entries| entries.len() == 1),
+        "scan d",
+    );
+    step(&|| fs.create_dir(e).is_ok(), "create_dir d/e");
+    step(&|| fs.sync_dir(e).is_ok(), "sync_dir d/e");
+    step(&|| fs.remove_dir(e).is_ok(), "remove_dir d/e");
+    step(&|| fs.remove_file(b).is_ok(), "remove_file d/b");
+    // The two queries are not syscalls: they return what the simulator holds.
+    let rules = NameRules {
+        case_insensitive: true,
+        windows_names: true,
+    };
+    under.set_name_rules(rules);
+    under.set_has_executable_bit(false);
+    assert_eq!(fs.name_rules(), rules);
+    assert!(!fs.has_executable_bit());
+    under.set_has_executable_bit(true);
+    assert!(fs.has_executable_bit());
+    let before = under.reach();
+    fs.point("test.forwarder.reached");
+    assert_eq!(under.trace().len(), seen, "a point is not a syscall");
+    let count = |reach: &[(&'static str, u64)]| {
+        reach
+            .iter()
+            .find(|(name, _)| *name == "test.forwarder.reached")
+            .map_or(0, |(_, n)| *n)
+    };
+    assert_eq!(count(&under.reach()), count(&before) + 1);
+}
+
+/// The three forwarders are one macro: every method reaches the filesystem
+/// through `&T`, `Rc<T>` and `Arc<T>` alike (Sprint 6 T-002; code audit
+/// C-31).
+#[test]
+fn every_method_reaches_through_every_forwarder() {
+    let plain = SimFs::new(7, Mode::Strict);
+    every_method(&plain, &plain);
+    let rc = std::rc::Rc::new(SimFs::new(7, Mode::Strict));
+    every_method(std::rc::Rc::clone(&rc), &rc);
+    let arc = Arc::new(SimFs::new(7, Mode::Strict));
+    every_method(Arc::clone(&arc), &arc);
+    // A forwarder over a forwarder: `&Arc<T>`.
+    let again = Arc::new(SimFs::new(7, Mode::Strict));
+    let by_ref: &Arc<SimFs> = &again;
+    every_method(by_ref, &again);
+}

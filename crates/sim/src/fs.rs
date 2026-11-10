@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::fmt;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -73,160 +73,92 @@ pub struct NameRules {
     pub windows_names: bool,
 }
 
-impl<T: Fs + ?Sized> Fs for &T {
-    fn create_dir(&self, path: &Path) -> io::Result<()> {
-        (**self).create_dir(path)
-    }
-    fn create_new(&self, path: &Path) -> io::Result<()> {
-        (**self).create_new(path)
-    }
-    fn write(&self, path: &Path, data: &[u8]) -> io::Result<()> {
-        (**self).write(path, data)
-    }
-    fn overwrite(&self, path: &Path, data: &[u8]) -> io::Result<()> {
-        (**self).overwrite(path, data)
-    }
-    fn sync_file(&self, path: &Path) -> io::Result<()> {
-        (**self).sync_file(path)
-    }
-    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
-        (**self).rename(from, to)
-    }
-    fn sync_dir(&self, path: &Path) -> io::Result<()> {
-        (**self).sync_dir(path)
-    }
-    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-        (**self).read(path)
-    }
-    fn list(&self, path: &Path) -> io::Result<Vec<String>> {
-        (**self).list(path)
-    }
-    fn remove_file(&self, path: &Path) -> io::Result<()> {
-        (**self).remove_file(path)
-    }
-    fn scan(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
-        (**self).scan(path)
-    }
-    fn has_executable_bit(&self) -> bool {
-        (**self).has_executable_bit()
-    }
-    fn remove_dir(&self, path: &Path) -> io::Result<()> {
-        (**self).remove_dir(path)
-    }
-    fn set_executable(&self, path: &Path, executable: bool) -> io::Result<()> {
-        (**self).set_executable(path, executable)
-    }
-    fn name_rules(&self) -> NameRules {
-        (**self).name_rules()
-    }
-    fn point(&self, name: &'static str) {
-        (**self).point(name)
+/// Forwards every [`Fs`] method through a pointer to the filesystem behind
+/// it. One definition serves each pointer type, so the three cannot drift
+/// apart, and since no method has a default body, a method left out here
+/// fails to compile instead of being dropped.
+macro_rules! forward_fs {
+    ($($(#[$doc:meta])* $pointer:ty;)+) => {$(
+        $(#[$doc])*
+        impl<T: Fs + ?Sized> Fs for $pointer {
+            fn create_dir(&self, path: &Path) -> io::Result<()> {
+                (**self).create_dir(path)
+            }
+            fn create_new(&self, path: &Path) -> io::Result<()> {
+                (**self).create_new(path)
+            }
+            fn write(&self, path: &Path, data: &[u8]) -> io::Result<()> {
+                (**self).write(path, data)
+            }
+            fn overwrite(&self, path: &Path, data: &[u8]) -> io::Result<()> {
+                (**self).overwrite(path, data)
+            }
+            fn sync_file(&self, path: &Path) -> io::Result<()> {
+                (**self).sync_file(path)
+            }
+            fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+                (**self).rename(from, to)
+            }
+            fn sync_dir(&self, path: &Path) -> io::Result<()> {
+                (**self).sync_dir(path)
+            }
+            fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+                (**self).read(path)
+            }
+            fn list(&self, path: &Path) -> io::Result<Vec<String>> {
+                (**self).list(path)
+            }
+            fn remove_file(&self, path: &Path) -> io::Result<()> {
+                (**self).remove_file(path)
+            }
+            fn scan(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+                (**self).scan(path)
+            }
+            fn has_executable_bit(&self) -> bool {
+                (**self).has_executable_bit()
+            }
+            fn remove_dir(&self, path: &Path) -> io::Result<()> {
+                (**self).remove_dir(path)
+            }
+            fn set_executable(&self, path: &Path, executable: bool) -> io::Result<()> {
+                (**self).set_executable(path, executable)
+            }
+            fn name_rules(&self) -> NameRules {
+                (**self).name_rules()
+            }
+            fn point(&self, name: &'static str) {
+                (**self).point(name)
+            }
+        }
+    )+};
+}
+
+forward_fs! {
+    &T;
+    /// Shared ownership, so several stores (and a [`crate::SimFs`] hook) can
+    /// use one filesystem.
+    Rc<T>;
+    /// Shared ownership across threads, so several simulated processes
+    /// ([`crate::SimFs`] is `Send + Sync`) can use one filesystem.
+    Arc<T>;
+}
+
+/// The directory holding `root`'s entry: its parent, or `root/..` when the
+/// path has none to give (a bare relative name such as `repo`, or `.`).
+pub fn parent_dir(root: &Path) -> PathBuf {
+    match root.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => root.join(".."),
     }
 }
 
-/// Shared ownership, so several stores (and a [`crate::SimFs`] hook) can use
-/// one filesystem.
-impl<T: Fs + ?Sized> Fs for Rc<T> {
-    fn create_dir(&self, path: &Path) -> io::Result<()> {
-        (**self).create_dir(path)
-    }
-    fn create_new(&self, path: &Path) -> io::Result<()> {
-        (**self).create_new(path)
-    }
-    fn write(&self, path: &Path, data: &[u8]) -> io::Result<()> {
-        (**self).write(path, data)
-    }
-    fn overwrite(&self, path: &Path, data: &[u8]) -> io::Result<()> {
-        (**self).overwrite(path, data)
-    }
-    fn sync_file(&self, path: &Path) -> io::Result<()> {
-        (**self).sync_file(path)
-    }
-    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
-        (**self).rename(from, to)
-    }
-    fn sync_dir(&self, path: &Path) -> io::Result<()> {
-        (**self).sync_dir(path)
-    }
-    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-        (**self).read(path)
-    }
-    fn list(&self, path: &Path) -> io::Result<Vec<String>> {
-        (**self).list(path)
-    }
-    fn remove_file(&self, path: &Path) -> io::Result<()> {
-        (**self).remove_file(path)
-    }
-    fn scan(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
-        (**self).scan(path)
-    }
-    fn has_executable_bit(&self) -> bool {
-        (**self).has_executable_bit()
-    }
-    fn remove_dir(&self, path: &Path) -> io::Result<()> {
-        (**self).remove_dir(path)
-    }
-    fn set_executable(&self, path: &Path, executable: bool) -> io::Result<()> {
-        (**self).set_executable(path, executable)
-    }
-    fn name_rules(&self) -> NameRules {
-        (**self).name_rules()
-    }
-    fn point(&self, name: &'static str) {
-        (**self).point(name)
-    }
-}
-
-/// Shared ownership across threads, so several simulated processes
-/// ([`crate::SimFs`] is `Send + Sync`) can use one filesystem.
-impl<T: Fs + ?Sized> Fs for Arc<T> {
-    fn create_dir(&self, path: &Path) -> io::Result<()> {
-        (**self).create_dir(path)
-    }
-    fn create_new(&self, path: &Path) -> io::Result<()> {
-        (**self).create_new(path)
-    }
-    fn write(&self, path: &Path, data: &[u8]) -> io::Result<()> {
-        (**self).write(path, data)
-    }
-    fn overwrite(&self, path: &Path, data: &[u8]) -> io::Result<()> {
-        (**self).overwrite(path, data)
-    }
-    fn sync_file(&self, path: &Path) -> io::Result<()> {
-        (**self).sync_file(path)
-    }
-    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
-        (**self).rename(from, to)
-    }
-    fn sync_dir(&self, path: &Path) -> io::Result<()> {
-        (**self).sync_dir(path)
-    }
-    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-        (**self).read(path)
-    }
-    fn list(&self, path: &Path) -> io::Result<Vec<String>> {
-        (**self).list(path)
-    }
-    fn remove_file(&self, path: &Path) -> io::Result<()> {
-        (**self).remove_file(path)
-    }
-    fn scan(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
-        (**self).scan(path)
-    }
-    fn has_executable_bit(&self) -> bool {
-        (**self).has_executable_bit()
-    }
-    fn remove_dir(&self, path: &Path) -> io::Result<()> {
-        (**self).remove_dir(path)
-    }
-    fn set_executable(&self, path: &Path, executable: bool) -> io::Result<()> {
-        (**self).set_executable(path, executable)
-    }
-    fn name_rules(&self) -> NameRules {
-        (**self).name_rules()
-    }
-    fn point(&self, name: &'static str) {
-        (**self).point(name)
+/// Whether `dir` is a directory that can be listed: `false` when nothing is
+/// there. [`Fs`] has no cheaper question to ask.
+pub fn dir_exists(fs: &(impl Fs + ?Sized), dir: &Path) -> io::Result<bool> {
+    match fs.list(dir) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
     }
 }
 

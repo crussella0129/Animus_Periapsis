@@ -502,3 +502,29 @@ proptest! {
         }
     }
 }
+
+/// `hex` is two lowercase digits for each byte, in order, and it is the
+/// digest part of a hash's text form (Sprint 6 T-002; code audit C-28).
+#[test]
+fn hex_is_two_lowercase_digits_per_byte() {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    for byte in 0..=u8::MAX {
+        let expected = [
+            char::from(DIGITS[usize::from(byte >> 4)]),
+            char::from(DIGITS[usize::from(byte & 0x0f)]),
+        ];
+        assert_eq!(hash::hex(&[byte]), String::from_iter(expected));
+    }
+    assert_eq!(hash::hex(&[]), "");
+    assert_eq!(hash::hex(&[0x00, 0x0f, 0xa0, 0xff]), "000fa0ff");
+    let mut written = String::from("x");
+    hash::write_hex(&mut written, &[0xde, 0xad]).unwrap();
+    assert_eq!(written, "xdead");
+    for alg in [HashAlg::Blake3, HashAlg::Sha256] {
+        let id = alg.hash(b"periapsis");
+        assert_eq!(
+            id.to_string(),
+            format!("{}:{}", alg.name(), hash::hex(id.digest()))
+        );
+    }
+}

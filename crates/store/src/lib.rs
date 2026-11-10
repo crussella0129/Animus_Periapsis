@@ -28,7 +28,7 @@ use codec::{
     ObjectKind, Operation, decode_envelope, from_slice, object_id, to_vec, typed_references,
 };
 use hash::{HashAlg, HashRef};
-use sim::{Fs, Rng};
+use sim::{Fs, Rng, dir_exists, parent_dir};
 
 pub use fsck::{Problem, ProblemKind, Report};
 use names::{TMP_PREFIX, file_name, parse_name};
@@ -159,7 +159,7 @@ impl<F: Fs> Store<F> {
 
     fn finish_init(self) -> io::Result<Self> {
         for dir in [&self.root, &self.objects, &self.ops] {
-            if !self.dir_exists(dir)? {
+            if !dir_exists(&self.fs, dir)? {
                 self.fs.create_dir(dir)?;
             }
         }
@@ -216,7 +216,7 @@ impl<F: Fs> Store<F> {
     }
 
     fn inspected(self) -> io::Result<Self> {
-        if self.dir_exists(&self.objects)? && self.dir_exists(&self.ops)? {
+        if dir_exists(&self.fs, &self.objects)? && dir_exists(&self.fs, &self.ops)? {
             Ok(self)
         } else {
             Err(not_a_store(&self.root))
@@ -231,14 +231,6 @@ impl<F: Fs> Store<F> {
     /// The store's directory.
     pub fn root(&self) -> &Path {
         &self.root
-    }
-
-    fn dir_exists(&self, dir: &Path) -> io::Result<bool> {
-        match self.fs.list(dir) {
-            Ok(_) => Ok(true),
-            Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
-            Err(error) => Err(error),
-        }
     }
 
     /// Stores an object envelope and returns its id once it is durable. The
@@ -469,15 +461,6 @@ impl<F: Fs> Store<F> {
     /// Checks every file in the store; see [`Report`].
     pub fn fsck(&self) -> io::Result<Report> {
         fsck::check(&self.fs, &self.root)
-    }
-}
-
-/// The directory holding `root`'s entry: its parent, or `root/..` when the
-/// path has none to give (a bare relative name such as `repo`, or `.`).
-fn parent_dir(root: &Path) -> PathBuf {
-    match root.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
-        _ => root.join(".."),
     }
 }
 

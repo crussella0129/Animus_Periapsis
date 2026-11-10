@@ -32,7 +32,7 @@ use codec::{
     CHANGE_ID_LEN, Changeset, Mode, Operation, RepoPath, View, blob, decode_envelope, object_id,
 };
 use hash::{HashAlg, HashRef};
-use sim::{Fs, Kind, Name, Rng};
+use sim::{Fs, Kind, Name, Rng, dir_exists, parent_dir};
 use store::Store;
 
 pub use crate::ignore::ALWAYS_IGNORED;
@@ -268,10 +268,7 @@ impl<F: Fs> Scan<'_, F> {
     /// ignored directory (`tracked_only`) only paths tracked before count,
     /// and nothing is reported.
     fn dir(&mut self, dir: &str, tracked_only: bool) -> Result<(), Error> {
-        let fs_dir = dir
-            .split('/')
-            .filter(|c| !c.is_empty())
-            .fold(self.root.to_path_buf(), |p, c| p.join(c));
+        let fs_dir = materialise::on_disk(self.root, dir);
         let entries = self.fs.scan(&fs_dir)?;
         let gitignore = match entries
             .iter()
@@ -394,23 +391,6 @@ pub struct Workspace<F: Fs> {
     reported: Vec<Reported>,
     #[cfg(feature = "variants")]
     variant: Variant,
-}
-
-/// The directory holding `root`'s entry: its parent, or `root/..` when the
-/// path has none to give (a bare relative name such as `repo`, or `.`).
-fn parent_dir(root: &Path) -> PathBuf {
-    match root.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
-        _ => root.join(".."),
-    }
-}
-
-fn dir_exists(fs: &impl Fs, dir: &Path) -> io::Result<bool> {
-    match fs.list(dir) {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error),
-    }
 }
 
 /// Makes `root` and `root/.praps` exist and their entries durable: creates
@@ -1014,10 +994,7 @@ fn resolve(ops: &BTreeMap<HashRef, Operation>, spec: &str) -> Result<HashRef, Er
     }
     let matches: Vec<HashRef> = ops
         .keys()
-        .filter(|id| {
-            let digest: String = id.digest().iter().map(|b| format!("{b:02x}")).collect();
-            digest.starts_with(hex)
-        })
+        .filter(|id| hash::hex(id.digest()).starts_with(hex))
         .copied()
         .collect();
     match matches.as_slice() {

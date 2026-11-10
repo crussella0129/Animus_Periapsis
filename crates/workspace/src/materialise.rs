@@ -103,6 +103,23 @@ fn listing_key(name: &sim::Name) -> String {
     }
 }
 
+/// Directory `dir`'s entries by [`listing_key`], from one scan, or `None`
+/// where no directory is there.
+fn listing(fs: &impl Fs, root: &Path, dir: &str) -> io::Result<Option<BTreeMap<String, Kind>>> {
+    match fs.scan(&on_disk(root, dir)) {
+        Ok(entries) => Ok(Some(
+            entries
+                .into_iter()
+                .map(|entry| (listing_key(&entry.name), entry.kind))
+                .collect(),
+        )),
+        Err(error) if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Reads the disk lazily, one directory scan each.
 struct Disk<'a, F: Fs> {
     fs: &'a F,
@@ -115,20 +132,7 @@ struct Disk<'a, F: Fs> {
 impl<F: Fs> Disk<'_, F> {
     fn listing(&mut self, dir: &str) -> io::Result<Option<&BTreeMap<String, Kind>>> {
         if !self.dirs.contains_key(dir) {
-            let listed = match self.fs.scan(&on_disk(self.root, dir)) {
-                Ok(entries) => Some(
-                    entries
-                        .into_iter()
-                        .map(|entry| (listing_key(&entry.name), entry.kind))
-                        .collect(),
-                ),
-                Err(error)
-                    if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) =>
-                {
-                    None
-                }
-                Err(error) => return Err(error),
-            };
+            let listed = listing(self.fs, self.root, dir)?;
             self.dirs.insert(dir.to_owned(), listed);
         }
         Ok(self.dirs[dir].as_ref())
@@ -394,21 +398,7 @@ pub fn remove_temporaries(fs: &impl Fs, root: &Path, from: &Tree, target: &Tree)
         }
         let (dir, name) = split(&tmp);
         if !listings.contains_key(dir) {
-            let listed = match fs.scan(&on_disk(root, dir)) {
-                Ok(entries) => Some(
-                    entries
-                        .into_iter()
-                        .map(|entry| (listing_key(&entry.name), entry.kind))
-                        .collect(),
-                ),
-                Err(error)
-                    if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) =>
-                {
-                    None
-                }
-                Err(error) => return Err(error),
-            };
-            listings.insert(dir.to_owned(), listed);
+            listings.insert(dir.to_owned(), listing(fs, root, dir)?);
         }
         let is_file = listings[dir]
             .as_ref()

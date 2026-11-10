@@ -83,7 +83,7 @@ fn cli(args: &[OsString], out: &mut impl Write, err: &mut impl Write) -> u8 {
 
 /// The first [`SHOWN`] hex digits of `bytes`.
 fn short(bytes: &[u8]) -> String {
-    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let hex = hash::hex(bytes);
     hex[..SHOWN.min(hex.len())].to_owned()
 }
 
@@ -216,8 +216,7 @@ fn new(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
     let (result, reported) = with_reports(dir, err, |ws| ws.new_change());
     let code = match result {
         Ok(change_id) => {
-            let hex: String = change_id.iter().map(|b| format!("{b:02x}")).collect();
-            let _ = writeln!(out, "new change {hex}");
+            let _ = writeln!(out, "new change {}", hash::hex(&change_id));
             0
         }
         Err(error) => fail("new", dir, error, err),

@@ -16,7 +16,7 @@ mod real;
 mod rng;
 mod simfs;
 
-pub use fs::{Crash, Fs, NameRules, is_crash};
+pub use fs::{Crash, Fs, NameRules, dir_exists, is_crash, parent_dir};
 pub use name::{DirEntry, Kind, Name, RawName};
 pub use point::Point;
 pub use processes::{After, KillAt, Outcome, Processes, Stopped};

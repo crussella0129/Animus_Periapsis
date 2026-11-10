@@ -5,9 +5,7 @@
 //! `<algorithm id as two hex digits>-<digest hex>`, which keeps equal digests
 //! under different algorithms apart and is legal on Windows and Linux.
 
-use std::fmt::Write;
-
-use hash::{HashAlg, HashRef};
+use hash::{HashAlg, HashRef, write_hex};
 
 /// The prefix of a file being written, before it is renamed to its id.
 pub const TMP_PREFIX: &str = "tmp-";
@@ -15,9 +13,8 @@ pub const TMP_PREFIX: &str = "tmp-";
 /// The file name of an object or op with this id.
 pub fn file_name(id: &HashRef) -> String {
     let mut name = format!("{:02x}-", id.alg().id());
-    for byte in id.digest() {
-        let _ = write!(name, "{byte:02x}");
-    }
+    // Writing to a `String` cannot fail.
+    let _ = write_hex(&mut name, id.digest());
     name
 }
 

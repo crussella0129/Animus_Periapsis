@@ -233,3 +233,45 @@ fn reach_record_round_trips() {
     RealFs.remove_file(&dir.join("scenario-file.txt")).unwrap();
     RealFs.remove_dir(&dir).unwrap();
 }
+
+/// `Fs::point` has no default body. With one, a forwarder or a wrapper that
+/// left `point` out would still compile, and would drop every point marked
+/// through it (Sprint 6 T-002).
+#[test]
+fn point_has_no_default_body() {
+    let source = RealFs
+        .read(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src")
+                .join("fs.rs"),
+        )
+        .unwrap();
+    let source = String::from_utf8(source).unwrap();
+    // The trait's own lines: after its opening line, up to the first line
+    // that is a closing brace alone.
+    let in_trait: Vec<&str> = source
+        .lines()
+        .skip_while(|line| *line != "pub trait Fs {")
+        .skip(1)
+        .take_while(|line| *line != "}")
+        .map(str::trim)
+        .collect();
+    assert!(!in_trait.is_empty(), "the trait was not found");
+    let declarations: Vec<&str> = in_trait
+        .iter()
+        .copied()
+        .filter(|line| line.starts_with("fn point("))
+        .collect();
+    assert_eq!(declarations, ["fn point(&self, name: &'static str);"]);
+    // Every method of the trait is a declaration only.
+    let methods: Vec<&str> = in_trait
+        .iter()
+        .copied()
+        .filter(|line| line.starts_with("fn "))
+        .collect();
+    assert_eq!(methods.len(), 16, "{methods:#?}");
+    assert!(
+        methods.iter().all(|line| line.ends_with(';')),
+        "{methods:#?}"
+    );
+}
