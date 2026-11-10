@@ -39,6 +39,7 @@ watchers.
   - Threshold: 100% over a hazard fixture corpus.
 - **AC-5** `necessary` `asserted` — The storage layer documents its durability strategy on Windows, where directory fsync is not available as on POSIX, and a reviewer accepts the crash-test evidence for it.
   - Signers: human reviewer.
+  - Evidence: signed by the project owner (crussella0129), as the reviewer, 2026-11-10, accepting the assumptions listed under "What remains asserted" in `docs/spec/storage-durability.md` ([sign-offs of 2026-11-10](../sprints/s6/sign-offs.md)).
 - **AC-6** `supporting` `empirical` — End-to-end scenarios (multi-peer sync, crash and restart) also run on the Debian host Nighthawk.
 - **AC-7** `necessary` `empirical` — A working-copy file or directory whose name has no UTF-8 form (bytes that are not UTF-8 on ext4, an unpaired surrogate on NTFS) is reported by an escaped form of its name and otherwise left alone, like an ignored path: it is never tracked under a changed name, overwritten, deleted or skipped without a report.
   - Threshold: 100% over a fixture corpus on each platform.
@@ -110,3 +111,4 @@ watchers.
 - 2026-11-09: evidence while `active` (Sprint 5 Loop): AC-1 holds with every CI check on both platforms, separately named, locally and on GitHub. AC-5 (sign-off) and AC-6 (Nighthawk) remain, so the chapter stays `active` ([Sprint 5 test report](../sprints/s5/sprint-tests/test-report.md)).
 - 2026-11-10: revised while `active` (Sprint 6 Plan): Consequences drop a sentence that had gone stale, that only `status` reported names with no UTF-8 form (Sprint 4 closed that gap), and record that the speed budgets of [INT-0036](INT-0036-measured-speed.md) hold on both platforms.
 - 2026-11-10: kept `active` at the close of Sprint 6. AC-1 holds for every task and at the tested head on both systems, and AC-7 is kept for `log` and `describe`. AC-5's sign-off and AC-6 (Nighthawk) are pending.
+- 2026-11-10: revised while `active` (the owner's sign-offs, given after Sprint 6 closed; `editorial`: no criterion changes): AC-5 signed by the project owner as the reviewer: the Windows durability strategy and its crash-test evidence, with the assumptions the storage spec lists (no documented guarantee for directory flushes on NTFS; no test cuts power) ([sign-offs of 2026-11-10](../sprints/s6/sign-offs.md)).

@@ -108,6 +108,7 @@ many agents is [INT-0038](INT-0038-live-view.md).
   - Error: δ = 1/20.
 - **AC-8** `necessary` `asserted` — The project owner approves the vocabulary table and the list of refused words.
   - Signers: project owner.
+  - Note: signed in part by the project owner (crussella0129), 2026-11-10, for the eleven commands built (`status`, `describe`, `new`, `log`, `undo`, `ops`, `restore`, `init`, `verify`, `help`, `version`) and the list of refused words. The names not built yet stay proposals, so this criterion is not met ([sign-offs of 2026-11-10](../sprints/s6/sign-offs.md)).
 
 ## Rationale
 - Owner direction, 2026-11-09: Periapsis needs "a far more intuitive command
@@ -168,3 +169,4 @@ many agents is [INT-0038](INT-0038-live-view.md).
 - 2026-11-10: revised while `planned` (Sprint 6 plan critique, round 1, C-006 and C-015; `editorial`: no criterion changes): the rule on arguments says that text of several words is one quoted argument, and words the flag rule as [INT-0022](INT-0022-agent-and-human-interfaces.md) now defines it. The build plan's tasks for this chapter are renumbered after three were split; with the task the second critique added, they are T-006 to T-013.
 - 2026-11-10: `planned` → `active` (Sprint 6 build, T-006 starts: the command registry, help and suggestions).
 - 2026-11-10: kept `active` at the close of Sprint 6. AC-1, AC-2, AC-3 and AC-5 pass on Windows and Linux. AC-4 is shown through the binary for 31 of the 32 kinds of refusal and its 100% is not claimed; one kind and three places that print a hint are run by no test (backlog T-036). AC-6 and AC-7 are not tested, and AC-8 is unsigned. The sprint's reviews found that `praps init` on a repository that has lost `ops/` starts a new history without saying so, and that two hints suggest `init` for that state; backlog T-036 names it first.
+- 2026-11-10: revised while `active` (the owner's sign-offs, given after Sprint 6 closed; `editorial`: no criterion changes): AC-8 signed in part by the project owner: the eleven commands built and the list of refused words are approved; the names not built yet stay proposals, and the criterion stays open ([sign-offs of 2026-11-10](../sprints/s6/sign-offs.md)).

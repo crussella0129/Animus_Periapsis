@@ -123,6 +123,7 @@ How fast each command is, against other systems, is
 - **AC-11** `supporting` `empirical` — A real fleet: at least 1,000 real agent processes work on one project for an hour. No command fails because of another agent, and the median command stays within the interactive budget of [INT-0036](INT-0036-measured-speed.md) AC-5.
 - **AC-12** `necessary` `asserted` — The project owner approves the scale model and the cost rules.
   - Signers: project owner.
+  - Evidence: signed by the project owner (crussella0129), 2026-11-10, as written ([sign-offs of 2026-11-10](../sprints/s6/sign-offs.md)).
 
 ## Rationale
 - Owner direction, 2026-11-09: Periapsis "should quite literally support
@@ -199,3 +200,4 @@ How fast each command is, against other systems, is
 - 2026-11-10: revised while `planned` (Sprint 6 plan critique, round 1, C-017; `editorial`: no criterion changes): the Consequence that puts the merge before further single-user features names Sprint 6's command-set work as the exception the owner approved, and why.
 - 2026-11-10: `planned` → `active` (Sprint 6 build, T-003 starts: a command reads the op log once).
 - 2026-11-10: kept `active` at the close of Sprint 6. No criterion of this chapter is met. Two steps were taken: a command reads the op log once, and the cost of the two listings follows their length. Two commands that run at the same time still leave two op heads; the canonical merge is backlog T-029.
+- 2026-11-10: revised while `active` (the owner's sign-offs, given after Sprint 6 closed; `editorial`: no criterion changes): AC-12 signed by the project owner: the scale model and the seven cost rules, as written ([sign-offs of 2026-11-10](../sprints/s6/sign-offs.md)).
