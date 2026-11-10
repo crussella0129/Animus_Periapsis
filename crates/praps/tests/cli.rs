@@ -200,14 +200,11 @@ fn fsck_on_a_non_store_exits_one() {
 #[test]
 fn usage_errors_exit_two() {
     let repo = repo("usage");
-    for args in [
-        &[][..],
-        &["--help"][..],
-        &["-h"][..],
-        &["fsck", "--fix"][..],
-        &["check"][..],
-        &["fsck", "repo", "extra"][..],
-    ] {
+    // `praps` alone, `--help` and `-h` now succeed, and a word that is not
+    // a command has an answer of its own (Sprint 6 T-006): see
+    // `praps_alone_lists_every_command` and
+    // `unknown_words_get_the_nearest_commands`.
+    for args in [&["fsck", "--fix"][..], &["fsck", "repo", "extra"][..]] {
         let output = praps(args, &repo.dir);
         assert_eq!(code(&output), 2, "{args:?}: {output:?}");
         assert!(output.stdout.is_empty(), "{args:?}");
@@ -692,5 +689,288 @@ fn praps_prints_notes() {
     assert!(err.contains(&root_op.to_string()), "{err}");
     assert!(!root.join(".praps/working-copy").exists());
     assert_eq!(fs::read(root.join("a")).unwrap(), b"1");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+// --------------------- the registry, help and suggestions (Sprint 6 T-006)
+
+fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+/// The last line every refusal about a word ends with.
+const LIST_HINT: &str = "hint: run `praps help` to list the commands";
+
+/// The commands `praps` lists, each with its summary: the lines of the list
+/// that start with two spaces.
+fn listed(dir: &Path) -> Vec<(String, String)> {
+    let output = praps(&[], dir);
+    assert_eq!(code(&output), 0, "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    stdout(&output)
+        .lines()
+        .filter(|line| line.starts_with("  "))
+        .map(|line| {
+            let (name, summary) = line.trim().split_once(' ').unwrap();
+            (name.to_owned(), summary.trim().to_owned())
+        })
+        .collect()
+}
+
+/// `praps` alone lists the commands and exits 0, and every name it lists is
+/// one `praps help` explains (INT-0037 AC-2).
+#[test]
+fn praps_alone_lists_every_command() {
+    let dir = claim("list");
+    let commands = listed(&dir);
+    let names: Vec<&str> = commands.iter().map(|(name, _)| name.as_str()).collect();
+    for expected in [
+        "status", "new", "undo", "restore", "init", "help", "version",
+    ] {
+        assert!(names.contains(&expected), "{expected} is not in {names:?}");
+    }
+    let list = stdout(&praps(&[], &dir));
+    assert!(
+        list.find("\nEvery day\n") < list.find("\nLooking back\n")
+            && list.find("\nLooking back\n") < list.find("\nStarting and care\n"),
+        "{list}"
+    );
+    assert_eq!(stdout(&praps(&["help"], &dir)), list);
+    for (name, _) in &commands {
+        let output = praps(&["help", name], &dir);
+        assert_eq!(code(&output), 0, "help {name}: {output:?}");
+    }
+    assert!(
+        fs::read_dir(&dir).unwrap().next().is_none(),
+        "nothing created"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `praps help WORD` prints the command's usage line, its summary, its
+/// arguments when it takes any, an example, and whether it is idempotent
+/// (INT-0037 AC-2; INT-0022 AC-11).
+#[test]
+fn praps_help_explains_every_command() {
+    let dir = claim("help");
+    for (name, summary) in listed(&dir) {
+        let output = praps(&["help", &name], &dir);
+        assert_eq!(code(&output), 0, "{name}: {output:?}");
+        assert!(output.stderr.is_empty(), "{name}: {output:?}");
+        let help = stdout(&output);
+        let usage = help.lines().next().unwrap();
+        assert!(
+            usage == format!("usage: praps {name}")
+                || usage.starts_with(&format!("usage: praps {name} ")),
+            "{name}: {usage}"
+        );
+        assert!(help.contains(&summary), "{name}: {help}");
+        assert_eq!(
+            help.contains("\nArguments:\n"),
+            usage != format!("usage: praps {name}"),
+            "{name}: {help}"
+        );
+        let (_, examples) = help.split_once("\nExamples:\n").unwrap();
+        assert!(
+            examples
+                .lines()
+                .any(|line| line.trim() == format!("praps {name}")
+                    || line.trim().starts_with(&format!("praps {name} "))),
+            "{name}: {examples}"
+        );
+        let marks = help
+            .lines()
+            .filter(|line| line.starts_with("Idempotent: ") || line.starts_with("Not idempotent: "))
+            .count();
+        assert_eq!(marks, 1, "{name}: {help}");
+        // The usage error for the command prints the same usage line.
+        let output = praps(&[&name, "a", "b", "c", "d"], &dir);
+        assert_eq!(code(&output), 2, "{name}");
+        assert_eq!(stderr(&output).lines().next(), Some(usage), "{name}");
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn praps_help_for_an_unknown_word_suggests() {
+    let dir = claim("help-unknown");
+    let output = praps(&["help", "statsu"], &dir);
+    assert_eq!(code(&output), 2, "{output:?}");
+    assert!(output.stdout.is_empty());
+    let err = stderr(&output);
+    assert!(err.contains("`statsu` is not a command"), "{err}");
+    assert!(err.contains("nearest: `status`"), "{err}");
+    assert_eq!(err.lines().last(), Some(LIST_HINT));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `--help` and `-h` are spellings of `help`, and `--version` and `-V` of
+/// `version` (INT-0037).
+#[test]
+fn help_and_version_spellings() {
+    let dir = claim("spellings");
+    let list = stdout(&praps(&[], &dir));
+    for args in [&["--help"][..], &["-h"][..]] {
+        let output = praps(args, &dir);
+        assert_eq!(code(&output), 0, "{args:?}");
+        assert_eq!(stdout(&output), list, "{args:?}");
+    }
+    let status = stdout(&praps(&["help", "status"], &dir));
+    assert!(status.starts_with("usage: praps status"));
+    for args in [
+        &["status", "--help"][..],
+        &["--help", "status"][..],
+        &["status", "-h"][..],
+    ] {
+        let output = praps(args, &dir);
+        assert_eq!(code(&output), 0, "{args:?}");
+        assert_eq!(stdout(&output), status, "{args:?}");
+    }
+    let version = praps(&["version"], &dir);
+    assert_eq!(code(&version), 0);
+    assert_eq!(
+        stdout(&version),
+        format!("praps {}\n", env!("CARGO_PKG_VERSION"))
+    );
+    for args in [&["--version"][..], &["-V"][..]] {
+        let output = praps(args, &dir);
+        assert_eq!(code(&output), 0, "{args:?}");
+        assert_eq!(output.stdout, version.stdout, "{args:?}");
+    }
+    assert!(
+        fs::read_dir(&dir).unwrap().next().is_none(),
+        "nothing created"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A corpus of misspelt names, built from every command `praps` lists: each
+/// single deletion, each swap of two neighbouring letters, and the name
+/// with `x` in front. Each is within two edits of the name it came from, so
+/// `praps` names that command, exits 2 and writes nothing to stdout
+/// (INT-0037 AC-2).
+#[test]
+fn unknown_words_get_the_nearest_commands() {
+    let dir = claim("misspelt");
+    let names: Vec<String> = listed(&dir).into_iter().map(|(name, _)| name).collect();
+    let mut tried = 0;
+    for name in &names {
+        let letters: Vec<char> = name.chars().collect();
+        let mut words = vec![format!("x{name}")];
+        for at in 0..letters.len() {
+            let mut deleted = letters.clone();
+            deleted.remove(at);
+            words.push(deleted.into_iter().collect());
+            if at + 1 < letters.len() {
+                let mut swapped = letters.clone();
+                swapped.swap(at, at + 1);
+                words.push(swapped.into_iter().collect());
+            }
+        }
+        for word in words {
+            if word.is_empty() || names.contains(&word) {
+                continue;
+            }
+            tried += 1;
+            let output = praps(&[&word], &dir);
+            assert_eq!(code(&output), 2, "{word}: {output:?}");
+            assert!(output.stdout.is_empty(), "{word}");
+            let err = stderr(&output);
+            assert!(
+                err.starts_with(&format!("praps: `{word}` is not a command\n")),
+                "{word}: {err}"
+            );
+            let nearest = err
+                .lines()
+                .find(|line| line.starts_with("nearest: "))
+                .unwrap_or_else(|| panic!("{word}: no nearest line in {err}"));
+            assert!(
+                nearest.contains(&format!("`{name}`")),
+                "{word} came from {name}: {nearest}"
+            );
+            assert_eq!(err.lines().last(), Some(LIST_HINT), "{word}");
+        }
+    }
+    assert!(tried > 5 * names.len(), "{tried} words tried");
+    // A word near nothing is still answered, without a nearest line.
+    let output = praps(&["snapshot"], &dir);
+    assert_eq!(code(&output), 2);
+    let output = praps(&["frobnicate"], &dir);
+    assert_eq!(code(&output), 2);
+    assert_eq!(
+        stderr(&output),
+        format!("praps: `frobnicate` is not a command\n{LIST_HINT}\n")
+    );
+    assert!(
+        fs::read_dir(&dir).unwrap().next().is_none(),
+        "nothing created"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A word another system uses is answered with what to use in `praps`,
+/// naming only commands `praps` lists.
+#[test]
+fn other_systems_words_are_answered() {
+    let dir = claim("other-words");
+    let names: Vec<String> = listed(&dir).into_iter().map(|(name, _)| name).collect();
+    for word in ["commit", "add", "checkout", "stash"] {
+        let output = praps(&[word], &dir);
+        assert_eq!(code(&output), 2, "{word}: {output:?}");
+        assert!(output.stdout.is_empty(), "{word}");
+        let err = stderr(&output);
+        let answer = err
+            .lines()
+            .find(|line| line.starts_with(&format!("`{word}`: ")))
+            .unwrap_or_else(|| panic!("{word}: no answer in {err}"));
+        let named: Vec<&str> = answer
+            .split("`praps ")
+            .skip(1)
+            .map(|rest| rest.split(['`', ' ']).next().unwrap())
+            .collect();
+        assert!(!named.is_empty(), "{word}: {answer}");
+        for name in named {
+            assert!(names.iter().any(|n| n == name), "{word}: `{name}`");
+        }
+        assert_eq!(err.lines().last(), Some(LIST_HINT), "{word}");
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Every command whose help says it is idempotent repeats exactly: run
+/// twice in a row in a repository with an edit not yet recorded, the second
+/// run prints what the first printed and leaves every file as the first
+/// left it (INT-0022 AC-9, for the commands built so far). The commands are
+/// taken from `praps help`, not from a list kept here.
+#[test]
+fn idempotent_commands_repeat_exactly() {
+    let dir = claim("repeat");
+    let idempotent: Vec<String> = listed(&dir)
+        .into_iter()
+        .map(|(name, _)| name)
+        .filter(|name| {
+            stdout(&praps(&["help", name], &dir))
+                .lines()
+                .any(|line| line.starts_with("Idempotent: "))
+        })
+        .collect();
+    assert!(idempotent.len() >= 5, "{idempotent:?}");
+    assert!(idempotent.iter().any(|name| name == "status"));
+    for name in &idempotent {
+        let root = dir.join(format!("repo-{name}"));
+        assert_eq!(code(&praps(&["init", root.to_str().unwrap()], &dir)), 0);
+        write(&root, "a", b"1");
+        assert_eq!(code(&praps(&["new"], &root)), 0);
+        write(&root, "a", b"an edit no command has recorded");
+        write(&root, "b", b"new");
+        let first = praps(&[name], &root);
+        let after_first = tree(&root);
+        let second = praps(&[name], &root);
+        assert_eq!(code(&first), 0, "{name}: {first:?}");
+        assert_eq!(code(&second), 0, "{name}: {second:?}");
+        assert_eq!(second.stdout, first.stdout, "{name}: stdout");
+        assert_eq!(second.stderr, first.stderr, "{name}: stderr");
+        assert_eq!(tree(&root), after_first, "{name}: the second run wrote");
+    }
     let _ = fs::remove_dir_all(&dir);
 }

@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0022
-- **State:** planned
+- **State:** active
 - **Work evidence:** [Sprint 6 T-006 build plan](../sprints/s6/sprint-plans/build-plan.md#t-006-the-command-registry-dispatch-help-and-suggestions-from-one-table)
 - **Completion evidence:** none
 - **Code evidence:** none
@@ -143,3 +143,4 @@ result with it or without.
 - 2026-11-10: `proposed` → `planned` (Sprint 6 build plan T-006: the registry, with dispatch, help and usage generated from it; AC-8 and AC-11. `praps mcp`, the schemas and the service wait for later sprints).
 - 2026-11-10: revised while `planned` (Sprint 6 plan critique, round 1, C-004 and C-006; `semantic`): the Intent defines the idempotent class as the commands that only report, names `init` and `describe` as outside it, and says the registry marks the class and `help` shows it; AC-8 and AC-9 are unchanged and now apply to that class. Consequences record that Sprint 6's `log` listing is provisional, that it does not meet AC-4, and when the seed and the rubric of AC-5 and AC-6 are registered.
 - 2026-11-10: revised while `planned` (Sprint 6 plan critique, round 2, C-008; `semantic`): the idempotent class is defined by the repeat alone, that it changes nothing and prints the same, so that a command which writes on its first run, as `status` and `cargo reach` do, has a settled class. "The commands that report" stays as a description of the `praps` commands in it.
+- 2026-11-10: `planned` → `active` (Sprint 6 build, T-006 starts: the command registry).
