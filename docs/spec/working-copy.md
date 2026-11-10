@@ -77,9 +77,9 @@ them is captured by the next command that does.
 A snapshot does the following:
 1. **Loads the state**, or takes the one its command already read
    ([Reading the op log](#reading-the-op-log)). If `ops/` holds an op file
-   that does not hash to its name or does not decode, it stops and points to
-   `praps verify`. It finds
-   the single op head. With no op it reports
+   that does not hash to its name or does not decode, it stops and says how
+   many are not whole; `praps` then ends its refusal with a hint that names
+   `praps verify`. It finds the single op head. With no op it reports
    that the repository is not initialised. With several op heads it stops,
    names every head, and writes nothing. Concurrent ops are not merged
    until [INT-0010](../intents/INT-0010-lock-free-concurrency.md).

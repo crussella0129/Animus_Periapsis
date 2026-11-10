@@ -9,7 +9,9 @@
 //! copy: it finishes an interrupted write (printing a `note:` on stderr for
 //! anything it left), then snapshots it (INT-0014, INT-0009). `verify` only
 //! reads (INT-0007 AC-4), and `init` on an existing repository writes
-//! nothing. Exit codes follow the project's convention: 0 success (for
+//! nothing. A command that cannot do what was asked says what was wrong and
+//! ends with one `hint:` line that says what to do next ([`hint`]; INT-0037
+//! AC-4). Exit codes follow the project's convention: 0 success (for
 //! `verify`, clean), 1 a repository error (not a repository, several op heads,
 //! corruption, nothing to undo, an unknown or ambiguous op, a hazard or an
 //! entry in the way), 2 a usage error or a word that is not a command.
@@ -20,6 +22,7 @@
 
 mod commands;
 mod help;
+mod hint;
 mod place;
 mod registry;
 
@@ -49,6 +52,9 @@ enum Invocation<'a> {
     /// Arguments that fit no command line: a flag, or the wrong number of
     /// arguments for the command named, if one was.
     Usage(Option<&'static Command>),
+    /// More words than `describe` takes: most likely one text, given
+    /// without its quotes.
+    Unquoted(&'static Command, Vec<&'a OsStr>),
     /// A first word that is not a command.
     Unknown(String),
 }
@@ -99,6 +105,9 @@ fn parse(args: &[OsString]) -> Invocation<'_> {
     };
     let rest = &words[1..];
     let (least, most) = command.arity();
+    if rest.len() > most && command.action == Action::Describe {
+        return Invocation::Unquoted(command, rest.to_vec());
+    }
     if rest.len() < least || rest.len() > most {
         return Invocation::Usage(Some(command));
     }
@@ -136,17 +145,16 @@ fn cli(args: &[OsString], out: &mut impl Write, err: &mut impl Write) -> u8 {
         }
         Invocation::Run(command, args) => commands::run(command, &args, out, err),
         Invocation::Usage(Some(command)) => {
-            let _ = writeln!(err, "{}", command.usage());
-            let _ = writeln!(
-                err,
-                "hint: run `praps help {}` for what it takes",
-                command.name
-            );
-            2
+            commands::usage_error(command, &hint::usage(command), err)
+        }
+        Invocation::Unquoted(command, words) => {
+            let hint = hint::quoted(&words, "to give those words as one text")
+                .unwrap_or_else(hint::quote_the_text);
+            commands::usage_error(command, &hint, err)
         }
         Invocation::Usage(None) => {
             let _ = writeln!(err, "{}", help::USAGE);
-            let _ = writeln!(err, "{}", help::LIST_HINT);
+            let _ = writeln!(err, "{}", hint::list());
             2
         }
         Invocation::Unknown(word) => {
@@ -179,6 +187,12 @@ mod tests {
                 Invocation::Usage(Some(found)) => {
                     assert_eq!(found.name, command.name);
                     assert_eq!(found.usage(), command.usage());
+                }
+                // Too many words for `describe` are taken as text without
+                // its quotes, and answered with the same usage line.
+                Invocation::Unquoted(found, words) => {
+                    assert_eq!((found.name, command.name), ("describe", "describe"));
+                    assert_eq!(words.len(), most + 1);
                 }
                 other => panic!("{}: {other:?}", command.name),
             }
@@ -230,11 +244,13 @@ mod tests {
             // itself and any other word as unknown.
             let crowded = args(&[word, "a", "b", "c", "d"]);
             let parsed = parse(&crowded);
-            assert_eq!(
-                matches!(parsed, Invocation::Usage(Some(found)) if found.name == word),
-                known,
-                "`{word}` with too many arguments"
-            );
+            let answered = match parsed {
+                Invocation::Usage(Some(found)) | Invocation::Unquoted(found, _) => {
+                    found.name == word
+                }
+                _ => false,
+            };
+            assert_eq!(answered, known, "`{word}` with too many arguments");
         }
     }
 

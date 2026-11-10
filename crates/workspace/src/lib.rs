@@ -80,13 +80,16 @@ pub enum Error {
     AmbiguousOp(String, Vec<HashRef>),
 }
 
+/// Each message says only what is wrong. What to do about it is said once,
+/// by whoever prints the error: `praps` ends every refusal with a hint
+/// (INT-0037 AC-4), and `messages_say_only_what_is_wrong` fixes each text.
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Io(error) => write!(f, "{error}"),
             Error::NotInitialised(root) => write!(
                 f,
-                "{} is not an initialised Periapsis repository (run `praps init`)",
+                "{} is not an initialised Periapsis repository",
                 root.display()
             ),
             Error::SeveralHeads(heads) => {
@@ -118,7 +121,7 @@ impl fmt::Display for Error {
             Error::Blocked(entries) => {
                 write!(
                     f,
-                    "untracked entries are in the way; move them and try again (no file was changed):"
+                    "untracked entries are in the way, and no file was changed:"
                 )?;
                 for entry in entries {
                     write!(f, "\n  {entry}")?;
@@ -449,7 +452,7 @@ fn corrupt(what: impl fmt::Display) -> Error {
 fn refuse_invalid(log: &OpLog) -> Result<(), Error> {
     if log.invalid > 0 {
         return Err(corrupt(format!(
-            "{} of {} op files do not hash to their names or do not decode (run `praps verify`)",
+            "{} of {} op files do not hash to their names or do not decode",
             log.invalid,
             log.ops.len() + log.invalid
         )));

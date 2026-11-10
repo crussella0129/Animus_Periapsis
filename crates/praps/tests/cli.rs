@@ -1777,3 +1777,421 @@ fn praps_log_escapes_the_first_line() {
     }
     let _ = fs::remove_dir_all(&dir);
 }
+
+// ------------------------- every refusal names the next step (Sprint 6 T-011)
+
+/// The commands a hint names: each word that follows `` `praps `` in it.
+fn named_in(hint: &str) -> Vec<String> {
+    hint.match_indices("`praps ")
+        .map(|(at, found)| {
+            hint[at + found.len()..]
+                .chars()
+                .take_while(char::is_ascii_lowercase)
+                .collect()
+        })
+        .collect()
+}
+
+/// Every refusal ends with exactly one line that starts `hint:`, after what
+/// was wrong, and a command the hint names is one `praps` lists (INT-0037
+/// AC-4). The corpus is every kind of refusal a command line can reach:
+/// usage errors, words that are not commands, each way of not finding a
+/// working copy, the errors of the `workspace` crate, and each way `verify`
+/// fails.
+#[test]
+fn every_refusal_prints_one_hint() {
+    let dir = claim("hints");
+    let commands: Vec<String> = listed(&dir).into_iter().map(|(name, _)| name).collect();
+    let top = template(&dir);
+    write(&top, "a-file", b"a file, not a directory");
+    assert_eq!(code(&praps(&["status"], &top)), 0);
+    let mut kinds = 0;
+    // Runs one command line and checks its refusal. `holds` is a part of
+    // the hint that only the right hint for the case has.
+    let mut refused = |what: &str, output: Output, exit: i32, holds: &str| {
+        assert_eq!(code(&output), exit, "{what}: {output:?}");
+        let err = stderr(&output);
+        let hints: Vec<&str> = err
+            .lines()
+            .filter(|line| line.starts_with("hint: "))
+            .collect();
+        assert_eq!(hints.len(), 1, "{what}: one hint line in {err:?}");
+        let hint = hints[0];
+        assert_eq!(err.lines().last(), Some(hint), "{what}: the hint is last");
+        assert!(hint.contains(holds), "{what}: {hint}");
+        // What was wrong comes first: on stderr, or for `verify`'s report
+        // on stdout.
+        assert!(
+            err.lines().count() >= 2 || !output.stdout.is_empty(),
+            "{what}: nothing says what was wrong: {err:?}"
+        );
+        for name in named_in(hint) {
+            assert!(commands.contains(&name), "{what}: `{name}` in {hint}");
+        }
+        assert!(!hint.ends_with('.'), "{what}: {hint}");
+        kinds += 1;
+    };
+
+    // Usage errors and words that are not commands: exit 2.
+    refused(
+        "too many arguments",
+        praps(&["status", "a", "b"], &top),
+        2,
+        "`praps help status`",
+    );
+    refused(
+        "a flag the command does not take",
+        praps(&["status", "--short"], &top),
+        2,
+        "`praps help status`",
+    );
+    refused(
+        "a flag and no command",
+        praps(&["--force"], &top),
+        2,
+        "`praps help` to list",
+    );
+    refused(
+        "a mistyped word",
+        praps(&["statsu"], &top),
+        2,
+        "`praps help` to list",
+    );
+    refused(
+        "another system's word",
+        praps(&["commit"], &top),
+        2,
+        "`praps help` to list",
+    );
+    refused(
+        "text given as several words",
+        praps(&["describe", "Add", "the", "parser"], &top),
+        2,
+        "`praps describe \"Add the parser\"`",
+    );
+    #[cfg(unix)]
+    let not_text = {
+        use std::os::unix::ffi::OsStrExt;
+        std::ffi::OsStr::from_bytes(b"\xff\xfe").to_owned()
+    };
+    #[cfg(windows)]
+    let not_text = {
+        use std::os::windows::ffi::OsStringExt;
+        std::ffi::OsString::from_wide(&[0xd800])
+    };
+    refused(
+        "an operation id that is not text",
+        praps_os(&["restore".as_ref(), not_text.as_os_str()], &top),
+        2,
+        "`praps ops`",
+    );
+    #[cfg(windows)]
+    refused(
+        "text with no UTF-8 form",
+        praps_os(&["describe".as_ref(), not_text.as_os_str()], &top),
+        2,
+        "Unicode",
+    );
+
+    // Not finding the working copy: exit 1.
+    let plain = dir.join("plain");
+    fs::create_dir(&plain).unwrap();
+    refused(
+        "no repository here or above",
+        praps(&["status"], &plain),
+        1,
+        "`praps init`",
+    );
+    refused(
+        "a directory that is not there",
+        praps(&["status", "nowhere"], &top),
+        1,
+        "give a directory that exists",
+    );
+    refused(
+        "a file given as the directory",
+        praps(&["log", "a-file"], &top),
+        1,
+        "give a directory that exists",
+    );
+    refused(
+        "text given as two words",
+        praps(&["describe", "Add", "parser"], &top),
+        1,
+        "`praps describe \"Add parser\"`",
+    );
+    refused(
+        "init inside a working copy",
+        praps(&["init"], &top.join("d1")),
+        1,
+        "`praps status`",
+    );
+
+    // The errors of the `workspace` crate: exit 1.
+    assert_eq!(code(&praps(&["init", "fresh"], &dir)), 0);
+    refused(
+        "nothing to undo",
+        praps(&["undo", "fresh"], &dir),
+        1,
+        "`praps ops`",
+    );
+    refused(
+        "an unknown operation",
+        praps(&["restore", "0000"], &top),
+        1,
+        "`praps ops` to list the operations and their ids",
+    );
+    // A prefix two operations share: with more than 16 operations, some
+    // first digit is shared.
+    let many = dir.join("many");
+    assert_eq!(code(&praps(&["init", "many"], &dir)), 0);
+    for round in 0..17u8 {
+        write(&many, "a", &[b'a' + round]);
+        assert_eq!(code(&praps(&["status"], &many)), 0);
+    }
+    let ops = logged_ops(&many);
+    let shared = "0123456789abcdef"
+        .chars()
+        .map(String::from)
+        .find(|digit| {
+            ops.iter()
+                .filter(|op| op.starts_with(digit.as_str()))
+                .count()
+                >= 2
+        })
+        .unwrap();
+    refused(
+        "an ambiguous operation",
+        praps(&["restore", &shared], &many),
+        1,
+        "give more digits",
+    );
+    // A store that holds no operation: `init` was interrupted.
+    fs::create_dir_all(dir.join("no-op/.praps/store/objects")).unwrap();
+    fs::create_dir_all(dir.join("no-op/.praps/store/ops")).unwrap();
+    refused(
+        "a repository whose init never finished",
+        praps(&["status"], &dir.join("no-op")),
+        1,
+        "`praps init`",
+    );
+    // Two op heads.
+    let heads = dir.join("heads");
+    assert_eq!(code(&praps(&["init", "heads"], &dir)), 0);
+    {
+        let mut store =
+            Store::open(RealFs, &heads.join(".praps/store"), HashAlg::DEFAULT, 5).unwrap();
+        let head = *store.heads().unwrap().first().unwrap();
+        let view = store.ops().unwrap()[&head].view;
+        let mut other = View::from_envelope(&store.get_object(&view).unwrap()).unwrap();
+        other
+            .workspaces
+            .insert("other".to_owned(), other.workspaces["default"]);
+        let other = store.put_object(&other.to_envelope()).unwrap();
+        for view in [view, other] {
+            store
+                .commit_op(&Operation {
+                    parents: [head].into(),
+                    view,
+                })
+                .unwrap();
+        }
+    }
+    refused(
+        "several op heads",
+        praps(&["status"], &heads),
+        1,
+        "nothing was lost",
+    );
+    // An op file that does not hash to its name.
+    let corrupt = dir.join("corrupt");
+    assert_eq!(code(&praps(&["init", "corrupt"], &dir)), 0);
+    let op_file = fs::read_dir(corrupt.join(".praps/store/ops"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut bytes = fs::read(&op_file).unwrap();
+    *bytes.last_mut().unwrap() ^= 1;
+    fs::write(&op_file, bytes).unwrap();
+    refused(
+        "a damaged op file",
+        praps(&["status"], &corrupt),
+        1,
+        "`praps verify` to list what is damaged",
+    );
+    // An object the head needs is gone: the filesystem's own error.
+    let gone = dir.join("gone");
+    assert_eq!(code(&praps(&["init", "gone"], &dir)), 0);
+    {
+        let store = Store::open(RealFs, &gone.join(".praps/store"), HashAlg::DEFAULT, 5).unwrap();
+        let head = *store.heads().unwrap().first().unwrap();
+        let view = store.ops().unwrap()[&head].view;
+        fs::remove_file(gone.join(".praps/store/objects").join(file_name(&view))).unwrap();
+    }
+    refused(
+        "a failure of the filesystem",
+        praps(&["status"], &gone),
+        1,
+        "`praps verify` to check what is stored",
+    );
+    // An untracked entry where the write must put a file.
+    let blocked = dir.join("blocked");
+    assert_eq!(code(&praps(&["init", "blocked"], &dir)), 0);
+    write(&blocked, "b", b"tracked");
+    assert_eq!(code(&praps(&["status"], &blocked)), 0);
+    let with_b = logged_ops(&blocked)[0].clone();
+    fs::remove_file(blocked.join("b")).unwrap();
+    assert_eq!(code(&praps(&["status"], &blocked)), 0);
+    write(&blocked, ".gitignore", b"b\n");
+    write(&blocked, "b", b"mine");
+    refused(
+        "an entry in the way",
+        praps(&["restore", &with_b], &blocked),
+        1,
+        "move those entries out of the way",
+    );
+    assert_eq!(fs::read(blocked.join("b")).unwrap(), b"mine");
+    // A name this filesystem cannot hold beside another (Windows: a
+    // case-only difference).
+    if cfg!(windows) {
+        let hazard = dir.join("hazard");
+        assert_eq!(code(&praps(&["init", "hazard"], &dir)), 0);
+        write(&hazard, "README", b"upper");
+        assert_eq!(code(&praps(&["status"], &hazard)), 0);
+        let upper = logged_ops(&hazard)[0].clone();
+        fs::remove_file(hazard.join("README")).unwrap();
+        write(&hazard, "readme", b"lower");
+        refused(
+            "a hazard",
+            praps(&["restore", &upper], &hazard),
+            1,
+            "this build cannot write those paths on this filesystem yet; nothing was lost",
+        );
+    }
+
+    // Each way `verify` fails: exit 1.
+    refused(
+        "verify: a directory that is not there",
+        praps(&["verify", "nowhere"], &top),
+        1,
+        "give the directory of a working copy or of a store",
+    );
+    refused(
+        "verify: a directory that is no store",
+        praps(&["verify"], &plain),
+        1,
+        "`praps init` to make a repository",
+    );
+    refused(
+        "verify: a damaged op file",
+        praps(&["verify"], &corrupt),
+        1,
+        "put back the files named above",
+    );
+    fs::remove_dir_all(many.join(".praps/store/ops")).unwrap();
+    refused(
+        "verify: a working copy's store that is no store",
+        praps(&["verify"], &many),
+        1,
+        "put back the files named above",
+    );
+    assert!(kinds >= 24, "{kinds} kinds of refusal were checked");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Text given to `describe` without its quotes. Three or more words are a
+/// usage error whose hint shows them as one quoted text. Two words, of
+/// which the second is no directory, are refused naming that word, with
+/// both shown as one quoted text. Nothing is described in either case, and
+/// the command line the hint shows works.
+#[test]
+fn describe_with_unquoted_words_hints_quotes() {
+    let dir = claim("unquoted");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    write(&root, "notes", b"a file");
+    assert_eq!(code(&praps(&["status"], &root)), 0);
+    let before = tree(&root);
+    let usage = "usage: praps describe TEXT [DIR]\n";
+
+    let output = praps(&["describe", "Add", "the", "parser"], &root);
+    assert_eq!(code(&output), 2, "{output:?}");
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        stderr(&output),
+        format!(
+            "{usage}hint: run `praps describe \"Add the parser\"` to give those words as one text\n"
+        )
+    );
+
+    for (second, why) in [
+        ("parser", "no such directory"),
+        ("notes", "not a directory"),
+    ] {
+        let output = praps(&["describe", "Add", second], &root);
+        assert_eq!(code(&output), 1, "{second}: {output:?}");
+        assert!(output.stdout.is_empty());
+        assert_eq!(
+            stderr(&output),
+            format!(
+                "praps describe: {second}: {why}\nhint: run `praps describe \"Add {second}\"` if both words are the text\n"
+            )
+        );
+    }
+
+    // Words a shell could change inside quotes are not shown: the hint
+    // says where the rule is, or what the directory must be.
+    let output = praps(&["describe", "say", "\"hi\"", "now"], &root);
+    assert_eq!(code(&output), 2, "{output:?}");
+    assert_eq!(
+        stderr(&output),
+        format!(
+            "{usage}hint: run `praps help describe` for how to give text of more than one word\n"
+        )
+    );
+    let output = praps(&["describe", "costs", "$5"], &root);
+    assert_eq!(code(&output), 1, "{output:?}");
+    assert_eq!(
+        stderr(&output),
+        "praps describe: $5: no such directory\nhint: give a directory that exists, or none for the current directory\n"
+    );
+    assert_eq!(tree(&root), before, "nothing was described or written");
+
+    // The command line the first hint shows does what was meant.
+    let output = praps(&["describe", "Add the parser"], &root);
+    assert_eq!(code(&output), 0, "{output:?}");
+    assert!(
+        stdout(&output).ends_with(": Add the parser\n"),
+        "{output:?}"
+    );
+    assert_eq!(working_copy_change(&root).description, b"Add the parser");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `praps describe update docs`, where `docs` is a directory inside the
+/// working copy, describes the change as `update`: a command takes what it
+/// acts on and then a directory. The line it prints shows the text it took.
+#[test]
+fn describe_with_a_directory_as_its_last_word_takes_one_word() {
+    let dir = claim("describe-dir");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    write(&root, "docs/guide.md", b"guide");
+    let output = praps(&["describe", "update", "docs"], &root);
+    assert_eq!(code(&output), 0, "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    let change = working_copy_change(&root);
+    assert_eq!(change.description, b"update");
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "described change {}: update\n",
+            &hash::hex(&change.change_id)[..12]
+        )
+    );
+    // The change described is the working copy's, found from `docs`.
+    assert_eq!(change.changes.len(), 1);
+    let _ = fs::remove_dir_all(&dir);
+}

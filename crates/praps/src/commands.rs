@@ -12,6 +12,7 @@ use sim::{Fs, RealFs, os_seed};
 use store::Store;
 use workspace::{PRAPS_DIR, STORE_DIR, Workspace};
 
+use crate::hint::{self, Hint};
 use crate::registry::{Action, Command};
 use crate::{help, place};
 
@@ -26,20 +27,12 @@ pub fn run(command: &Command, args: &[&OsStr], out: &mut impl Write, err: &mut i
     match command.action {
         Action::Status => status(dir(0), out, err),
         Action::Describe => match args.first().map(|text| text_bytes(text)) {
-            Some(Some(text)) => describe(&text, dir(1), out, err),
+            Some(Some(text)) => describe(&text, args, out, err),
             // Only Windows can pass text that has no UTF-8 form.
-            Some(None) => usage_error(
-                command,
-                "TEXT must be Unicode text, so that it can be stored as UTF-8",
-                err,
-            ),
+            Some(None) => usage_error(command, &hint::unicode_text(), err),
             // The parser has counted the arguments; this keeps the match
             // whole.
-            None => usage_error(
-                command,
-                &format!("run `praps help {}` for what it takes", command.name),
-                err,
-            ),
+            None => usage_error(command, &hint::usage(command), err),
         },
         Action::New => new(dir(0), out, err),
         Action::Log => log(dir(0), out, err),
@@ -47,11 +40,7 @@ pub fn run(command: &Command, args: &[&OsStr], out: &mut impl Write, err: &mut i
         Action::Undo => undo(dir(0), out, err),
         Action::Restore => match args.first().and_then(|op| op.to_str()) {
             Some(op) => restore(op, dir(1), out, err),
-            None => usage_error(
-                command,
-                "an operation's id is hex digits, as `praps ops` prints them",
-                err,
-            ),
+            None => usage_error(command, &hint::operation_ids(), err),
         },
         Action::Init => init(dir(0), out, err),
         Action::Verify => verify(dir(0), out, err),
@@ -68,11 +57,12 @@ pub fn run(command: &Command, args: &[&OsStr], out: &mut impl Write, err: &mut i
     }
 }
 
-/// Prints `command`'s usage line and a hint, and returns exit code 2: the
-/// arguments were counted right but one of them cannot be what it must be.
-fn usage_error(command: &Command, hint: &str, err: &mut impl Write) -> u8 {
+/// Prints `command`'s usage line and then the hint, and returns exit code 2.
+/// Every usage error that names a command is printed here, so each ends
+/// with exactly one hint line (INT-0037 AC-4).
+pub fn usage_error(command: &Command, hint: &Hint, err: &mut impl Write) -> u8 {
     let _ = writeln!(err, "{}", command.usage());
-    let _ = writeln!(err, "hint: {hint}");
+    let _ = writeln!(err, "{hint}");
     2
 }
 
@@ -98,17 +88,24 @@ fn short(bytes: &[u8]) -> String {
     hex[..SHOWN.min(hex.len())].to_owned()
 }
 
-/// Prints why `command` could not do what was asked, and returns exit code
-/// 1.
-fn refuse(command: &str, why: impl Display, err: &mut impl Write) -> u8 {
+/// Prints why `command` could not do what was asked and then the hint, and
+/// returns exit code 1. Every refusal with that exit code is printed here,
+/// so each ends with exactly one hint line (INT-0037 AC-4).
+fn refuse(command: &str, why: impl Display, hint: &Hint, err: &mut impl Write) -> u8 {
     let _ = writeln!(err, "praps {command}: {why}");
+    let _ = writeln!(err, "{hint}");
     1
 }
 
-/// Prints an error from the working copy or store at `place`, and returns
-/// exit code 1.
-fn fail(command: &str, place: &str, error: impl Display, err: &mut impl Write) -> u8 {
-    refuse(command, format_args!("{place}: {error}"), err)
+/// Prints an error from the working copy at `place`, then the hint for it,
+/// and returns exit code 1.
+fn fail(command: &str, place: &str, error: &workspace::Error, err: &mut impl Write) -> u8 {
+    refuse(
+        command,
+        format_args!("{place}: {}", hint::said(error)),
+        &hint::for_error(error),
+        err,
+    )
 }
 
 // ------------------------------------------------ finding the working copy
@@ -134,24 +131,27 @@ fn full_path(command: &str, dir: &Path, err: &mut impl Write) -> Result<PathBuf,
         Err(error) => Err(refuse(
             command,
             format_args!("the current directory cannot be read: {error}"),
+            &hint::current_directory(),
             err,
         )),
     }
 }
 
-/// Refuses a `dir` that is not there, or is not a directory.
-fn must_exist(command: &str, dir: &Path, err: &mut impl Write) -> Result<(), u8> {
+/// Refuses a `dir` that is not there, or is not a directory, with the hint
+/// `missing`.
+fn must_exist(command: &str, dir: &Path, missing: &Hint, err: &mut impl Write) -> Result<(), u8> {
     match RealFs.list(dir) {
         Ok(_) => Ok(()),
         Err(error) => {
-            let why = match error.kind() {
-                ErrorKind::NotFound => "no such directory".to_owned(),
-                ErrorKind::NotADirectory => "not a directory".to_owned(),
-                _ => error.to_string(),
+            let (why, hint) = match error.kind() {
+                ErrorKind::NotFound => ("no such directory".to_owned(), missing.clone()),
+                ErrorKind::NotADirectory => ("not a directory".to_owned(), missing.clone()),
+                _ => (error.to_string(), hint::unreadable_directory()),
             };
             Err(refuse(
                 command,
                 format_args!("{}: {why}", dir.display()),
+                &hint,
                 err,
             ))
         }
@@ -171,6 +171,7 @@ fn top_above(command: &str, full: &Path, err: &mut impl Write) -> Result<Option<
                 "{}: a directory above it could not be searched for a repository: {error}",
                 full.display()
             ),
+            &hint::unreadable_directory(),
             err,
         )),
     }
@@ -183,6 +184,17 @@ fn top_above(command: &str, full: &Path, err: &mut impl Write) -> Result<Option<
 /// current directory and runs as if started there, so what is written and
 /// synced is exactly what a run from the top writes and syncs.
 fn locate(command: &str, given: Option<&Path>, err: &mut impl Write) -> Result<Place, u8> {
+    locate_or(command, given, &hint::missing_directory(), err)
+}
+
+/// [`locate`], with the hint to give when the directory given is not there
+/// or is not a directory.
+fn locate_or(
+    command: &str,
+    given: Option<&Path>,
+    missing: &Hint,
+    err: &mut impl Write,
+) -> Result<Place, u8> {
     let dir = given.unwrap_or(Path::new("."));
     let full = full_path(command, dir, err)?;
     // How the directory asked about is named: as given, or by its full path.
@@ -196,11 +208,12 @@ fn locate(command: &str, given: Option<&Path>, err: &mut impl Write) -> Result<P
             shown: named,
         }),
         Ok(false) => {
-            must_exist(command, dir, err)?;
+            must_exist(command, dir, missing, err)?;
             let Some(top) = top_above(command, &full, err)? else {
                 return Err(refuse(
                     command,
                     format_args!("{named}: no Periapsis repository here or in any directory above"),
+                    &hint::no_repository(),
                     err,
                 ));
             };
@@ -208,6 +221,7 @@ fn locate(command: &str, given: Option<&Path>, err: &mut impl Write) -> Result<P
                 return Err(refuse(
                     command,
                     format_args!("{}: {error}", top.display()),
+                    &hint::unreadable_directory(),
                     err,
                 ));
             }
@@ -219,6 +233,7 @@ fn locate(command: &str, given: Option<&Path>, err: &mut impl Write) -> Result<P
         Err(error) => Err(refuse(
             command,
             format_args!("{}: {error}", dir.join(PRAPS_DIR).join(STORE_DIR).display()),
+            &hint::unreadable_directory(),
             err,
         )),
     }
@@ -313,7 +328,7 @@ fn log(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 {
             }
             0
         }
-        Err(error) => fail("log", &place.shown, error, err),
+        Err(error) => fail("log", &place.shown, &error, err),
     };
     print_reported(&reported, out);
     code
@@ -340,7 +355,7 @@ fn ops(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 {
             }
             0
         }
-        Err(error) => fail("ops", &place.shown, error, err),
+        Err(error) => fail("ops", &place.shown, &error, err),
     };
     print_reported(&reported, out);
     code
@@ -361,7 +376,7 @@ fn undo(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 
             );
             0
         }
-        Err(error) => fail("undo", &place.shown, error, err),
+        Err(error) => fail("undo", &place.shown, &error, err),
     };
     print_reported(&reported, out);
     code
@@ -382,7 +397,7 @@ fn restore(op: &str, given: Option<&Path>, out: &mut impl Write, err: &mut impl 
             );
             0
         }
-        Err(error) => fail("restore", &place.shown, error, err),
+        Err(error) => fail("restore", &place.shown, &error, err),
     };
     print_reported(&reported, out);
     code
@@ -392,8 +407,16 @@ fn restore(op: &str, given: Option<&Path>, out: &mut impl Write, err: &mut impl 
 /// byte for byte, and says so in one line: `described change CHANGE: FIRST
 /// LINE`. With the description the change already has, it says that nothing
 /// changed.
-fn describe(text: &[u8], given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 {
-    let place = match locate("describe", given, err) {
+///
+/// `words` are the arguments as given: the text, then the directory if one
+/// was given. Two words of which the second is no directory are most likely
+/// one text without its quotes, so that refusal's hint shows them as one.
+fn describe(text: &[u8], words: &[&OsStr], out: &mut impl Write, err: &mut impl Write) -> u8 {
+    let given = words.get(1).map(|dir| Path::new(*dir));
+    let missing = given
+        .and_then(|_| hint::quoted(words, "if both words are the text"))
+        .unwrap_or_else(hint::missing_directory);
+    let place = match locate_or("describe", given, &missing, err) {
         Ok(place) => place,
         Err(code) => return code,
     };
@@ -410,7 +433,7 @@ fn describe(text: &[u8], given: Option<&Path>, out: &mut impl Write, err: &mut i
             };
             0
         }
-        Err(error) => fail("describe", &place.shown, error, err),
+        Err(error) => fail("describe", &place.shown, &error, err),
     };
     print_reported(&reported, out);
     code
@@ -427,7 +450,7 @@ fn new(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 {
             let _ = writeln!(out, "new change {}", hash::hex(&change_id));
             0
         }
-        Err(error) => fail("new", &place.shown, error, err),
+        Err(error) => fail("new", &place.shown, &error, err),
     };
     print_reported(&reported, out);
     code
@@ -450,7 +473,7 @@ fn status(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u
             print_reported(&status.reported, out);
             0
         }
-        Err(error) => fail("status", &place.shown, error, err),
+        Err(error) => fail("status", &place.shown, &error, err),
     }
 }
 
@@ -475,6 +498,7 @@ fn init(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 
                     dir.display(),
                     top.display()
                 ),
+                &hint::inside_a_working_copy(),
                 err,
             );
         }
@@ -493,7 +517,20 @@ fn init(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 
             let _ = writeln!(out, "{} is already a Periapsis repository", dir.display());
             0
         }
-        Err(error) => fail("init", &dir.display().to_string(), error, err),
+        Err(error) => {
+            // A failure of the filesystem leaves an `init` that can be run
+            // again; any other error is one of the repository's.
+            let hint = match &error {
+                workspace::Error::Io(_) => hint::init_again(),
+                other => hint::for_error(other),
+            };
+            refuse(
+                "init",
+                format_args!("{}: {}", dir.display(), hint::said(&error)),
+                &hint,
+                err,
+            )
+        }
     }
 }
 
@@ -504,7 +541,10 @@ fn init(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 
 /// 2. DIR itself, if it holds `objects` and `ops`, whatever lies above it;
 /// 3. the store of the nearest top above DIR;
 /// 4. DIR itself, which then fails as not a store.
-fn store_for(given: Option<&Path>, err: &mut impl Write) -> Result<(PathBuf, String), u8> {
+///
+/// The last value says whether the store is a working copy's (rules 1 and
+/// 3) or a directory taken as a store itself (rules 2 and 4).
+fn store_for(given: Option<&Path>, err: &mut impl Write) -> Result<(PathBuf, String, bool), u8> {
     let dir = given.unwrap_or(Path::new("."));
     let full = full_path("verify", dir, err)?;
     let named = given.map_or_else(
@@ -512,31 +552,33 @@ fn store_for(given: Option<&Path>, err: &mut impl Write) -> Result<(PathBuf, Str
         |dir| dir.display().to_string(),
     );
     match place::is_top(&RealFs, dir) {
-        Ok(true) => return Ok((dir.join(PRAPS_DIR).join(STORE_DIR), named)),
+        Ok(true) => return Ok((dir.join(PRAPS_DIR).join(STORE_DIR), named, true)),
         Ok(false) => {}
         Err(error) => {
             return Err(refuse(
                 "verify",
                 format_args!("{}: {error}", dir.join(PRAPS_DIR).join(STORE_DIR).display()),
+                &hint::unreadable_directory(),
                 err,
             ));
         }
     }
     if Store::inspect(RealFs, dir, HashAlg::DEFAULT).is_ok() {
-        return Ok((dir.to_path_buf(), named));
+        return Ok((dir.to_path_buf(), named, false));
     }
-    must_exist("verify", dir, err)?;
+    must_exist("verify", dir, &hint::store_or_working_copy(), err)?;
     match top_above("verify", &full, err)? {
         Some(top) => Ok((
             top.join(PRAPS_DIR).join(STORE_DIR),
             top.display().to_string(),
+            true,
         )),
-        None => Ok((dir.to_path_buf(), named)),
+        None => Ok((dir.to_path_buf(), named, false)),
     }
 }
 
 fn verify(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 {
-    let (store_dir, shown) = match store_for(given, err) {
+    let (store_dir, shown, of_working_copy) = match store_for(given, err) {
         Ok(found) => found,
         Err(code) => return code,
     };
@@ -544,7 +586,16 @@ fn verify(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u
     // store and changes nothing.
     let report = match Store::inspect(RealFs, &store_dir, HashAlg::DEFAULT).and_then(|s| s.fsck()) {
         Ok(report) => report,
-        Err(error) => return fail("verify", &shown, error, err),
+        Err(error) => {
+            // A directory that is no store is one to make or to name
+            // rightly; a working copy's store that is no store is damaged.
+            let hint = match (error.kind() == ErrorKind::NotFound, of_working_copy) {
+                (true, false) => hint::not_a_store(),
+                (true, true) => hint::damaged_store(),
+                (false, _) => hint::unreadable_store(),
+            };
+            return refuse("verify", format_args!("{shown}: {error}"), &hint, err);
+        }
     };
     for leftover in &report.leftovers {
         let _ = writeln!(out, "{leftover}: left by an interrupted write (harmless)");
@@ -557,6 +608,7 @@ fn verify(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u
         0
     } else {
         let _ = writeln!(out, "{} problems", report.problems.len());
+        let _ = writeln!(err, "{}", hint::damaged_store());
         1
     }
 }

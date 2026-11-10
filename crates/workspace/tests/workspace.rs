@@ -109,7 +109,11 @@ fn open_without_ops_fails() {
     fs.create_dir(Path::new(ROOT)).unwrap();
     let error = Workspace::open(&fs, Path::new(ROOT), 0).err().unwrap();
     assert!(matches!(error, Error::NotInitialised(_)), "{error}");
-    assert!(error.to_string().contains("praps init"));
+    // The message says what is wrong; what to do is `praps`'s hint.
+    assert_eq!(
+        error.to_string(),
+        "repo is not an initialised Periapsis repository"
+    );
 }
 
 /// Two ops with the same parent: every command stops, names both heads and
@@ -717,7 +721,8 @@ fn invalid_op_files_are_refused() {
     fs.overwrite(&op_path, &bytes).unwrap();
     let error = ws.snapshot().unwrap_err();
     assert!(
-        matches!(&error, Error::Corrupt(what) if what.contains("praps verify")),
+        matches!(&error, Error::Corrupt(what)
+            if what == "1 of 2 op files do not hash to their names or do not decode"),
         "{error}"
     );
     let error = Workspace::init(Arc::clone(&fs), Path::new(ROOT), 24)
@@ -1140,4 +1145,92 @@ fn accessors_read_what_is_stored() {
     let parent = ws.parent_tree().unwrap();
     assert_eq!(paths(&parent), ["a", "b", "keep"]);
     assert_ne!(parent, opened_parent);
+}
+
+/// Each error says only what is wrong. Its text is fixed here, variant by
+/// variant, and none holds advice: what to do about it is said once, by
+/// the hint `praps` prints after it (Sprint 6 T-011; INT-0037 AC-4).
+#[test]
+fn messages_say_only_what_is_wrong() {
+    let id = |text: &[u8]| HashAlg::DEFAULT.hash(text);
+    let (one, two) = (id(b"one"), id(b"two"));
+    let hazard = workspace::hazard::Hazard {
+        path: path("dir/aux.txt"),
+        component: "aux.txt".to_owned(),
+        problem: workspace::hazard::Problem::Reserved("AUX".to_owned()),
+    };
+    let cases: Vec<(Error, String)> = vec![
+        (
+            Error::Io(std::io::Error::other("the disk said no")),
+            "the disk said no".to_owned(),
+        ),
+        (
+            Error::NotInitialised("project".into()),
+            "project is not an initialised Periapsis repository".to_owned(),
+        ),
+        (
+            Error::SeveralHeads(vec![one, two]),
+            format!("the op log has 2 heads, which cannot be merged yet: {one} {two}"),
+        ),
+        (
+            Error::Corrupt("view x: truncated".to_owned()),
+            "the repository is corrupt: view x: truncated".to_owned(),
+        ),
+        (
+            Error::Merge(one),
+            format!("changeset {one} has several parents; merges are not supported yet"),
+        ),
+        (
+            Error::Hazards(vec![hazard.clone()]),
+            format!(
+                "the working copy cannot be written on this filesystem; no file was changed:\n  {hazard}"
+            ),
+        ),
+        (
+            Error::Blocked(vec!["b: a directory is where a file must be written".to_owned()]),
+            "untracked entries are in the way, and no file was changed:\n  b: a directory is where a file must be written"
+                .to_owned(),
+        ),
+        (
+            Error::NothingToUndo,
+            "nothing to undo: the last op is the root op".to_owned(),
+        ),
+        (
+            Error::UnknownOp("3f".to_owned()),
+            "no op matches `3f`".to_owned(),
+        ),
+        (
+            Error::AmbiguousOp("3".to_owned(), vec![one, two]),
+            format!("`3` matches 2 ops:\n  {one}\n  {two}"),
+        ),
+    ];
+    // Every variant is here: this match has no catch-all arm, so a variant
+    // added to the crate must be named, and then counted below.
+    let name = |error: &Error| match error {
+        Error::Io(_) => "Io",
+        Error::NotInitialised(_) => "NotInitialised",
+        Error::SeveralHeads(_) => "SeveralHeads",
+        Error::Corrupt(_) => "Corrupt",
+        Error::Merge(_) => "Merge",
+        Error::Hazards(_) => "Hazards",
+        Error::Blocked(_) => "Blocked",
+        Error::NothingToUndo => "NothingToUndo",
+        Error::UnknownOp(_) => "UnknownOp",
+        Error::AmbiguousOp(..) => "AmbiguousOp",
+    };
+    let names: std::collections::BTreeSet<&str> =
+        cases.iter().map(|(error, _)| name(error)).collect();
+    assert_eq!(names.len(), 10, "{names:?}");
+    assert_eq!(cases.len(), 10);
+    for (error, text) in &cases {
+        let shown = error.to_string();
+        assert_eq!(&shown, text, "{}", name(error));
+        for advice in ["praps", "run ", "try again", "hint", "move them", "(run"] {
+            assert!(
+                !shown.contains(advice),
+                "{}: {shown:?} holds {advice:?}",
+                name(error)
+            );
+        }
+    }
 }
