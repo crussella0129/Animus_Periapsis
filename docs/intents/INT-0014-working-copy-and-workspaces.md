@@ -160,8 +160,9 @@ Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
   stands in is one the write empties. From Sprint 6 a removal that fails
   does not stop the write (T-012). The directory is left, with a note.
   Directories are not tracked, so the working copy still equals the target.
-  The one exception is a target that has a file at that path: there the
-  write stops, as before, and the next command finishes it once the
+  The one exception is a file the write must put at that path or at a path
+  above it, which a directory left there would keep it from putting: there
+  the write stops, as before, and the next command finishes it once the
   directory can be removed. T-012 tests a directory that is another
   process's current directory on Windows and on Linux, and records what
   each system does. Where a system removes it, the shell that stood there
@@ -184,3 +185,4 @@ Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
 - 2026-11-10: revised while `active` (Sprint 6 Plan, on owner direction of 2026-11-09 for thousands of agents, speed and a more intuitive command set): the Intent adds three rules (a workspace is cheap, nothing unchanged is read, a command works anywhere inside a working copy). AC-5's budget is fixed by reference to [INT-0036](INT-0036-measured-speed.md), and AC-7 and AC-8 are added. Consequences record Sprint 6's measurements and its tasks in this chapter's code.
 - 2026-11-10: revised while `active` (Sprint 6 plan critique, round 1, C-001 and C-008; `semantic`): Consequences now say that opening checks the op log before it resumes, and why; that the first command after opening uses the reading opening made, and what follows if another process writes in between; and what marks the top of a working copy, with a `.praps` directory below the top left as it is today.
 - 2026-11-10: revised while `active` (Sprint 6 plan critique, round 2, C-005; `semantic`): Consequences record that a write leaves a directory it emptied and cannot remove, with a note, unless the target has a file at that path; and that a command run from a directory that no longer exists says so.
+- 2026-11-10: revised while `active` (Sprint 6 plan critique, round 3, C-001; `semantic`): the exception to leaving a directory covers a file due at a path above it as well as at the path itself.

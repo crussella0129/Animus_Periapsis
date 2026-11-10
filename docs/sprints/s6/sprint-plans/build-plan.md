@@ -313,13 +313,14 @@ The backlog entries the outline put in its last task were written during Plan in
 - **Depends on:** T-005, T-008
 - **Acceptance criterion:** INT-0037 AC-3 (a command works from any directory inside); INT-0014 AC-1 and INT-0009 AC-3 kept; INT-0005 AC-1 unchanged.
 - **Success criterion (EARS):**
-  - **WHEN** a write has emptied a directory and removing it fails, for any reason but a crash of the simulator, and the target tree has no file at that path, **THEN** the write **SHALL** go on: every file of the target **SHALL** be written, the record **SHALL** be dropped, the directory **SHALL** be left, and a note **SHALL** name it.
-  - **WHEN** the target tree has a file at that path, **THEN** the write **SHALL** stop with the failure, as today, with the record kept, and a later command **SHALL** finish it once the directory can be removed.
+  - **WHEN** a write has emptied a directory and removing it fails, for any reason but a crash of the simulator, and no file the write must put lies at that path or at a path above it, **THEN** the write **SHALL** go on: every file of the target **SHALL** be written, the record **SHALL** be dropped, the directory **SHALL** be left, and a note **SHALL** name it.
+  - **WHEN** a file the write must put lies at that path or at a path above it, **THEN** the write **SHALL** stop with the failure, as today, with the record kept, and a later command **SHALL** finish it once the directory can be removed.
   - **WHEN** `undo` is run from a directory that its write empties, while another process has that directory as its current directory, **THEN** `praps` **SHALL** exit 0 and the working copy's files **SHALL** equal the target's. The directory **SHALL** either be gone, or be left and named in a note. The test evidence **SHALL** record which happened on Windows and which on Linux.
   - **WHEN** the five matrices run at this task's commit, **THEN** each **SHALL** keep its literals: in their scenarios no removal fails.
 - **Notes:**
   - Today a failed removal stops the write after its operation is committed. Every later command then resumes the write and fails the same way, until nothing holds the directory.
   - Directories are not tracked, so a directory left empty changes nothing a snapshot records. [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md) records the rule and its one exception.
+  - The exception is stated on what the write holds, its list of files to put (`Plan::write`): a directory `a/b` that stays keeps `a` a directory too, so a file due at `a` could not be put. Going on there would drop the record with that file missing, and the next snapshot would record it as deleted.
   - A removal that fails because the simulator crashed still stops the write: a crash is not a refusal.
   - It comes after T-008 because its end-to-end test runs `undo` from inside the working copy.
 
