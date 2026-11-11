@@ -24,6 +24,21 @@ collision on one record — two agents claiming the same task — surfaces as
 divergence with an explicit resolution policy (for example leases, claims, or a
 CubiKan-style expected-revision check), and is never resolved silently.
 
+The policy must work with no clock and no coordinator
+([INT-0035](INT-0035-scale-and-asynchrony.md)), so a lease that runs out by
+time is not among the choices. The default offered for the owner's decision:
+- a claim is a record;
+- of two claims where one was made knowing of the other, the first stands;
+- two claims made without knowledge of each other are divergence, shown to
+  both claimants;
+- a rule that policy names settles it the same way on every replica, by
+  default for the claim whose record id is lower;
+- the other claimant's work is kept as an alternative, never discarded.
+
+Settling by rule is not merging. Both claims stay in the record, the
+divergence is shown (AC-2), and what the rule decided is itself recorded with
+the rule's name.
+
 ## Acceptance criteria
 - **AC-1** `necessary` `empirical` — Concurrent appends by 2, 4 and 8 agents produce no spurious conflicts.
   - Sample: 300 trials per cell, 20–200 tasks. Threshold: 0% (R3-D measured 0% for per-record events against 100% for a single shared ledger file).
@@ -38,6 +53,8 @@ CubiKan-style expected-revision check), and is never resolved silently.
   - Signers: human reviewer of the format spec.
 - **AC-6** `necessary` `empirical` — Records whose content fields hold invalid UTF-8, binary data or text in a synthetic language are stored and synced byte for byte, and the Book view shows every one of them, by type, hash and size where no rendering rule covers its content, without failing or leaving it out.
   - Threshold: 0 differing bytes, 0 failures and 0 records left out, over a corpus of such records.
+- **AC-7** `supporting` `empirical` — Claims at scale: 1,000 agents claim from 10,000 tasks over a simulated network that delays and partitions. Once every record is delivered, each claimed task has one standing claim, the same on every replica, and every claimant whose claim did not stand has been told.
+  - Threshold: 0 tasks with two standing claims, and 0 claimants not told.
 
 ## Rationale
 - Radicle stores issues and patches in the repository as signed, typed
@@ -60,10 +77,16 @@ CubiKan-style expected-revision check), and is never resolved silently.
 
 ## Consequences
 - The collision policy (leases, claims or expected revisions) is a product
-  decision still to be made (R3 §6).
+  decision still to be made (R3 §6). The Intent now offers a default that
+  needs no clock and no coordinator; it binds nothing until the owner decides.
+- Under that default, agents that claim the same task at once both do the
+  work until the next exchange tells one of them. That waste is the price of
+  having no coordinator. A project that has one, such as an orchestrator that
+  hands out tasks, avoids it, and the claim records are the same either way.
 - The Markdown Book stays a first-class view for humans and Git mirrors, so its
   rendering rules are part of the format contract.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 I.5 steps 21–22 and R3-D).
 - 2026-11-01: revised while `proposed`, on owner direction: records must hold any content. The Intent says content fields are byte strings, and that the Book shows a record it cannot render by type, hash and size instead of failing or leaving it out; AC-6 checks this.
+- 2026-11-10: revised while `proposed` (Sprint 6 Plan, on owner direction of 2026-11-09 for thousands of agents, decentralised and asynchronous): claiming a task is the collision every agent meets, and the examples given so far need a clock or a coordinator. The Intent offers a default rule that needs neither, for the owner's decision. AC-7 is added, and Consequences record what the rule costs.

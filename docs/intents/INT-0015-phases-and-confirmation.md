@@ -72,7 +72,16 @@ suspect ranking.
   admit agent changes.
 - Information-gain ordering needs per-test coverage data and a noise model; it
   orders re-runs, it does not replace the final full ranking.
+- Verification sets the pace of the whole system
+  ([INT-0001](INT-0001-periapsis-charter.md) Rationale), so verifiers must be
+  able to be many. Policy may name any number of verifier keys. A
+  confirmation is an event record
+  ([INT-0017](INT-0017-event-records-and-book-view.md)), so verifiers need no
+  coordination, and two confirmations of one change do not conflict.
+  [INT-0035](INT-0035-scale-and-asynchrony.md) AC-11 measures the pace a real
+  fleet reaches.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §3.2, I.5 steps 23–25 and R2-E16).
 - 2026-11-01: revised while `proposed`, on owner direction: confirmations must not assume the content is code. The Intent says the confirmation root records the checks repository policy names for each kind of content, by default a non-author sign-off, and keeps information-gain ordering and Ochiai ranking for confirmations made of tests with per-test coverage; AC-6 is added and the Rationale reworded.
+- 2026-11-10: revised while `proposed` (Sprint 6 Plan, on owner direction of 2026-11-09 for thousands of agents): Consequences record that verifiers can be many, that confirmations need no coordination between them, and where the pace of verification is measured.

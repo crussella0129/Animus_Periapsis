@@ -206,11 +206,25 @@ impl fmt::Display for HashRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.alg.name())?;
         f.write_str(":")?;
-        for byte in self.digest() {
-            write!(f, "{byte:02x}")?;
-        }
-        Ok(())
+        write_hex(f, self.digest())
     }
+}
+
+/// Writes `bytes` to `out` as lowercase hex, two digits for each byte, in
+/// order. The one definition of the hex form of a string of bytes.
+pub fn write_hex(out: &mut impl fmt::Write, bytes: &[u8]) -> fmt::Result {
+    for byte in bytes {
+        write!(out, "{byte:02x}")?;
+    }
+    Ok(())
+}
+
+/// `bytes` as lowercase hex, two digits for each byte, in order.
+pub fn hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    // Writing to a `String` cannot fail.
+    let _ = write_hex(&mut out, bytes);
+    out
 }
 
 impl fmt::Debug for HashRef {

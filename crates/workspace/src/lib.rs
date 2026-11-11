@@ -32,8 +32,8 @@ use codec::{
     CHANGE_ID_LEN, Changeset, Mode, Operation, RepoPath, View, blob, decode_envelope, object_id,
 };
 use hash::{HashAlg, HashRef};
-use sim::{Fs, Kind, Name, Rng};
-use store::Store;
+use sim::{Fs, Kind, Name, Rng, dir_exists, parent_dir};
+use store::{OpLog, Store};
 
 pub use crate::ignore::ALWAYS_IGNORED;
 use crate::ignore::Ignores;
@@ -80,13 +80,16 @@ pub enum Error {
     AmbiguousOp(String, Vec<HashRef>),
 }
 
+/// Each message says only what is wrong. What to do about it is said once,
+/// by whoever prints the error: `praps` ends every refusal with a hint
+/// (INT-0037 AC-4), and `messages_say_only_what_is_wrong` fixes each text.
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Io(error) => write!(f, "{error}"),
             Error::NotInitialised(root) => write!(
                 f,
-                "{} is not an initialised Periapsis repository (run `praps init`)",
+                "{} is not an initialised Periapsis repository",
                 root.display()
             ),
             Error::SeveralHeads(heads) => {
@@ -118,7 +121,7 @@ impl fmt::Display for Error {
             Error::Blocked(entries) => {
                 write!(
                     f,
-                    "untracked entries are in the way; move them and try again (no file was changed):"
+                    "untracked entries are in the way, and no file was changed:"
                 )?;
                 for entry in entries {
                     write!(f, "\n  {entry}")?;
@@ -223,6 +226,28 @@ pub struct Snapshot {
     pub reported: Vec<Reported>,
 }
 
+/// What `describe` did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Described {
+    /// The change ID of the change described.
+    pub change_id: [u8; CHANGE_ID_LEN],
+    /// The op that set the description, or `None` when the change already
+    /// had exactly this description and nothing was written for it.
+    pub op: Option<HashRef>,
+}
+
+/// What a command works from: the op log as one listing read it, and the
+/// state its single head leaves. A command reads this once, at its start,
+/// and passes it through its steps; a step that commits an op moves it to
+/// what was just written, as a fresh read would find it. It never outlives
+/// the command ("Reading the op log" in the spec).
+struct State {
+    /// Every valid op, by id.
+    ops: BTreeMap<HashRef, Operation>,
+    /// The state the single head leaves.
+    at: Loaded,
+}
+
 /// The state one op leaves, as a workspace reads it.
 struct Loaded {
     head: HashRef,
@@ -268,10 +293,7 @@ impl<F: Fs> Scan<'_, F> {
     /// ignored directory (`tracked_only`) only paths tracked before count,
     /// and nothing is reported.
     fn dir(&mut self, dir: &str, tracked_only: bool) -> Result<(), Error> {
-        let fs_dir = dir
-            .split('/')
-            .filter(|c| !c.is_empty())
-            .fold(self.root.to_path_buf(), |p, c| p.join(c));
+        let fs_dir = materialise::on_disk(self.root, dir);
         let entries = self.fs.scan(&fs_dir)?;
         let gitignore = match entries
             .iter()
@@ -392,25 +414,12 @@ pub struct Workspace<F: Fs> {
     notes: Vec<String>,
     /// What the latest snapshot reported and left alone (INT-0004 AC-7).
     reported: Vec<Reported>,
+    /// The state `open` read, for the first command to take: a process that
+    /// opens and runs one command then reads the op log once. `None` once a
+    /// command has taken it, and on a workspace `init` returned.
+    kept: Option<State>,
     #[cfg(feature = "variants")]
     variant: Variant,
-}
-
-/// The directory holding `root`'s entry: its parent, or `root/..` when the
-/// path has none to give (a bare relative name such as `repo`, or `.`).
-fn parent_dir(root: &Path) -> PathBuf {
-    match root.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
-        _ => root.join(".."),
-    }
-}
-
-fn dir_exists(fs: &impl Fs, dir: &Path) -> io::Result<bool> {
-    match fs.list(dir) {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error),
-    }
 }
 
 /// Makes `root` and `root/.praps` exist and their entries durable: creates
@@ -436,6 +445,21 @@ fn corrupt(what: impl fmt::Display) -> Error {
     Error::Corrupt(what.to_string())
 }
 
+/// Refuses an op log in which `ops/` holds files that do not hash to their
+/// names or do not decode: the valid ops alone would let a damaged head
+/// silently give way to its parent, or a store whose ops are all damaged
+/// look uninitialised (code review CR-10).
+fn refuse_invalid(log: &OpLog) -> Result<(), Error> {
+    if log.invalid > 0 {
+        return Err(corrupt(format!(
+            "{} of {} op files do not hash to their names or do not decode",
+            log.invalid,
+            log.ops.len() + log.invalid
+        )));
+    }
+    Ok(())
+}
+
 impl<F: Fs> Workspace<F> {
     /// Makes `root` a repository, or completes one whose `init` was
     /// interrupted: creates and syncs `root` and `.praps`, initialises the
@@ -454,9 +478,9 @@ impl<F: Fs> Workspace<F> {
     /// with a negative-control variant here.
     pub fn init_with_store(store: Store<F>, root: &Path, seed: u64) -> Result<(Self, bool), Error> {
         let mut workspace = Self::new(store, root, seed);
-        let ops = workspace.store.ops()?;
-        workspace.refuse_invalid_ops(ops.len())?;
-        if !ops.is_empty() {
+        let log = workspace.store.op_log()?;
+        refuse_invalid(&log)?;
+        if !log.ops.is_empty() {
             return Ok((workspace, false));
         }
         let change = Changeset {
@@ -479,8 +503,10 @@ impl<F: Fs> Workspace<F> {
     }
 
     /// Opens the repository at `root`: makes `.praps` and the root durable
-    /// as `init` does, opens the store, and checks that it has exactly one
-    /// op head. `seed` drives the change IDs it mints.
+    /// as `init` does, opens the store, checks that every op file is whole,
+    /// finishes an interrupted write, and checks that the op log has exactly
+    /// one head. It reads the op log once, and keeps what it read for the
+    /// first command. `seed` drives the change IDs it mints.
     pub fn open(fs: F, root: &Path, seed: u64) -> Result<Self, Error> {
         if !dir_exists(&fs, &root.join(PRAPS_DIR).join(STORE_DIR))? {
             return Err(Error::NotInitialised(root.to_path_buf()));
@@ -494,8 +520,14 @@ impl<F: Fs> Workspace<F> {
             }
         })?;
         let mut workspace = Self::new(store, root, seed);
-        workspace.resume()?;
-        workspace.load()?;
+        let log = workspace.store.op_log()?;
+        // Before resume, which looks for the record's target among the
+        // valid ops: a target whose file is damaged would look like a write
+        // that never began, and its record would be dropped though files
+        // may already have been written.
+        refuse_invalid(&log)?;
+        workspace.resume(&log.ops)?;
+        workspace.kept = Some(workspace.state_of(log)?);
         Ok(workspace)
     }
 
@@ -506,6 +538,7 @@ impl<F: Fs> Workspace<F> {
             rng: Rng::new(seed),
             notes: Vec::new(),
             reported: Vec::new(),
+            kept: None,
             #[cfg(feature = "variants")]
             variant: Variant::Correct,
         }
@@ -527,6 +560,16 @@ impl<F: Fs> Workspace<F> {
         true
     }
 
+    #[cfg(feature = "variants")]
+    fn keeps_description(&self) -> bool {
+        self.variant != Variant::DropDescription
+    }
+
+    #[cfg(not(feature = "variants"))]
+    fn keeps_description(&self) -> bool {
+        true
+    }
+
     /// What resuming an interrupted write left undone, one line each.
     pub fn notes(&self) -> &[String] {
         &self.notes
@@ -534,10 +577,9 @@ impl<F: Fs> Workspace<F> {
 
     /// The entries the latest snapshot reported and left alone, sorted, as
     /// [`Status::reported`] gives them (INT-0004 AC-7). Every command that
-    /// snapshots (`log`, `undo`, `restore`, `new_change`, `status`) sets
-    /// it, and it stays set when the command then fails. A command that
-    /// snapshots twice (`undo`, through [`Workspace::restore_view`]) scans
-    /// the same files both times, so it holds one report, not two.
+    /// snapshots (`ops`, `changes`, `undo`, `restore`, `new_change`,
+    /// `describe`, `status`) sets it, and it stays set when the command then
+    /// fails. Each command snapshots once, so it holds one report.
     pub fn reported(&self) -> &[Reported] {
         &self.reported
     }
@@ -570,8 +612,8 @@ impl<F: Fs> Workspace<F> {
     }
 
     /// Finishes or drops an interrupted write of the working copy
-    /// ("Resume" in the spec).
-    fn resume(&mut self) -> Result<(), Error> {
+    /// ("Resume" in the spec), given the valid ops of the log.
+    fn resume(&mut self, ops: &BTreeMap<HashRef, Operation>) -> Result<(), Error> {
         let praps = self.praps_dir();
         let record = match record::read(self.store.fs(), &praps)? {
             None => return Ok(()),
@@ -581,7 +623,6 @@ impl<F: Fs> Workspace<F> {
             }
         };
         self.store.fs().point("workspace.resume.started");
-        let ops = self.store.ops()?;
         let Some(target_op) = ops.get(&record.target) else {
             // The target op never landed, so no file was touched.
             record::drop_record(self.store.fs(), &praps)?;
@@ -598,7 +639,7 @@ impl<F: Fs> Workspace<F> {
         let target = self.wc_tree_of(&self.view_of(target_op)?)?;
         let fs = self.store.fs();
         materialise::remove_temporaries(fs, &self.root, &from, &target)?;
-        let heads = store::heads_of(&ops);
+        let heads = store::heads_of(ops);
         if heads.len() == 1 && heads.contains(&record.target) {
             let plan =
                 materialise::plan(fs, &self.root, &from, &target, fs.name_rules(), ALG, true)?;
@@ -626,8 +667,19 @@ impl<F: Fs> Workspace<F> {
     /// drops the record. Returns the new op. `undo` and `restore` choose the
     /// view ("History commands" in the spec).
     pub fn restore_view(&mut self, view_id: &HashRef) -> Result<HashRef, Error> {
-        self.snapshot()?;
-        let loaded = self.load()?;
+        let mut state = self.begin()?;
+        self.snapshot_in(&mut state)?;
+        self.restore_view_in(state, view_id)
+    }
+
+    /// Moves the working copy to the view `view_id` names, from the state a
+    /// command already holds, which that command has just snapshotted: the
+    /// working copy is scanned once for a command, and the write then
+    /// reads each path again before it removes or replaces it. It takes
+    /// the state for good: the op it commits moves the head, and nothing
+    /// follows it in a command.
+    fn restore_view_in(&mut self, state: State, view_id: &HashRef) -> Result<HashRef, Error> {
+        let loaded = &state.at;
         let view = View::from_envelope(&self.store.get_object(view_id)?)
             .map_err(|error| corrupt(format!("view {view_id}: {error}")))?;
         let target = self.wc_tree_of(&view)?;
@@ -724,29 +776,11 @@ impl<F: Fs> Workspace<F> {
         Ok(tree)
     }
 
-    /// Refuses a store whose `ops/` holds op files that do not hash to their
-    /// names or do not decode: `Store::ops` skips them, so a damaged head
-    /// would otherwise silently give way to its parent, or a store whose ops
-    /// are all damaged look uninitialised (code review CR-10).
-    fn refuse_invalid_ops(&self, valid: usize) -> Result<(), Error> {
-        let names = self.store.fs().list(&self.store.root().join(store::OPS))?;
-        let files = names
-            .iter()
-            .filter(|name| !name.starts_with(store::names::TMP_PREFIX))
-            .count();
-        if files > valid {
-            return Err(corrupt(format!(
-                "{} of {files} op files do not hash to their names or do not decode (run `praps fsck`)",
-                files - valid
-            )));
-        }
-        Ok(())
-    }
-
-    /// The working-copy change as the single op head leaves it.
-    fn load(&self) -> Result<Loaded, Error> {
-        let ops = self.store.ops()?;
-        self.refuse_invalid_ops(ops.len())?;
+    /// The state the single head of `log` leaves, or why there is none: an
+    /// invalid op file, no op at all, or several heads.
+    fn state_of(&self, log: OpLog) -> Result<State, Error> {
+        refuse_invalid(&log)?;
+        let ops = log.ops;
         let heads = store::heads_of(&ops);
         let head = match heads.len() {
             0 => return Err(Error::NotInitialised(self.root.clone())),
@@ -767,14 +801,35 @@ impl<F: Fs> Workspace<F> {
             _ => return Err(Error::Merge(wc_id)),
         };
         let wc_tree = tree::of(&wc, &parent_tree);
-        Ok(Loaded {
-            head,
-            view,
-            wc_id,
-            wc,
-            parent_tree,
-            wc_tree,
+        Ok(State {
+            ops,
+            at: Loaded {
+                head,
+                view,
+                wc_id,
+                wc,
+                parent_tree,
+                wc_tree,
+            },
         })
+    }
+
+    /// Reads the op log, with one listing of `ops/`, and the state its
+    /// single head leaves.
+    fn read_state(&self) -> Result<State, Error> {
+        self.state_of(self.store.op_log()?)
+    }
+
+    /// The state a command starts from: what `open` read, if no command has
+    /// taken it yet, and otherwise a fresh read. A command that fails here
+    /// reports nothing, rather than leaving an earlier command's entries
+    /// (code review CR-07).
+    fn begin(&mut self) -> Result<State, Error> {
+        self.reported.clear();
+        match self.kept.take() {
+            Some(state) => Ok(state),
+            None => self.read_state(),
+        }
     }
 
     /// Scans the working copy, putting no blob yet.
@@ -807,10 +862,16 @@ impl<F: Fs> Workspace<F> {
     /// old changeset (as head and as the `default` workspace), and an op
     /// whose parent is the single head. Otherwise it writes nothing.
     pub fn snapshot(&mut self) -> Result<Snapshot, Error> {
+        let mut state = self.begin()?;
+        self.snapshot_in(&mut state)
+    }
+
+    /// [`Workspace::snapshot`] from the state a command already holds.
+    fn snapshot_in(&mut self, state: &mut State) -> Result<Snapshot, Error> {
         // A snapshot that fails before its scan reports nothing, rather than
         // leaving an earlier command's entries (code review CR-07).
         self.reported.clear();
-        let loaded = self.load()?;
+        let loaded = &state.at;
         let known: BTreeSet<HashRef> = loaded
             .wc_tree
             .values()
@@ -836,9 +897,13 @@ impl<F: Fs> Workspace<F> {
             parents: loaded.wc.parents.clone(),
             change_id: loaded.wc.change_id,
             changes: tree::diff(&loaded.parent_tree, &tree),
-            description: loaded.wc.description.clone(),
+            description: if self.keeps_description() {
+                loaded.wc.description.clone()
+            } else {
+                Vec::new()
+            },
         };
-        let op = self.replace_working_copy(&loaded, &changeset)?;
+        let op = self.replace_working_copy(state, changeset)?;
         self.store.fs().point("workspace.snapshot.committed");
         Ok(Snapshot {
             op: Some(op),
@@ -848,22 +913,47 @@ impl<F: Fs> Workspace<F> {
 
     /// Puts `changeset`, a view in which it replaces the working-copy
     /// changeset as a head and as the `default` workspace's change, and an
-    /// op over the single head.
+    /// op over the single head. Then moves `state` to what it wrote: the op
+    /// joins the log as its head, and the trees are those a fresh read
+    /// would build, by [`tree::of`] from the same changesets.
     fn replace_working_copy(
         &mut self,
-        loaded: &Loaded,
-        changeset: &Changeset,
+        state: &mut State,
+        changeset: Changeset,
     ) -> Result<HashRef, Error> {
         let id = self.store.put_object(&changeset.to_envelope())?;
-        let mut view = loaded.view.clone();
-        view.heads.remove(&loaded.wc_id);
+        let mut view = state.at.view.clone();
+        view.heads.remove(&state.at.wc_id);
         view.heads.insert(id);
         view.workspaces.insert(DEFAULT_WORKSPACE.to_owned(), id);
         let view_id = self.store.put_object(&view.to_envelope())?;
-        Ok(self.store.commit_op(&Operation {
-            parents: [loaded.head].into(),
+        let op = Operation {
+            parents: [state.at.head].into(),
             view: view_id,
-        })?)
+        };
+        let head = self.store.commit_op(&op)?;
+        let parent_tree = match changeset.parents.as_slice() {
+            [] => Tree::new(),
+            // A new change on top of the old working-copy change.
+            [parent] if *parent == state.at.wc_id => std::mem::take(&mut state.at.wc_tree),
+            // The same change, replaced: its parent has not moved.
+            parents if parents == state.at.wc.parents.as_slice() => {
+                std::mem::take(&mut state.at.parent_tree)
+            }
+            [parent] => self.tree_of(parent)?,
+            _ => return Err(Error::Merge(id)),
+        };
+        let wc_tree = tree::of(&changeset, &parent_tree);
+        state.ops.insert(head, op);
+        state.at = Loaded {
+            head,
+            view,
+            wc_id: id,
+            wc: changeset,
+            parent_tree,
+            wc_tree,
+        };
+        Ok(head)
     }
 
     /// Snapshots, then starts a new working-copy change on top of the
@@ -872,23 +962,52 @@ impl<F: Fs> Workspace<F> {
     /// head and becomes the `default` workspace's change. No working-copy
     /// file is written. Returns the new change ID.
     pub fn new_change(&mut self) -> Result<[u8; CHANGE_ID_LEN], Error> {
-        self.snapshot()?;
-        let loaded = self.load()?;
+        let mut state = self.begin()?;
+        self.snapshot_in(&mut state)?;
         let change_id = self.change_id();
         let changeset = Changeset {
-            parents: vec![loaded.wc_id],
+            parents: vec![state.at.wc_id],
             change_id,
             changes: BTreeMap::new(),
             description: Vec::new(),
         };
-        self.replace_working_copy(&loaded, &changeset)?;
+        self.replace_working_copy(&mut state, changeset)?;
         Ok(change_id)
+    }
+
+    /// Snapshots, then sets the working-copy change's description to
+    /// `text`, byte for byte: one op in which a changeset with the same
+    /// change ID, parents and changes, and `text` as its description,
+    /// replaces the current one. No working-copy file is written. When
+    /// `text` is the description the change already has, nothing is written
+    /// for it.
+    pub fn describe(&mut self, text: &[u8]) -> Result<Described, Error> {
+        let mut state = self.begin()?;
+        self.snapshot_in(&mut state)?;
+        let change_id = state.at.wc.change_id;
+        if state.at.wc.description == text {
+            return Ok(Described {
+                change_id,
+                op: None,
+            });
+        }
+        let changeset = Changeset {
+            description: text.to_vec(),
+            ..state.at.wc.clone()
+        };
+        let op = self.replace_working_copy(&mut state, changeset)?;
+        self.store.fs().point("workspace.describe.committed");
+        Ok(Described {
+            change_id,
+            op: Some(op),
+        })
     }
 
     /// Snapshots, then compares the working-copy change with its parent.
     pub fn status(&mut self) -> Result<Status, Error> {
-        let snapshot = self.snapshot()?;
-        let loaded = self.load()?;
+        let mut state = self.begin()?;
+        let snapshot = self.snapshot_in(&mut state)?;
+        let loaded = &state.at;
         let mut changes = Vec::new();
         for (path, file) in &loaded.wc_tree {
             match loaded.parent_tree.get(path) {
@@ -910,23 +1029,27 @@ impl<F: Fs> Workspace<F> {
     }
 
     /// The working-copy change's id, change ID and tree, as the single op
-    /// head leaves it.
+    /// head leaves it. Read from the store each time, never from the state
+    /// a command holds, so a test that compares it with a model checks what
+    /// is stored.
     pub fn working_copy(&self) -> Result<(HashRef, [u8; CHANGE_ID_LEN], Tree), Error> {
-        let loaded = self.load()?;
+        let loaded = self.read_state()?.at;
         Ok((loaded.wc_id, loaded.wc.change_id, loaded.wc_tree))
     }
 
-    /// The working-copy change's parent tree.
+    /// The working-copy change's parent tree, read from the store each time.
     pub fn parent_tree(&self) -> Result<Tree, Error> {
-        Ok(self.load()?.parent_tree)
+        Ok(self.read_state()?.at.parent_tree)
     }
 
     /// Snapshots, then lists every op, newest first: children before
-    /// parents, ties broken by id ("History commands" in the spec).
-    pub fn log(&mut self) -> Result<Vec<LogEntry>, Error> {
-        self.snapshot()?;
-        let ops = self.store.ops()?;
-        self.refuse_invalid_ops(ops.len())?;
+    /// parents, ties broken by id ("History commands" in the spec). Each
+    /// entry costs two object reads, its view and its working-copy
+    /// changeset, however long the history is.
+    pub fn ops(&mut self) -> Result<Vec<OpEntry>, Error> {
+        let mut state = self.begin()?;
+        self.snapshot_in(&mut state)?;
+        let ops = &state.ops;
         let mut children: BTreeMap<&HashRef, usize> = ops.keys().map(|id| (id, 0)).collect();
         for op in ops.values() {
             for parent in &op.parents {
@@ -956,36 +1079,61 @@ impl<F: Fs> Workspace<F> {
                 .workspaces
                 .get(DEFAULT_WORKSPACE)
                 .ok_or_else(|| corrupt(format!("view {}: no default workspace", op.view)))?;
-            entries.push(LogEntry {
+            let changeset = self.changeset(&working_copy)?;
+            entries.push(OpEntry {
                 id: *id,
                 parents: op.parents.clone(),
                 working_copy,
-                change_id: self.changeset(&working_copy)?.change_id,
-                files: self.tree_of(&working_copy)?.len(),
+                change_id: changeset.change_id,
+                paths: changeset.changes.len(),
             });
         }
         Ok(entries)
     }
 
-    /// Undoes the last op: takes H, the single head now, snapshots, and
-    /// moves to the view of H's parent with [`Workspace::restore_view`].
+    /// Snapshots, then lists the working-copy change and the changes before
+    /// it along first parents, newest first ("History commands" in the
+    /// spec). Each entry costs one object read.
+    pub fn changes(&mut self) -> Result<Vec<ChangeEntry>, Error> {
+        let mut state = self.begin()?;
+        self.snapshot_in(&mut state)?;
+        let entry = |id: HashRef, changeset: &Changeset| ChangeEntry {
+            id,
+            change_id: changeset.change_id,
+            paths: changeset.changes.len(),
+            description: changeset.description.clone(),
+        };
+        let mut entries = vec![entry(state.at.wc_id, &state.at.wc)];
+        let mut next = only_parent(&state.at.wc, &state.at.wc_id)?;
+        while let Some(id) = next {
+            let changeset = self.changeset(&id)?;
+            next = only_parent(&changeset, &id)?;
+            entries.push(entry(id, &changeset));
+        }
+        Ok(entries)
+    }
+
+    /// Undoes the last op: takes H, the single head now, snapshots once, and
+    /// moves to the view of H's parent as [`Workspace::restore_view`] does.
     /// Returns H's parent and the new op. With no parent it fails with
     /// [`Error::NothingToUndo`], having written only the snapshot.
     pub fn undo(&mut self) -> Result<(HashRef, HashRef), Error> {
-        let h = self.load()?.head;
-        self.snapshot()?;
-        let ops = self.store.ops()?;
-        let op = ops
+        let mut state = self.begin()?;
+        let h = state.at.head;
+        self.snapshot_in(&mut state)?;
+        let op = state
+            .ops
             .get(&h)
             .ok_or_else(|| corrupt(format!("op {h} disappeared")))?;
         let Some(parent) = op.parents.first().copied() else {
             return Err(Error::NothingToUndo);
         };
-        let view = ops
+        let view = state
+            .ops
             .get(&parent)
             .ok_or_else(|| corrupt(format!("op {h} names a missing parent {parent}")))?
             .view;
-        let new = self.restore_view(&view)?;
+        let new = self.restore_view_in(state, &view)?;
         Ok((parent, new))
     }
 
@@ -993,10 +1141,11 @@ impl<F: Fs> Workspace<F> {
     /// in text form, or a unique prefix of its hex digest, with or without
     /// the algorithm name. Returns that op and the new op.
     pub fn restore(&mut self, spec: &str) -> Result<(HashRef, HashRef), Error> {
-        self.snapshot()?;
-        let ops = self.store.ops()?;
-        let target = resolve(&ops, spec)?;
-        let new = self.restore_view(&ops[&target].view)?;
+        let mut state = self.begin()?;
+        self.snapshot_in(&mut state)?;
+        let target = resolve(&state.ops, spec)?;
+        let view = state.ops[&target].view;
+        let new = self.restore_view_in(state, &view)?;
         Ok((target, new))
     }
 }
@@ -1014,10 +1163,7 @@ fn resolve(ops: &BTreeMap<HashRef, Operation>, spec: &str) -> Result<HashRef, Er
     }
     let matches: Vec<HashRef> = ops
         .keys()
-        .filter(|id| {
-            let digest: String = id.digest().iter().map(|b| format!("{b:02x}")).collect();
-            digest.starts_with(hex)
-        })
+        .filter(|id| hash::hex(id.digest()).starts_with(hex))
         .copied()
         .collect();
     match matches.as_slice() {
@@ -1027,9 +1173,19 @@ fn resolve(ops: &BTreeMap<HashRef, Operation>, spec: &str) -> Result<HashRef, Er
     }
 }
 
-/// One op, as `log` lists it.
+/// A changeset's one parent, if it has any. A changeset with several needs
+/// INT-0012's merge.
+fn only_parent(changeset: &Changeset, id: &HashRef) -> Result<Option<HashRef>, Error> {
+    match changeset.parents.as_slice() {
+        [] => Ok(None),
+        [parent] => Ok(Some(*parent)),
+        _ => Err(Error::Merge(*id)),
+    }
+}
+
+/// One op, as `ops` lists it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LogEntry {
+pub struct OpEntry {
     /// The op's id.
     pub id: HashRef,
     /// Its parent ops.
@@ -1038,6 +1194,21 @@ pub struct LogEntry {
     pub working_copy: HashRef,
     /// That changeset's change ID.
     pub change_id: [u8; CHANGE_ID_LEN],
-    /// How many files its tree holds.
-    pub files: usize,
+    /// How many paths that changeset changes against its parent. Counting
+    /// the files of its whole tree would need the chain of changes behind
+    /// it, for every op listed.
+    pub paths: usize,
+}
+
+/// One change, as `log` lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChangeEntry {
+    /// The changeset's id.
+    pub id: HashRef,
+    /// Its change ID.
+    pub change_id: [u8; CHANGE_ID_LEN],
+    /// How many paths it changes against its parent.
+    pub paths: usize,
+    /// Its description, exactly as stored.
+    pub description: Vec<u8>,
 }

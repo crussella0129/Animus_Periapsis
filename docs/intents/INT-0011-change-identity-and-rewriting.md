@@ -24,7 +24,10 @@ Divergence (two live successors of one change ID), orphans and
 phase-divergence are detected from the derived markers and resolved by
 policy rules — for example "a human-authored side wins over an agent's" or "the
 verifier-confirmed side wins" — with prompts for humans and structured results
-for agents.
+for agents. Every kind of divergence has a default rule that settles it, or
+sets it aside with both sides kept, without a person. A person is asked only
+where policy says so: at thousands of agents nobody can answer each one
+([INT-0035](INT-0035-scale-and-asynchrony.md)).
 
 ## Acceptance criteria
 - **AC-1** `necessary` `empirical` — Markers derived from rewrite ops equal explicitly maintained markers on random rewrite histories with concurrent rewrites on two replicas.
@@ -37,6 +40,8 @@ for agents.
 - **AC-4** `necessary` `empirical` — `squash`, `split`, `absorb`, `abandon` and `restack` preserve change IDs as specified and leave no orphans over a scenario corpus that includes files no diff layer reads, which `split` and `absorb` handle as the Intent says.
 - **AC-5** `supporting` `asserted` — The divergence policy rules are written down and approved by the owner before agents rely on them.
   - Signers: project owner.
+- **AC-6** `necessary` `empirical` — No divergence waits on a person by default: under the default policy, every divergence in the scenario corpus is settled by a rule or set aside with both sides kept, the same way on every replica, and no command prompts.
+  - Threshold: 100% of divergences, with 0 prompts.
 
 ## Rationale
 - Jujutsu's stable change IDs and a working copy that is itself a change let
@@ -67,3 +72,4 @@ for agents.
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §2.1–2.2, I.5 step 15 and R3-E).
 - 2026-11-01: revised while `proposed`, on owner direction: every command must work on content no layer can read. The Intent says `split` puts such a file's whole change on one side and `absorb` leaves it in place and reports it, and AC-4's corpus includes such files.
+- 2026-11-10: revised while `proposed` (Sprint 6 Plan, on owner direction of 2026-11-09 for thousands of agents): the Intent says every kind of divergence has a default rule that needs no person, and AC-6 checks it. The command other systems call rebase is proposed as `move` in [INT-0037](INT-0037-command-set.md); this chapter's use of "rebase" for the operation is unchanged.

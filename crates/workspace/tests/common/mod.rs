@@ -374,7 +374,7 @@ pub fn tree_files<F: Fs>(ws: &Workspace<F>, id: &HashRef) -> Files {
 /// by position (the history is linear, so newest first is creation order
 /// reversed), learning each op's id. With `trees`, also each op's files.
 fn check_ops<F: Fs>(ws: &mut Workspace<F>, model: &mut Model, trees: bool, at: &str) {
-    let log = ws.log().unwrap();
+    let log = ws.ops().unwrap();
     assert_eq!(log.len(), model.ops.len(), "{at}: op count");
     for (i, entry) in log.iter().rev().enumerate() {
         let parent = model.ops[i]

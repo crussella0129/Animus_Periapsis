@@ -21,6 +21,23 @@ with any duplication and in any grouping converge on the same view. Pointer
 conflicts are first-class values in the view ("moved from A to B or C"); their
 resolution policy lives in [INT-0011](INT-0011-change-identity-and-rewriting.md).
 
+A merge is computed, never committed. The merged view is a function of the
+set of heads, so loading writes no operation, however many heads it finds.
+The operation a command then commits names every head it merged as a parent.
+A reader therefore never adds a head, and a thousand readers leave the log as
+they found it. The merged view may be kept as derived data
+([INT-0013](INT-0013-derived-data.md)).
+
+Three rules hold the merge to [INT-0035](INT-0035-scale-and-asynchrony.md):
+- **Cost follows the difference.** Merging costs in proportion to how much
+  the heads differ from their base, not to the size of the view or the
+  length of the log.
+- **Ownership.** An operation's effect is applied only to view entries its
+  actor owns ([INT-0016](INT-0016-actors-and-agent-lifecycle.md)).
+- **Scope.** The merge needs the shared operations a replica follows and its
+  own local ones, never another replica's local operations
+  ([INT-0009](INT-0009-reversible-by-default.md)).
+
 ## Acceptance criteria
 - **AC-1** `necessary` `formal` — Convergence (INT-conv): merging a multiset of heads gives the same view for every permutation and duplication of those heads.
   - Obligation: `Periapsis.OpMerge.conv` (unstated in this repository; R4 proved the prototype's version, `v2_membership_determined`, for general N).
@@ -37,6 +54,13 @@ resolution policy lives in [INT-0011](INT-0011-change-identity-and-rewriting.md)
   - Threshold: 0 violations (Phase 2 exit gate).
 - **AC-6** `necessary` `formal` — Adequacy: AC-1 together with AC-2 rejects every registered mutant merge (pairwise fold, "first head equals last head" fast path, always-base, and the others in the registry).
   - Obligation: `unstated` (R5 §A.7: the conjunction rejects 6/6 mutants; each half alone misses some).
+- **AC-7** `necessary` `empirical` — Readers add nothing: processes that load a store holding several op heads and run only commands that change nothing leave the set of stored operations exactly as it was.
+  - Sample: 2, 8 and 1,000 simulated readers.
+  - Threshold: 0 operations written.
+- **AC-8** `necessary` `empirical` — At scale: the check of AC-5 holds with 1,000 writers on 100 replicas. No committed op and no reachable change is lost, no command fails because of another writer, and every replica that holds the same operations computes the same view.
+  - Threshold: 0 violations ([INT-0035](INT-0035-scale-and-asynchrony.md) AC-3 and AC-9).
+- **AC-9** `necessary` `empirical` — Merge cost follows the difference: joining *h* heads that each differ from their base in at most *c* entries reads objects in proportion to *h* · *c*, whatever the size of the view.
+  - Threshold: [INT-0035](INT-0035-scale-and-asynchrony.md) AC-5.
 
 ## Rationale
 - Jujutsu's op log gives lock-free concurrency across processes and machines:
@@ -71,7 +95,21 @@ resolution policy lives in [INT-0011](INT-0011-change-identity-and-rewriting.md)
   [INT-0014](INT-0014-working-copy-and-workspaces.md) Consequences). That
   contradicts this Intent's "no command fails because of another writer"; the
   gap closes when the canonical merge lands.
+- That gap is the first thing in the way of several agents. Measured in
+  Sprint 6: two `praps new` commands that overlapped left two op heads, every
+  later command stopped, and no command could join them
+  ([research](../sprints/s6/sprint-research/research-report.md)). The merge
+  is therefore the next sprint's work (backlog T-029).
+- A merge stored as an operation would never settle once operations are
+  signed ([INT-0016](INT-0016-actors-and-agent-lifecycle.md)). Two readers
+  that merged the same heads would sign two different merge operations, each
+  a new head for the next reader to merge. Hence the rule that a merge is
+  computed and only a command's own operation is written.
+- Jujutsu, the source of this design, documents no number of writers it was
+  built for, and warns that use from several machines can lose pointers. The
+  criteria here are what that design has to meet at a thousand writers.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §3.3, R1-E12, R4 and R5 §A.7).
 - 2026-11-07: revised while `proposed` (Sprint 2 plan critique, round 1): Consequences record the interim several-heads stop and that it contradicts this Intent until the canonical merge lands.
+- 2026-11-10: revised while `proposed` (Sprint 6 Plan, on owner direction of 2026-11-09 for thousands of agents): the Intent says a merge of op heads is computed and never committed as an operation, and holds the merge to three rules of [INT-0035](INT-0035-scale-and-asynchrony.md): cost, ownership and scope. AC-7 to AC-9 are added. Consequences record Sprint 6's measurement of the several-heads stop, why a stored merge would not settle, and what Jujutsu's documentation leaves open.

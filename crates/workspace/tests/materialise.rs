@@ -7,13 +7,14 @@
 mod common;
 
 use std::collections::BTreeMap;
-use std::path::Path;
-use std::sync::Arc;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use codec::RepoPath;
 use common::{ROOT, delete, files_on_disk, put, writes};
 use hash::HashRef;
-use sim::{Fs, Mode as DirMode, NameRules, SimFs};
+use sim::{DirEntry, Fs, Mode as DirMode, NameRules, SimFs};
 use workspace::materialise;
 use workspace::record::{self, Record};
 use workspace::tree::Tree;
@@ -775,7 +776,8 @@ fn resume_skips_a_directory_at_a_temporary_name() {
 }
 
 /// Each stage of the working copy marks its named point (Sprint 4 T-006):
-/// a snapshot, a write of the working copy, and both ways a resume ends.
+/// a snapshot, a write of the working copy, a description (Sprint 6 T-010),
+/// and both ways a resume ends.
 #[test]
 fn workspace_points_mark_each_stage() {
     use std::sync::Mutex;
@@ -812,6 +814,15 @@ fn workspace_points_mark_each_stage() {
         assert!(marked.contains(&stage), "{stage} not in {marked:?}");
     }
     assert_eq!(marked.first(), Some(&"workspace.snapshot.scanned"));
+    // `describe` scans, finds nothing to record, and marks its own commit.
+    ws.describe(b"why").unwrap();
+    assert_eq!(
+        take(&seen),
+        ["workspace.snapshot.scanned", "workspace.describe.committed"]
+    );
+    // With the text the change has, it commits nothing.
+    ws.describe(b"why").unwrap();
+    assert_eq!(take(&seen), ["workspace.snapshot.scanned"]);
     fs.clear_points();
 
     // A crash right after the record is written, before the target op: the
@@ -857,5 +868,418 @@ fn workspace_points_mark_each_stage() {
         );
         assert!(marked.contains(&expected), "{expected} not in {marked:?}");
         restarted.clear_points();
+    }
+}
+
+/// Everything on the filesystem outside `.praps`, by path.
+fn outside_praps(fs: &SimFs) -> BTreeMap<String, sim::Node> {
+    fs.snapshot()
+        .into_iter()
+        .filter(|(path, _)| !path.starts_with("repo/.praps"))
+        .collect()
+}
+
+/// `open` checks that every op file is whole before it resumes an
+/// interrupted write. With the record's target op damaged, resume would
+/// take the write for one that never began and drop the record, though
+/// files were already written; the half-written working copy would then be
+/// recorded as the user's edits once the op file was repaired. Instead
+/// `open` stops, the record stays, and no file changes; with the op file
+/// put right, it resumes and finishes (Sprint 6 T-004; INT-0014 AC-1).
+#[test]
+fn a_damaged_op_stops_open_before_resume() {
+    for seed in 0..10 {
+        // A restore that crashed after its op was committed and its removals
+        // were made, as it renamed the first written file into place.
+        let (fs, _) = crash_at(140 + seed, "rename repo/.praps-tmp-");
+        let record_path = praps().join(record::RECORD);
+        let record_bytes = fs.read(&record_path).unwrap();
+        let record = record::read(&fs, &praps()).unwrap().unwrap().unwrap();
+        let op_path = Path::new(ROOT)
+            .join(".praps/store/ops")
+            .join(store::names::file_name(&record.target));
+        let whole = fs.read(&op_path).unwrap();
+        let mut damaged = whole.clone();
+        *damaged.last_mut().unwrap() ^= 1;
+        fs.overwrite(&op_path, &damaged).unwrap();
+        let before = outside_praps(&fs);
+        assert_ne!(
+            files_on_disk(&fs),
+            expect(&[("a", "file", false), ("keep", "1", false)]),
+            "seed {seed}: the write was interrupted part way"
+        );
+
+        let error = Workspace::open(&fs, Path::new(ROOT), seed).err().unwrap();
+        assert!(matches!(error, Error::Corrupt(_)), "seed {seed}: {error}");
+        assert_eq!(
+            fs.read(&record_path).unwrap(),
+            record_bytes,
+            "seed {seed}: the record stays as it was"
+        );
+        assert_eq!(outside_praps(&fs), before, "seed {seed}: no file changed");
+
+        // With the op file's bytes put back, the next open finishes the write.
+        fs.overwrite(&op_path, &whole).unwrap();
+        let ws = Workspace::open(&fs, Path::new(ROOT), seed).unwrap();
+        assert!(ws.notes().is_empty(), "seed {seed}: {:?}", ws.notes());
+        assert_eq!(
+            files_on_disk(&fs),
+            expect(&[("a", "file", false), ("keep", "1", false)]),
+            "seed {seed}"
+        );
+        assert!(!fs.snapshot().contains_key("repo/.praps/working-copy"));
+    }
+}
+
+// ------------------------- a directory that cannot be removed (Sprint 6 T-012)
+
+/// A filesystem on which chosen directories cannot be removed, as on a
+/// system where another process stands in one. Everything else is the
+/// simulator's.
+struct Held {
+    fs: Arc<SimFs>,
+    held: Mutex<Vec<PathBuf>>,
+    /// Directories another process removes just before the write does.
+    vanishing: Mutex<Vec<PathBuf>>,
+    /// Directories whose removal fails with the simulator's crash error,
+    /// while every later call still goes through.
+    crashing: Mutex<Vec<PathBuf>>,
+}
+
+impl Held {
+    fn path(dir: &str) -> PathBuf {
+        dir.split('/').fold(PathBuf::from(ROOT), |p, c| p.join(c))
+    }
+
+    /// Makes `dir`, a repository path, a directory that cannot be removed.
+    fn hold(&self, dir: &str) {
+        self.held.lock().unwrap().push(Self::path(dir));
+    }
+
+    /// Makes the removal of `dir` fail as a crash of the simulator does.
+    fn crash_at(&self, dir: &str) {
+        self.crashing.lock().unwrap().push(Self::path(dir));
+    }
+
+    /// Makes `dir` a directory that is gone when the write comes to remove
+    /// it.
+    fn vanish(&self, dir: &str) {
+        self.vanishing.lock().unwrap().push(Self::path(dir));
+    }
+
+    fn release(&self) {
+        self.held.lock().unwrap().clear();
+    }
+}
+
+impl Fs for Held {
+    fn create_dir(&self, path: &Path) -> io::Result<()> {
+        self.fs.create_dir(path)
+    }
+    fn create_new(&self, path: &Path) -> io::Result<()> {
+        self.fs.create_new(path)
+    }
+    fn write(&self, path: &Path, data: &[u8]) -> io::Result<()> {
+        self.fs.write(path, data)
+    }
+    fn overwrite(&self, path: &Path, data: &[u8]) -> io::Result<()> {
+        self.fs.overwrite(path, data)
+    }
+    fn sync_file(&self, path: &Path) -> io::Result<()> {
+        self.fs.sync_file(path)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        self.fs.rename(from, to)
+    }
+    fn sync_dir(&self, path: &Path) -> io::Result<()> {
+        self.fs.sync_dir(path)
+    }
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        self.fs.read(path)
+    }
+    fn list(&self, path: &Path) -> io::Result<Vec<String>> {
+        self.fs.list(path)
+    }
+    fn remove_file(&self, path: &Path) -> io::Result<()> {
+        self.fs.remove_file(path)
+    }
+    fn scan(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        self.fs.scan(path)
+    }
+    fn has_executable_bit(&self) -> bool {
+        self.fs.has_executable_bit()
+    }
+    fn remove_dir(&self, path: &Path) -> io::Result<()> {
+        if self.held.lock().unwrap().iter().any(|held| held == path) {
+            return Err(io::Error::new(
+                io::ErrorKind::ResourceBusy,
+                "another process stands in it",
+            ));
+        }
+        if self.crashing.lock().unwrap().iter().any(|dir| dir == path) {
+            // The crash error cannot be built outside `sim`: it is taken
+            // from a simulator made to crash at its first syscall.
+            let scratch = SimFs::new(0, DirMode::Strict);
+            scratch.set_crash_at(Some(1));
+            return Err(scratch.create_dir(Path::new("x")).unwrap_err());
+        }
+        if self
+            .vanishing
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|gone| gone == path)
+        {
+            self.fs.remove_dir(path)?;
+            return Err(io::Error::new(io::ErrorKind::NotFound, "it is gone"));
+        }
+        self.fs.remove_dir(path)
+    }
+    fn set_executable(&self, path: &Path, executable: bool) -> io::Result<()> {
+        self.fs.set_executable(path, executable)
+    }
+    fn name_rules(&self) -> NameRules {
+        self.fs.name_rules()
+    }
+    fn point(&self, name: &'static str) {
+        self.fs.point(name);
+    }
+}
+
+/// A repository on [`Held`] with two recorded states, and the view of the
+/// first. `first` and `second` are each state's files. The first state's
+/// are all at the top, and are deleted before the second's are put.
+fn two_states(
+    seed: u64,
+    first: &[(&str, &str)],
+    second: &[(&str, &str)],
+) -> (Workspace<Arc<Held>>, Arc<Held>, HashRef) {
+    let held = Arc::new(Held {
+        fs: Arc::new(SimFs::new(seed, DirMode::Strict)),
+        held: Mutex::new(Vec::new()),
+        vanishing: Mutex::new(Vec::new()),
+        crashing: Mutex::new(Vec::new()),
+    });
+    let mut ws = Workspace::init(Arc::clone(&held), Path::new(ROOT), seed)
+        .unwrap()
+        .0;
+    let view = |ws: &Workspace<Arc<Held>>| {
+        let ops = ws.store().ops().unwrap();
+        ops[store::heads_of(&ops).first().unwrap()].view
+    };
+    for (path, content) in first {
+        put(&*held, path, content.as_bytes());
+    }
+    ws.snapshot().unwrap();
+    let first_view = view(&ws);
+    // The first state's files are at the top, so deleting them leaves no
+    // directory behind.
+    for (path, _) in first {
+        assert!(!path.contains('/'), "{path}");
+        delete(&*held, path);
+    }
+    for (path, content) in second {
+        put(&*held, path, content.as_bytes());
+    }
+    ws.snapshot().unwrap();
+    make_durable(&held.fs);
+    (ws, held, first_view)
+}
+
+fn has_record(fs: &SimFs) -> bool {
+    fs.snapshot().contains_key("repo/.praps/working-copy")
+}
+
+/// A write that empties a directory it then cannot remove goes on: every
+/// file of the target is written, the record is dropped, the directory is
+/// left, and a note names it. A directory holds nothing a snapshot records,
+/// so the next snapshot writes nothing (INT-0014; INT-0037 AC-3).
+#[test]
+fn a_directory_that_cannot_be_removed_is_left() {
+    let (mut ws, held, first) = two_states(
+        120,
+        &[("keep", "1"), ("back", "returns")],
+        &[("keep", "2"), ("d/sub/x", "x"), ("d/y", "y")],
+    );
+    held.hold("d/sub");
+    let ops = ws.store().ops().unwrap().len();
+    ws.restore_view(&first).unwrap();
+    assert_eq!(
+        files_on_disk(&*held),
+        expect(&[("back", "returns", false), ("keep", "1", false)])
+    );
+    assert!(!has_record(&held.fs), "the record was dropped");
+    // `d/sub` is left, and so is `d`, which still holds it.
+    let disk = held.fs.snapshot();
+    assert!(disk.contains_key("repo/d/sub"), "{:?}", disk.keys());
+    assert!(disk.contains_key("repo/d"));
+    let notes = ws.notes().to_vec();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].starts_with("d/sub: the directory could not be removed, and was left"),
+        "{notes:?}"
+    );
+    assert!(
+        notes[0].contains("another process stands in it"),
+        "{notes:?}"
+    );
+    assert_eq!(ws.store().ops().unwrap().len(), ops + 1, "one op, the move");
+    // The directory left changes nothing a snapshot records.
+    assert!(ws.snapshot().unwrap().op.is_none());
+    // A later command, once the directory can go, has nothing to resume
+    // and works as ever.
+    held.release();
+    let mut ws = Workspace::open(Arc::clone(&held), Path::new(ROOT), 121).unwrap();
+    assert!(ws.notes().is_empty(), "{:?}", ws.notes());
+    assert!(ws.snapshot().unwrap().op.is_none());
+}
+
+/// A directory that is gone when the write comes to remove it is what was
+/// wanted: the write goes on, and no note is left.
+#[test]
+fn a_directory_already_gone_is_passed_over() {
+    let (mut ws, held, first) =
+        two_states(127, &[("keep", "1")], &[("keep", "2"), ("d/sub/x", "x")]);
+    held.vanish("d/sub");
+    ws.restore_view(&first).unwrap();
+    assert!(ws.notes().is_empty(), "{:?}", ws.notes());
+    assert_eq!(files_on_disk(&*held), expect(&[("keep", "1", false)]));
+    let disk = held.fs.snapshot();
+    assert!(!disk.contains_key("repo/d"), "{:?}", disk.keys());
+    assert!(!has_record(&held.fs));
+}
+
+/// Where the write must put a file at the directory's own path, it cannot
+/// go on: it stops with the failure and the record kept, and a later
+/// command finishes it once the directory can be removed.
+#[test]
+fn a_directory_in_the_way_of_a_file_stops_the_write() {
+    let (mut ws, held, first) = two_states(
+        122,
+        &[("d", "a file"), ("keep", "1")],
+        &[("d/x", "inside"), ("keep", "2")],
+    );
+    held.hold("d");
+    let error = ws.restore_view(&first).unwrap_err();
+    assert!(
+        matches!(&error, Error::Io(io) if io.kind() == io::ErrorKind::ResourceBusy),
+        "{error}"
+    );
+    // The refusal names the directory and says why the write cannot go on.
+    assert_eq!(
+        error.to_string(),
+        "d: the directory could not be removed, and the write must put a file there or above it (another process stands in it)"
+    );
+    assert!(has_record(&held.fs), "the record is kept");
+    // Step 1 removed `d/x`; `d` is still a directory, and `keep` is as it
+    // was: the write of files had not begun.
+    assert_eq!(files_on_disk(&*held), expect(&[("keep", "2", false)]));
+    assert!(held.fs.snapshot().contains_key("repo/d"));
+
+    // While the directory is held, the next command fails the same way.
+    let again = Workspace::open(Arc::clone(&held), Path::new(ROOT), 123);
+    assert!(matches!(again, Err(Error::Io(_))));
+    assert!(has_record(&held.fs));
+
+    held.release();
+    let ws = Workspace::open(Arc::clone(&held), Path::new(ROOT), 124).unwrap();
+    assert!(ws.notes().is_empty(), "{:?}", ws.notes());
+    assert_eq!(
+        files_on_disk(&*held),
+        expect(&[("d", "a file", false), ("keep", "1", false)])
+    );
+    assert!(!has_record(&held.fs));
+}
+
+/// The same where the file is due at a path above the directory: `a/b`
+/// left as a directory would keep `a` one too.
+#[test]
+fn a_directory_below_a_file_to_put_stops_the_write() {
+    let (mut ws, held, first) = two_states(
+        125,
+        &[("a", "a file"), ("keep", "1")],
+        &[("a/b/x", "deep"), ("keep", "2")],
+    );
+    held.hold("a/b");
+    let error = ws.restore_view(&first).unwrap_err();
+    assert!(matches!(error, Error::Io(_)), "{error}");
+    assert!(
+        error.to_string().starts_with("a/b: the directory"),
+        "{error}"
+    );
+    assert!(has_record(&held.fs), "the record is kept");
+    assert_eq!(files_on_disk(&*held), expect(&[("keep", "2", false)]));
+    assert!(held.fs.snapshot().contains_key("repo/a/b"));
+
+    held.release();
+    let ws = Workspace::open(Arc::clone(&held), Path::new(ROOT), 126).unwrap();
+    assert!(ws.notes().is_empty(), "{:?}", ws.notes());
+    assert_eq!(
+        files_on_disk(&*held),
+        expect(&[("a", "a file", false), ("keep", "1", false)])
+    );
+    assert!(!has_record(&held.fs));
+}
+
+/// A removal that fails with the simulator's crash error stops the write
+/// even when every later call would succeed: the error is told from a
+/// refusal by what it is. Here only the removal fails, so a write that took
+/// the crash for a refusal would go on, write `keep`, drop the record and
+/// leave a note (test critique C-004).
+#[test]
+fn a_crash_is_not_taken_for_a_refusal() {
+    let (mut ws, held, first) = two_states(128, &[("keep", "1")], &[("keep", "2"), ("d/x", "x")]);
+    held.crash_at("d");
+    let error = ws.restore_view(&first).unwrap_err();
+    assert!(
+        matches!(&error, Error::Io(io) if sim::is_crash(io)),
+        "{error}"
+    );
+    assert!(ws.notes().is_empty(), "{:?}", ws.notes());
+    assert!(has_record(&held.fs), "the record is kept");
+    // The files to write were not written: the write stopped at the removal.
+    assert_eq!(files_on_disk(&*held), expect(&[("keep", "2", false)]));
+    assert!(held.fs.snapshot().contains_key("repo/d"));
+}
+
+/// A removal that fails because the simulator crashed is not a refusal:
+/// the write stops, the record is kept, and the next open finishes the
+/// write, removing the directory. The directory here is in the way of
+/// nothing, so a refusal to remove it would have been passed over.
+///
+/// This test shows the outcome on the simulator, where every syscall after
+/// a crash fails too. `a_crash_is_not_taken_for_a_refusal` shows that the
+/// write tells the two apart (code review, finding 4).
+#[test]
+fn a_crash_during_a_removal_still_stops_the_write() {
+    for seed in 0..10 {
+        let setup = || two_states(130 + seed, &[("keep", "1")], &[("keep", "2"), ("d/x", "x")]);
+        // A dry run on an identical setup gives the removal's syscall
+        // number.
+        let (mut dry, dry_held, dry_first) = setup();
+        let dry_start = dry_held.fs.trace().len();
+        dry.restore_view(&dry_first).unwrap();
+        let k = index_of(&dry_held.fs.trace()[dry_start..], "remove_dir repo/d") as u64;
+
+        let (mut ws, held, first) = setup();
+        let start = held.fs.trace().len() as u64;
+        held.fs.set_crash_at(Some(start + k + 1));
+        let error = ws.restore_view(&first).unwrap_err();
+        assert!(
+            matches!(&error, Error::Io(io) if sim::is_crash(io)),
+            "seed {seed}: {error}"
+        );
+        assert!(ws.notes().is_empty(), "seed {seed}: {:?}", ws.notes());
+        let recovered = held.fs.recover();
+        assert!(has_record(&recovered), "seed {seed}: the record is kept");
+        let ws = Workspace::open(&recovered, Path::new(ROOT), seed).unwrap();
+        assert!(ws.notes().is_empty(), "seed {seed}: {:?}", ws.notes());
+        assert_eq!(
+            files_on_disk(&recovered),
+            expect(&[("keep", "1", false)]),
+            "seed {seed}"
+        );
+        assert!(!recovered.snapshot().contains_key("repo/d"), "seed {seed}");
+        assert!(!has_record(&recovered), "seed {seed}");
     }
 }

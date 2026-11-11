@@ -6,7 +6,8 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use sim::Rng;
 
@@ -77,8 +78,8 @@ fn praps_end_to_end() {
         ok(&["status"], &root),
         ["M README.md", "A src/lib.rs", "D src/main.rs"]
     );
-    assert_eq!(ok(&["fsck"], &root), ["clean"]);
-    assert_eq!(ok(&["fsck", "project"], &dir), ["clean"]);
+    assert_eq!(ok(&["verify"], &root), ["clean"]);
+    assert_eq!(ok(&["verify", "project"], &dir), ["clean"]);
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -118,7 +119,7 @@ fn praps_status_reports_a_non_utf8_name() {
     // Twice: still reported, still untracked, still untouched.
     assert_eq!(ok(&["status"], &root).len(), 2);
     assert_eq!(fs::read(root.join(&name)).unwrap(), b"untouched");
-    assert_eq!(ok(&["fsck"], &root), ["clean"]);
+    assert_eq!(ok(&["verify"], &root), ["clean"]);
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -176,7 +177,7 @@ fn praps_status_reports_non_utf8_names_and_directories() {
         fs::read(root.join(&names[2].0).join("inner")).unwrap(),
         b"inside"
     );
-    assert_eq!(ok(&["fsck"], &root), ["clean"]);
+    assert_eq!(ok(&["verify"], &root), ["clean"]);
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -221,7 +222,7 @@ fn praps_history_end_to_end() {
     );
 
     // Restore the snapshot undo took: the edits are back.
-    let log = ok(&["log"], &root);
+    let log = ok(&["ops"], &root);
     let edits = log[1].split(' ').next().unwrap();
     ok(&["restore", edits], &root);
     assert_eq!(read("README.md").unwrap(), b"# project\n\nMore.\n");
@@ -233,19 +234,20 @@ fn praps_history_end_to_end() {
     );
 
     // Every op is still listed: none was removed, and `restore` added one.
-    let after = ok(&["log"], &root);
+    let after = ok(&["ops"], &root);
     assert_eq!(after.len(), log.len() + 1, "{after:?}");
     for line in &log {
         assert!(after.contains(line), "{line} was removed");
     }
     assert!(!root.join(".praps/working-copy").exists());
-    assert_eq!(ok(&["fsck"], &root), ["clean"]);
+    assert_eq!(ok(&["verify"], &root), ["clean"]);
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// `log`, `undo`, `restore` and `new` report a name with no UTF-8 form as
-/// `status` does, after their own output, on success and on failure, and
-/// keep their exit codes (Sprint 4 T-009, backlog T-019; INT-0004 AC-7).
+/// `ops`, `log`, `describe`, `undo`, `restore` and `new` report a name with
+/// no UTF-8 form as `status` does, after their own output, on success and
+/// on failure, and keep their exit codes (Sprint 4 T-009, backlog T-019;
+/// INT-0004 AC-7).
 #[test]
 fn praps_commands_report_skipped_names() {
     let dir = claim("raw-commands");
@@ -288,16 +290,31 @@ fn praps_commands_report_skipped_names() {
             .contains("no op matches `0000000000000000`")
     );
 
-    // `new`, `log`, `undo` and `restore`: their own lines, then the report.
+    // `new`, `ops`, `log`, `undo` and `restore`: their own lines, then the
+    // report.
     write(&root, "a", b"1");
     let lines = ok(&["new"], &root);
     assert_eq!(lines.len(), 2, "{lines:?}");
     assert!(lines[0].starts_with("new change "));
     assert_eq!(lines[1], skipped);
-    let lines = ok(&["log"], &root);
+    let lines = ok(&["ops"], &root);
     assert_eq!(lines.last(), Some(&skipped), "{lines:?}");
     assert_eq!(lines.iter().filter(|line| **line == skipped).count(), 1);
     let target = lines[0][..12].to_owned();
+    // The list of changes records the working copy too, and reports what
+    // it left alone (Sprint 6 T-009).
+    let lines = ok(&["log"], &root);
+    assert_eq!(lines.last(), Some(&skipped), "{lines:?}");
+    assert_eq!(lines.iter().filter(|line| **line == skipped).count(), 1);
+    assert!(lines[0].ends_with("(no description)"), "{lines:?}");
+    // `describe` too, when it sets a description and when it has nothing
+    // to change (Sprint 6 T-010).
+    for said in ["described change ", "nothing changed: "] {
+        let lines = ok(&["describe", "Add a"], &root);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].starts_with(said), "{lines:?}");
+        assert_eq!(lines[1], skipped);
+    }
     let lines = ok(&["undo"], &root);
     assert_eq!(lines.len(), 2, "{lines:?}");
     assert!(lines[0].starts_with("undid the last op"));
@@ -307,5 +324,365 @@ fn praps_commands_report_skipped_names() {
     assert!(lines[0].starts_with("restored the working copy"));
     assert_eq!(lines[1], skipped);
     assert_eq!(fs::read(root.join(&name)).unwrap(), b"untouched");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// The history session again, with every command after `init` run from a
+/// directory two levels below the top: the same files come and go, the same
+/// number of ops is listed, and the store stays clean (INT-0037 AC-3;
+/// Sprint 6 T-008).
+#[test]
+fn praps_end_to_end_from_below() {
+    let ops_listed = |from_below: bool| {
+        let dir = claim(if from_below { "below" } else { "top" });
+        let root = dir.join("project");
+        ok(&["init", "project"], &dir);
+        // The directory the commands run from is ignored, so that it is in
+        // both sessions without being part of either's history.
+        write(&root, ".gitignore", b"*.log\nhere/\n");
+        write(&root, "here/deep/keep.log", b"a place to stand");
+        let cwd = if from_below {
+            root.join("here/deep")
+        } else {
+            root.clone()
+        };
+        write(&root, "README.md", b"# project\n");
+        write(&root, "src/main.rs", b"fn main() {}\n");
+        assert_eq!(
+            ok(&["status"], &cwd),
+            ["A .gitignore", "A README.md", "A src/main.rs"]
+        );
+        let read = |path: &str| fs::read(root.join(path)).ok();
+
+        ok(&["new"], &cwd);
+        write(&root, "README.md", b"# project\n\nMore.\n");
+        fs::remove_file(root.join("src/main.rs")).unwrap();
+        write(&root, "docs/guide.md", b"guide");
+        assert_eq!(
+            ok(&["status"], &cwd),
+            ["M README.md", "A docs/guide.md", "D src/main.rs"]
+        );
+
+        let undone = ok(&["undo"], &cwd);
+        assert!(undone[0].starts_with("undid the last op"), "{undone:?}");
+        assert_eq!(read("README.md").unwrap(), b"# project\n");
+        assert_eq!(read("src/main.rs").unwrap(), b"fn main() {}\n");
+        assert_eq!(read("docs/guide.md"), None);
+        assert!(!root.join("docs").exists());
+
+        let log = ok(&["ops"], &cwd);
+        let edits = log[1].split(' ').next().unwrap();
+        ok(&["restore", edits], &cwd);
+        assert_eq!(read("README.md").unwrap(), b"# project\n\nMore.\n");
+        assert_eq!(read("src/main.rs"), None);
+        assert_eq!(read("docs/guide.md").unwrap(), b"guide");
+        assert_eq!(
+            ok(&["status"], &cwd),
+            ["M README.md", "A docs/guide.md", "D src/main.rs"]
+        );
+        assert_eq!(ok(&["verify"], &cwd), ["clean"]);
+        assert!(!root.join(".praps/working-copy").exists());
+        // No repository was made where the commands ran.
+        assert!(!cwd.join(".praps").exists() || cwd == root);
+        let listed = ok(&["ops"], &cwd).len();
+        let _ = fs::remove_dir_all(&dir);
+        listed
+    };
+    assert_eq!(ops_listed(true), ops_listed(false));
+}
+
+/// A first session that uses only words `praps` itself printed: the list,
+/// then `help`, `init`, `status`, `describe`, `new`, `log`, `ops`, `undo`,
+/// `restore` and `verify`. Every command exits 0 and prints what its step
+/// names. With `from_below`, every command after `init` runs from a
+/// directory two levels below the top (INT-0037 AC-2, AC-3; Sprint 6
+/// T-010).
+fn first_session(from_below: bool) {
+    let dir = claim(if from_below {
+        "first-below"
+    } else {
+        "first-top"
+    });
+    // The list comes first, and every word used below is taken from it.
+    let list = ok(&[], &dir);
+    let listed: Vec<&str> = list
+        .iter()
+        .filter_map(|line| line.strip_prefix("  "))
+        .map(|line| line.split(' ').next().unwrap())
+        .collect();
+    let word = |name: &'static str| {
+        assert!(listed.contains(&name), "`{name}` is not in {listed:?}");
+        name
+    };
+    for name in [
+        "init", "status", "describe", "new", "log", "ops", "undo", "restore", "verify",
+    ] {
+        let help = ok(&[word("help"), word(name)], &dir);
+        assert!(
+            help[0].starts_with(&format!("usage: praps {name}")),
+            "{help:?}"
+        );
+    }
+
+    // `praps help init` gives an example that names a directory; it is run
+    // as printed.
+    let help = ok(&[word("help"), word("init")], &dir);
+    let example = help
+        .iter()
+        .map(|line| line.trim())
+        .find(|line| line.starts_with("praps init "))
+        .expect("an example of `init` with a directory");
+    assert_eq!(example, "praps init project");
+    let words: Vec<&str> = example.split(' ').skip(1).collect();
+    assert_eq!(
+        ok(&words, &dir),
+        ["initialised a Periapsis repository in project"]
+    );
+    let root = dir.join("project");
+    write(&root, "README.md", b"# project\n");
+    write(&root, "src/app/main.rs", b"fn main() {}\n");
+    // The directory the commands run from holds a tracked file in every
+    // state the session visits, so it is never removed beneath them.
+    let cwd = if from_below {
+        root.join("src/app")
+    } else {
+        root.clone()
+    };
+    let read = |path: &str| fs::read(root.join(path)).ok();
+    // The change a line of `describe` names.
+    let described = |lines: &[String], first_line: &str| -> String {
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let rest = lines[0].strip_prefix("described change ").unwrap();
+        let (id, shown) = rest.split_once(": ").unwrap();
+        assert_eq!(id.len(), 12, "{lines:?}");
+        assert_eq!(shown, first_line);
+        id.to_owned()
+    };
+
+    assert_eq!(
+        ok(&[word("status")], &cwd),
+        ["A README.md", "A src/app/main.rs"]
+    );
+    let first = described(
+        &ok(&[word("describe"), "Start the project"], &cwd),
+        "Start the project",
+    );
+    let new = ok(&[word("new")], &cwd);
+    assert!(new[0].starts_with("new change "), "{new:?}");
+    assert!(ok(&["status"], &cwd).is_empty());
+
+    write(&root, "README.md", b"# project\n\nMore.\n");
+    write(&root, "src/app/lib.rs", b"pub fn f() {}\n");
+    assert_eq!(ok(&["status"], &cwd), ["M README.md", "A src/app/lib.rs"]);
+    let second = described(
+        &ok(
+            &["describe", "Add the library\n\nIt has one function."],
+            &cwd,
+        ),
+        "Add the library",
+    );
+    assert_ne!(first, second);
+    assert!(
+        new[0].starts_with(&format!("new change {second}")),
+        "{new:?}"
+    );
+    let both = [
+        format!("{second} 2 paths Add the library"),
+        format!("{first} 2 paths Start the project"),
+    ];
+    assert_eq!(ok(&[word("log")], &cwd), both);
+
+    // Six operations, newest first: the second description, the recording
+    // of the edits, `new`, the first description, the first recording, and
+    // `init`.
+    let ops = ok(&[word("ops")], &cwd);
+    assert_eq!(ops.len(), 6, "{ops:?}");
+    let op = |at: usize| ops[at].split(' ').next().unwrap();
+    assert!(
+        ops[0].ends_with(&format!(" change {second} 2 paths")),
+        "{ops:?}"
+    );
+    assert!(
+        ops[3].ends_with(&format!(" change {first} 2 paths")),
+        "{ops:?}"
+    );
+    assert!(ops[5].ends_with(" 0 paths"), "{ops:?}");
+
+    // `undo` takes the second description back, and no file changes.
+    assert_eq!(
+        ok(&[word("undo")], &cwd),
+        [format!(
+            "undid the last op: the working copy is back to op {}",
+            op(1)
+        )]
+    );
+    assert_eq!(
+        ok(&["log"], &cwd),
+        [
+            format!("{second} 2 paths (no description)"),
+            both[1].clone()
+        ]
+    );
+    assert_eq!(read("src/app/lib.rs").unwrap(), b"pub fn f() {}\n");
+
+    // `restore` of the describing operation gives it again.
+    assert_eq!(
+        ok(&[word("restore"), op(0)], &cwd),
+        [format!("restored the working copy to op {}", op(0))]
+    );
+    assert_eq!(ok(&["log"], &cwd), both);
+
+    // `restore` of the first description's operation writes the files of
+    // that time, and `undo` brings the later ones back.
+    ok(&["restore", op(3)], &cwd);
+    assert_eq!(read("README.md").unwrap(), b"# project\n");
+    assert_eq!(read("src/app/lib.rs"), None);
+    assert_eq!(read("src/app/main.rs").unwrap(), b"fn main() {}\n");
+    assert_eq!(ok(&["log"], &cwd), [both[1].clone()]);
+    assert_eq!(ok(&["status"], &cwd), ["A README.md", "A src/app/main.rs"]);
+    ok(&["undo"], &cwd);
+    assert_eq!(read("README.md").unwrap(), b"# project\n\nMore.\n");
+    assert_eq!(read("src/app/lib.rs").unwrap(), b"pub fn f() {}\n");
+    assert_eq!(ok(&["log"], &cwd), both);
+
+    assert_eq!(ok(&[word("verify")], &cwd), ["clean"]);
+    // Every operation is still listed, with the four the session added
+    // since: `undo`, `restore`, `restore` and `undo`.
+    let after = ok(&["ops"], &cwd);
+    assert_eq!(after.len(), ops.len() + 4, "{after:?}");
+    for line in &ops {
+        assert!(after.contains(line), "{line} was removed");
+    }
+    assert!(!root.join(".praps/working-copy").exists());
+    assert!(!cwd.join(".praps").exists() || cwd == root);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn praps_first_session_end_to_end() {
+    first_session(false);
+}
+
+#[test]
+fn praps_first_session_from_below() {
+    first_session(true);
+}
+
+/// The variable that makes this test binary, started again, a process that
+/// stands in its current directory: it names a directory for two signal
+/// files.
+const STAND: &str = "PRAPS_E2E_STAND";
+
+/// Not a test of its own. `undo_from_a_directory_another_process_stands_in`
+/// starts this binary again with [`STAND`] set. That process writes
+/// `standing`, then keeps its current directory until `release` appears.
+/// Run without the variable, as a test, it does nothing.
+#[test]
+fn stand_in_the_current_directory() {
+    let Some(signals) = std::env::var_os(STAND) else {
+        return;
+    };
+    let signals = PathBuf::from(signals);
+    fs::write(signals.join("standing"), b"").unwrap();
+    let started = Instant::now();
+    while !signals.join("release").exists() && started.elapsed() < Duration::from_secs(120) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// `undo`, run from a directory that its write empties, while another
+/// process has that directory as its current directory. Where the system
+/// then refuses to remove the directory (Windows), the write goes on: the
+/// working copy's files equal the target's, the directory is left empty,
+/// and a note names it. Where the system removes it (Linux), it is gone
+/// and there is no note. Either way `praps` exits 0 and the record is
+/// dropped (INT-0037 AC-3; INT-0014; Sprint 6 T-012). Run with
+/// `--nocapture`, it prints which happened.
+#[test]
+fn undo_from_a_directory_another_process_stands_in() {
+    let dir = claim("stood-in");
+    let root = dir.join("project");
+    ok(&["init", "project"], &dir);
+    write(&root, "keep", b"k");
+    assert_eq!(ok(&["status"], &root), ["A keep"]);
+    write(&root, "work/file", b"w");
+    write(&root, "work/deep/other", b"o");
+    assert_eq!(ok(&["status"], &root).len(), 3);
+    let work = root.join("work");
+
+    let signals = dir.join("signals");
+    fs::create_dir(&signals).unwrap();
+    let mut holder = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "stand_in_the_current_directory"])
+        .env(STAND, &signals)
+        .current_dir(&work)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let started = Instant::now();
+    while !signals.join("standing").exists() {
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "the process that stands in the directory did not start"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    // The undo takes back the recording of `work/…`, so its write removes
+    // both files and then the two directories they leave empty.
+    let output = praps(&["undo"], &work);
+    fs::write(signals.join("release"), b"").unwrap();
+    assert!(holder.wait().unwrap().success());
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let err = String::from_utf8_lossy(&output.stderr).into_owned();
+    let notes: Vec<&str> = err
+        .lines()
+        .filter(|line| line.starts_with("note: "))
+        .collect();
+    assert_eq!(fs::read(root.join("keep")).unwrap(), b"k");
+    assert!(!work.join("file").exists(), "{err}");
+    assert!(!work.join("deep").exists(), "{err}");
+    if work.exists() {
+        assert_eq!(fs::read_dir(&work).unwrap().count(), 0, "left empty");
+        assert_eq!(notes.len(), 1, "{err}");
+        assert!(
+            notes[0].starts_with("note: work: the directory could not be removed, and was left"),
+            "{err}"
+        );
+        println!(
+            "undo from a directory another process stands in: the directory was left; {}",
+            notes[0]
+        );
+    } else {
+        assert!(notes.is_empty(), "{err}");
+        println!("undo from a directory another process stands in: the directory was removed");
+    }
+    assert_eq!(
+        err.lines().count(),
+        notes.len(),
+        "nothing else on stderr: {err}"
+    );
+    assert!(
+        !root.join(".praps/working-copy").exists(),
+        "the record was dropped"
+    );
+
+    // The write is finished: the next command has nothing to resume, and
+    // sees the target's files and nothing else.
+    let status = praps(&["status"], &root);
+    assert_eq!(status.status.code(), Some(0), "{status:?}");
+    assert!(status.stderr.is_empty(), "{status:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&status.stdout),
+        "A keep
+"
+    );
+    assert_eq!(ok(&["verify"], &root), ["clean"]);
+    // What was undone is still there to return to.
+    ok(&["undo"], &root);
+    assert_eq!(fs::read(work.join("file")).unwrap(), b"w");
+    assert_eq!(fs::read(work.join("deep/other")).unwrap(), b"o");
     let _ = fs::remove_dir_all(&dir);
 }

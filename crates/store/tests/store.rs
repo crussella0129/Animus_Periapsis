@@ -695,3 +695,70 @@ fn store_points_mark_each_stage() {
     assert_eq!(take(), ["store.sync_layout.synced"]);
     fs.clear_points();
 }
+
+// ------------------------------------------------------- op log (Sprint 6 T-003)
+
+/// `op_log` gives, from one listing, the valid ops and the number of other
+/// files in `ops/`: a damaged op, one that does not decode, and a name that
+/// is not an id. A file still being written (`tmp-`) is neither.
+#[test]
+fn op_log_lists_once_and_counts_invalid_files() {
+    let mut store = fresh();
+    let a = commit(&mut store, &[], &[]).unwrap();
+    let b = commit(&mut store, &[&a], &[]).unwrap();
+    let c = commit(&mut store, &[&b], &[]).unwrap();
+    let ops_dir = Path::new(ROOT).join("ops");
+    let fs = store.fs();
+    // An op file with one bit flipped: it no longer hashes to its name.
+    let flipped = ops_dir.join(file_name(&c));
+    let mut bytes = fs.read(&flipped).unwrap();
+    *bytes.last_mut().unwrap() ^= 1;
+    fs.overwrite(&flipped, &bytes).unwrap();
+    // A file whose name is the id of its bytes, which are not an operation.
+    let not_an_op = blob(b"not an operation");
+    let undecodable = ops_dir.join(file_name(&object_id(HashAlg::DEFAULT, &not_an_op)));
+    fs.create_new(&undecodable).unwrap();
+    fs.write(&undecodable, &not_an_op).unwrap();
+    // A name that is not an id, and a file a writer has not renamed yet.
+    for name in ["stray", "tmp-0123456789abcdef"] {
+        let path = ops_dir.join(name);
+        fs.create_new(&path).unwrap();
+        fs.write(&path, b"x").unwrap();
+    }
+
+    let (log, trace) = calls(&mut store, |store| store.op_log().unwrap());
+    assert_eq!(log.ops.keys().collect::<Vec<_>>(), {
+        let mut expected = vec![&a, &b];
+        expected.sort();
+        expected
+    });
+    assert_eq!(
+        log.invalid, 3,
+        "the flipped op, the undecodable file and `stray`"
+    );
+    // The valid ops are exactly what `ops` gives.
+    assert_eq!(log.ops, store.ops().unwrap());
+
+    // One listing; one read of each file whose name is an id; no read of
+    // the other two; nothing written.
+    let lists: Vec<&String> = trace.iter().filter(|l| l.starts_with("list ")).collect();
+    assert_eq!(lists, ["list repo/ops"]);
+    let mut reads: Vec<&str> = trace
+        .iter()
+        .filter_map(|l| l.strip_prefix("read repo/ops/"))
+        .collect();
+    reads.sort_unstable();
+    let mut expected: Vec<String> = [a, b, c, object_id(HashAlg::DEFAULT, &not_an_op)]
+        .iter()
+        .map(file_name)
+        .collect();
+    expected.sort();
+    assert_eq!(reads, expected);
+    assert_eq!(trace.len(), 1 + expected.len(), "{trace:#?}");
+
+    // On a whole store nothing is invalid.
+    let mut whole = fresh();
+    commit(&mut whole, &[], &[]).unwrap();
+    let log = whole.op_log().unwrap();
+    assert_eq!((log.ops.len(), log.invalid), (1, 0));
+}

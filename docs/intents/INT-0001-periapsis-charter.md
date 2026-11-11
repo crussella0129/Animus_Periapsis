@@ -3,7 +3,7 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0001
 - **State:** proposed
-- **Work evidence:** [Sprint 1 T-009 build plan](../sprints/s1/sprint-plans/build-plan.md#t-009-record-sprint-0s-github-actions-runs-and-owner-sign-offs), [T-010 backlog](../work/tasks.md), [Sprint 2 T-001 build plan](../sprints/s2/sprint-plans/build-plan.md#t-001-record-sprint-1s-github-actions-runs-and-owner-sign-offs), [T-013 backlog](../work/tasks.md), [Sprint 3 T-001 build plan](../sprints/s3/sprint-plans/build-plan.md#t-001-record-sprint-2s-github-actions-runs-and-owner-sign-offs), [T-017 backlog](../work/tasks.md), [Sprint 4 T-001 build plan](../sprints/s4/sprint-plans/build-plan.md#t-001-record-the-sprint-3-checkpoints-github-actions-runs-and-owner-sign-offs), [Sprint 5 T-001 build plan](../sprints/s5/sprint-plans/build-plan.md#t-001-record-the-sprint-4-checkpoints-github-actions-runs-and-owner-sign-offs)
+- **Work evidence:** [Sprint 1 T-009 build plan](../sprints/s1/sprint-plans/build-plan.md#t-009-record-sprint-0s-github-actions-runs-and-owner-sign-offs), [T-010 backlog](../work/tasks.md), [Sprint 2 T-001 build plan](../sprints/s2/sprint-plans/build-plan.md#t-001-record-sprint-1s-github-actions-runs-and-owner-sign-offs), [T-013 backlog](../work/tasks.md), [Sprint 3 T-001 build plan](../sprints/s3/sprint-plans/build-plan.md#t-001-record-sprint-2s-github-actions-runs-and-owner-sign-offs), [T-017 backlog](../work/tasks.md), [Sprint 4 T-001 build plan](../sprints/s4/sprint-plans/build-plan.md#t-001-record-the-sprint-3-checkpoints-github-actions-runs-and-owner-sign-offs), [Sprint 5 T-001 build plan](../sprints/s5/sprint-plans/build-plan.md#t-001-record-the-sprint-4-checkpoints-github-actions-runs-and-owner-sign-offs), [Sprint 6 T-001 build plan](../sprints/s6/sprint-plans/build-plan.md#t-001-record-sprint-5s-github-actions-runs-one-run-on-demand-and-the-owners-sign-offs)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none, [Sprint 4 CI record](../sprints/s5/sprint-tests/ci-sprint4.md)
@@ -12,7 +12,12 @@
 ## Intent
 Build Animus_Periapsis ("Periapsis", command `praps`): a snapshot-based,
 content-addressed distributed version control system written from scratch in
-Rust for many concurrent agents and the humans who direct them. Its core works
+Rust for many concurrent agents and the humans who direct them. It serves
+thousands of agents at once, with no agent waiting for another and no
+coordinator among them ([INT-0035](INT-0035-scale-and-asynchrony.md)). It is
+measured to be faster than the systems people use today
+([INT-0036](INT-0036-measured-speed.md)). Its commands are plain enough to
+learn from the tool itself ([INT-0037](INT-0037-command-set.md)). Its core works
 on any content as bytes and never needs to understand what it versions, whether
 source code, natural-language text, binaries or a language no human reads
 ([INT-0034](INT-0034-any-content.md)). Every change answers three questions
@@ -52,7 +57,8 @@ record layer; a patch-theory core in format v1; an "entropy layer"
 Intent map (dependency order, no timelines):
 - Foundations — INT-0002 typed acceptance, INT-0003 engineering baseline,
   INT-0004 Windows + Linux, INT-0005 deterministic simulation testing,
-  INT-0034 any content.
+  INT-0033 intent topics and dependencies, INT-0034 any content, INT-0035
+  scale and asynchrony, INT-0036 measured speed.
 - Phase 1, reversible single-user core — INT-0006 format v1, INT-0007
   crash-safe storage, INT-0008 compact history, INT-0009 reversibility,
   INT-0013 derived data, INT-0014 working copy and workspaces.
@@ -62,15 +68,22 @@ Intent map (dependency order, no timelines):
   actors and lifecycle, INT-0017 event records and the Book view, INT-0018
   proof-pairing certificates, INT-0019 cheat-resistant verifier, INT-0020
   intent calculus, INT-0021 lanes and review requests, INT-0022 interfaces,
-  INT-0026 Sprint Loops on Periapsis, INT-0027 porting Sprint Loops projects.
+  INT-0026 Sprint Loops on Periapsis, INT-0027 porting Sprint Loops projects,
+  INT-0032 intent revisions and review flags, INT-0037 the command set,
+  INT-0038 the live view.
 - Phase 4, distribution — INT-0024 staged sync, INT-0025 Git bridge.
-- Phase 5, scale and assurance — INT-0029 reproducible releases, INT-0030
-  optional scale mode.
+- Phase 5, assurance and optional servers — INT-0029 reproducible releases,
+  INT-0030 optional scale mode.
 - Identity — INT-0031 visual identity.
+
+Scale and speed are not phases. The cost rules of INT-0035 and the budgets of
+INT-0036 apply to every phase from Phase 1, and they decide the order of work
+inside each phase.
 
 ## Acceptance criteria
 - **AC-1** `necessary` `asserted` — The project owner signs off this charter's decomposition into the child intents of the intent map; adding, removing or re-scoping a child later is a recorded revision of this chapter.
   - Signers: project owner (crussella0129), not an agent.
+  - Evidence: signed by the project owner (crussella0129), 2026-11-10, for the intent map as it stood that day, 38 chapters ([sign-offs of 2026-11-10](../sprints/s6/sign-offs.md)).
 - **AC-2** `necessary` `empirical` — Self-hosting: Sprint Loops completes one full Research → Plan → Build → Test → Loop cycle on Periapsis with at least three concurrent agents and no Git in the loop, on Windows and on Linux.
   - Evidence: the INT-0026 AC-1 run.
 - **AC-3** `necessary` `formal` — Admission invariant: no change reaches the `public` phase without (i) at least one Book intent reference, (ii) a signature by a registered actor key and (iii) a confirmation signed by a verifier key that no agent principal holds.
@@ -79,6 +92,12 @@ Intent map (dependency order, no timelines):
 - **AC-4** `necessary` `asserted` — Before Periapsis declares 1.0, every child intent is `realized`, or `deferred`/`abandoned` with a recorded reason.
 - **AC-5** `necessary` `empirical` — Any content: with no content layer enabled, every `praps` command succeeds on a repository whose files mix source code, natural-language text, assembly, binaries and random bytes, and snapshotting that repository gives the same object ids with and without layers enabled.
   - Threshold: 100% of commands, over the conformance suite of [INT-0034](INT-0034-any-content.md).
+- **AC-6** `necessary` `empirical` — Scale: a thousand agents work on one project at once, none waiting for another and nothing lost, and the cost of each command follows the size of its own change.
+  - Threshold: AC-1 to AC-8 of [INT-0035](INT-0035-scale-and-asynchrony.md).
+- **AC-7** `necessary` `empirical` — Speed: at equal durability `praps` is faster than Git and Jujutsu on every workload of the suite, on Windows and on Linux.
+  - Threshold: AC-2 of [INT-0036](INT-0036-measured-speed.md).
+- **AC-8** `necessary` `empirical` — Use: a person or an agent who has never used Periapsis learns every command from `praps` itself, and every refusal says what to do next.
+  - Threshold: AC-2 and AC-4 of [INT-0037](INT-0037-command-set.md).
 
 ## Rationale
 - Each surveyed system holds part of the design and none has an agent-native
@@ -129,9 +148,23 @@ Intent map (dependency order, no timelines):
   experiments are targets, not established results: that code is not in this
   repository. Each owning intent's sprint re-implements the measurement and
   records its own figure before a criterion that cites one can be certified.
+- Since the owner's direction of 2026-11-09 the order of work inside the
+  phases changes. Two things come before further single-user features:
+  - the canonical merge of op heads
+    ([INT-0010](INT-0010-lock-free-concurrency.md)), because until it exists
+    two agents cannot share a repository;
+  - derived data and the packed storage form
+    ([INT-0013](INT-0013-derived-data.md),
+    [INT-0008](INT-0008-compact-history-storage.md)), because until they
+    exist every command costs in proportion to the whole history.
+- The provisional formats freeze later than first planned: a view must have
+  shared structure before the Phase 1 exit gate
+  ([INT-0006](INT-0006-format-v1.md)).
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 Part I and the root README).
 - 2026-10-31: revised while `proposed`, after the Sprint 0 plan critique: research-report risk recorded in Consequences — quoted prototype figures are targets until re-measured.
 - 2026-11-01: revised while `proposed`, on owner direction: the command is `praps`, short for periapsis, replacing `peri` ([INT-0003](INT-0003-engineering-baseline.md)).
 - 2026-11-01: revised while `proposed`, on owner direction: Periapsis must work with almost any development system, from natural language to binaries and languages no human reads. The Intent states that the core never needs to understand content and that a confirmation records the checks policy names for each kind of content, so content no tool can run still reaches `public`; Boundaries gain an any-content rule; the intent map adds [INT-0034](INT-0034-any-content.md) under Foundations; AC-5 is added.
+- 2026-11-10: revised while `proposed`, on owner direction of 2026-11-09 (Sprint 6 Plan): Periapsis must serve thousands of agents at once, decentralised and asynchronous, be faster than any version control in use, and have a far more intuitive command set and UI. The Intent names the three aims. The intent map gains [INT-0035](INT-0035-scale-and-asynchrony.md), [INT-0036](INT-0036-measured-speed.md), [INT-0037](INT-0037-command-set.md) and [INT-0038](INT-0038-live-view.md), and also [INT-0032](INT-0032-intent-revisions-and-review-flags.md) and [INT-0033](INT-0033-intent-topics-and-dependencies.md), which were created after the map and never added to it. Phase 5 is renamed, since scale is no longer a phase. AC-6 to AC-8 are added, and Consequences record the new order of work.
+- 2026-11-10: revised while `proposed` (the owner's sign-offs, given after Sprint 6 closed; `editorial`: no criterion changes): AC-1 signed by the project owner: the decomposition into the child intents of the intent map as it stood, 38 chapters ([sign-offs of 2026-11-10](../sprints/s6/sign-offs.md)).

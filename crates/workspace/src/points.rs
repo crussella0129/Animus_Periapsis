@@ -46,4 +46,9 @@ pub const POINTS: &[Point] = &[
         unit: "workspace::resume",
         sprint: 3,
     },
+    Point {
+        name: "workspace.describe.committed",
+        unit: "workspace::describe",
+        sprint: 6,
+    },
 ];

@@ -20,7 +20,7 @@ pointer file: the op heads are the valid ops that no other valid op names as
 a parent, recomputed from `ops/` whenever they are needed.
 
 Files named `tmp-<16 hex digits>` are files being written. A crash can leave
-one behind; nothing reads them, and `praps fsck` lists them as harmless.
+one behind; nothing reads them, and `praps verify` lists them as harmless.
 
 ## The write sequence
 
@@ -60,7 +60,7 @@ the put checked was present, is durable too. `put_object` needs no separate
 re-sync, even for a reference another writer has not acknowledged. Closure
 then holds by induction over acknowledged puts. An object that a crash
 leaves behind unacknowledged, with a reference lost, is reachable from no op,
-and `fsck` lists it as a leftover, not as corruption.
+and `praps verify` lists it as a leftover, not as corruption.
 
 `commit_op` writes in another directory, `ops/`, so it re-syncs the view
 with `objects/` before writing the op. It also re-syncs each parent op with
@@ -154,15 +154,17 @@ Evidence:
 - Only NTFS on a local disk (Windows) and ext4 (WSL Ubuntu) are tested. ReFS,
   FAT, network shares (where a directory flush fails with an error) and
   macOS are not.
-- Concurrent writers in separate processes (INT-0007 AC-5) are not yet
-  tested. Two writers in one process are. The second commits an op at a fixed
-  boundary: right after the first renames its view into place, in even seeds,
-  or its op, in odd seeds, and before the first syncs that directory.
-- The simulator models a whole-system crash, in which everything not yet
-  durable is resolved at once. A process that dies while the system keeps
-  running leaves its unsynced changes visible to the next process; the store
-  answers that case by design (`open` syncs the layout, and every write
-  re-syncs what it depends on) rather than by a simulated run.
+- Concurrent writers (INT-0007 AC-5) are tested in two ways since Sprint 4,
+  and neither is a proof. On the simulator, four processes write under a
+  seeded scheduler, with kills and crashes ([Simulation](simulation.md));
+  the interleavings tried are those the seeds draw. On the real filesystem,
+  four operating-system processes commit to one store
+  (`crates/store/tests/real_writers.rs`); there the kernel decides the
+  interleavings, so that run is evidence and cannot be replayed.
+- A process that dies while the system keeps running leaves its unsynced
+  changes visible to the next process. The simulator runs that case too
+  since Sprint 4, as a kill, in the four-writer scenario. No test kills a
+  real process in the middle of a write.
 
 A reviewer accepting INT-0004 AC-5 accepts these assumptions with the
 evidence above.

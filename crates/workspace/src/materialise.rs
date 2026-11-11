@@ -103,6 +103,23 @@ fn listing_key(name: &sim::Name) -> String {
     }
 }
 
+/// Directory `dir`'s entries by [`listing_key`], from one scan, or `None`
+/// where no directory is there.
+fn listing(fs: &impl Fs, root: &Path, dir: &str) -> io::Result<Option<BTreeMap<String, Kind>>> {
+    match fs.scan(&on_disk(root, dir)) {
+        Ok(entries) => Ok(Some(
+            entries
+                .into_iter()
+                .map(|entry| (listing_key(&entry.name), entry.kind))
+                .collect(),
+        )),
+        Err(error) if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Reads the disk lazily, one directory scan each.
 struct Disk<'a, F: Fs> {
     fs: &'a F,
@@ -115,20 +132,7 @@ struct Disk<'a, F: Fs> {
 impl<F: Fs> Disk<'_, F> {
     fn listing(&mut self, dir: &str) -> io::Result<Option<&BTreeMap<String, Kind>>> {
         if !self.dirs.contains_key(dir) {
-            let listed = match self.fs.scan(&on_disk(self.root, dir)) {
-                Ok(entries) => Some(
-                    entries
-                        .into_iter()
-                        .map(|entry| (listing_key(&entry.name), entry.kind))
-                        .collect(),
-                ),
-                Err(error)
-                    if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) =>
-                {
-                    None
-                }
-                Err(error) => return Err(error),
-            };
+            let listed = listing(self.fs, self.root, dir)?;
             self.dirs.insert(dir.to_owned(), listed);
         }
         Ok(self.dirs[dir].as_ref())
@@ -394,21 +398,7 @@ pub fn remove_temporaries(fs: &impl Fs, root: &Path, from: &Tree, target: &Tree)
         }
         let (dir, name) = split(&tmp);
         if !listings.contains_key(dir) {
-            let listed = match fs.scan(&on_disk(root, dir)) {
-                Ok(entries) => Some(
-                    entries
-                        .into_iter()
-                        .map(|entry| (listing_key(&entry.name), entry.kind))
-                        .collect(),
-                ),
-                Err(error)
-                    if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) =>
-                {
-                    None
-                }
-                Err(error) => return Err(error),
-            };
-            listings.insert(dir.to_owned(), listed);
+            listings.insert(dir.to_owned(), listing(fs, root, dir)?);
         }
         let is_file = listings[dir]
             .as_ref()
@@ -451,9 +441,19 @@ fn unchanged(fs: &impl Fs, path: &Path, from: Option<&File>, alg: HashAlg) -> io
     }
 }
 
+/// Whether the write must put a file at `dir` or at a path above it: the
+/// file could then not be put while `dir` stays a directory.
+fn needed_for_a_file(dir: &str, plan: &Plan) -> bool {
+    plan.write.iter().any(|(path, _, _)| {
+        dir.strip_prefix(path.as_str())
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    })
+}
+
 /// Applies `plan`: steps 1 to 5 of "Materialise". `content` gives each
 /// blob's bytes. Returns a note for each path left because it changed after
-/// the plan. The caller then drops the record and syncs `.praps`.
+/// the plan, and for each emptied directory that could not be removed and
+/// was left. The caller then drops the record and syncs `.praps`.
 pub fn apply(
     fs: &impl Fs,
     root: &Path,
@@ -498,7 +498,35 @@ pub fn apply(
             Err(error) => return Err(error),
         }
         fs.sync_dir(&path)?;
-        fs.remove_dir(&path)?;
+        match fs.remove_dir(&path) {
+            Ok(()) => {}
+            // Gone since it was listed: that is what was wanted, as for a
+            // file in step 1.
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            // A crash is not a refusal: the write stops, and resume
+            // finishes it.
+            Err(error) if sim::is_crash(&error) => return Err(error),
+            // The directory cannot be removed: another process stands in
+            // it, say. Where a file is due at its path, or at a path above
+            // it, the write cannot go on. It stops with the record kept,
+            // and a later command finishes it once the directory can go.
+            Err(error) if needed_for_a_file(dir, plan) => {
+                return Err(io::Error::new(
+                    error.kind(),
+                    format!(
+                        "{dir}: the directory could not be removed, and the write must put a file there or above it ({error})"
+                    ),
+                ));
+            }
+            // Anywhere else the directory is left. Directories are not
+            // tracked, so it changes nothing a snapshot records.
+            Err(error) => {
+                notes.push(format!(
+                    "{dir}: the directory could not be removed, and was left ({error})"
+                ));
+                continue;
+            }
+        }
         fs.sync_dir(&on_disk(root, split(dir).0))?;
     }
     // 3. Create the missing directories, shallowest first.

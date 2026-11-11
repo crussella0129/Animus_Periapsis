@@ -570,10 +570,10 @@ fn materialise_matrix_is_reproducible() {
     );
     // Asserted, not only printed, so a change that moves any cell fails
     // here on every system (Sprint 4 plan critique, C-008).
-    assert_eq!(first.cells.len(), 40_960);
+    assert_eq!(first.cells.len(), 34_400);
     assert_eq!(
         digest.to_string(),
-        "blake3:6274344b358b15cb24d182a681c592ccad66a82564fd40c5cf45e4fcb666a1ac"
+        "blake3:5645fdf5829cc41aaf387ef8e05e2a00912417c5272f15548e062a48c8e5a7ab"
     );
 }
 

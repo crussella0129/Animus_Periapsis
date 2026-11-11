@@ -3,10 +3,10 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0014
 - **State:** active
-- **Work evidence:** [Sprint 2 T-005 build plan](../sprints/s2/sprint-plans/build-plan.md#t-005-the-workspace-crate-init-snapshot-new-and-status), [Sprint 2 T-006 build plan](../sprints/s2/sprint-plans/build-plan.md#t-006-praps-init-praps-new-and-praps-status), [Sprint 2 T-007 build plan](../sprints/s2/sprint-plans/build-plan.md#t-007-snapshot-crash-scenario-and-edit-corpora), [Sprint 2 T-008 build plan](../sprints/s2/sprint-plans/build-plan.md#t-008-working-copy-spec-readme-credits-and-backlog), [Sprint 3 T-004 build plan](../sprints/s3/sprint-plans/build-plan.md#t-004-specify-writing-the-working-copy-undo-restore-and-log), [Sprint 3 T-006 build plan](../sprints/s3/sprint-plans/build-plan.md#t-006-materialise-the-working-copy-record-and-resume), [Sprint 3 T-009 build plan](../sprints/s3/sprint-plans/build-plan.md#t-009-reversibility-and-hazard-corpora-the-materialise-crash-scenario-and-the-extended-edit-corpus), [Sprint 4 T-006 build plan](../sprints/s4/sprint-plans/build-plan.md#t-006-plant-and-register-points-in-store-and-workspace-and-move-the-two-writer-race-to-a-named-point), [Sprint 4 T-009 build plan](../sprints/s4/sprint-plans/build-plan.md#t-009-report-skipped-names-from-every-command-that-snapshots-backlog-t-019)
-- **Completion evidence:** [Sprint 2 T-005 completion](../work/completed-tasks.md#t-005-sprint-2), [Sprint 2 T-006 completion](../work/completed-tasks.md#t-006-sprint-2), [Sprint 2 T-007 completion](../work/completed-tasks.md#t-007-sprint-2), [Sprint 2 T-008 completion](../work/completed-tasks.md#t-008-sprint-2)
+- **Work evidence:** [Sprint 2 T-005 build plan](../sprints/s2/sprint-plans/build-plan.md#t-005-the-workspace-crate-init-snapshot-new-and-status), [Sprint 2 T-006 build plan](../sprints/s2/sprint-plans/build-plan.md#t-006-praps-init-praps-new-and-praps-status), [Sprint 2 T-007 build plan](../sprints/s2/sprint-plans/build-plan.md#t-007-snapshot-crash-scenario-and-edit-corpora), [Sprint 2 T-008 build plan](../sprints/s2/sprint-plans/build-plan.md#t-008-working-copy-spec-readme-credits-and-backlog), [Sprint 3 T-004 build plan](../sprints/s3/sprint-plans/build-plan.md#t-004-specify-writing-the-working-copy-undo-restore-and-log), [Sprint 3 T-006 build plan](../sprints/s3/sprint-plans/build-plan.md#t-006-materialise-the-working-copy-record-and-resume), [Sprint 3 T-009 build plan](../sprints/s3/sprint-plans/build-plan.md#t-009-reversibility-and-hazard-corpora-the-materialise-crash-scenario-and-the-extended-edit-corpus), [Sprint 4 T-006 build plan](../sprints/s4/sprint-plans/build-plan.md#t-006-plant-and-register-points-in-store-and-workspace-and-move-the-two-writer-race-to-a-named-point), [Sprint 4 T-009 build plan](../sprints/s4/sprint-plans/build-plan.md#t-009-report-skipped-names-from-every-command-that-snapshots-backlog-t-019), [Sprint 6 T-003 build plan](../sprints/s6/sprint-plans/build-plan.md#t-003-a-command-reads-the-op-log-once), [Sprint 6 T-004 build plan](../sprints/s6/sprint-plans/build-plan.md#t-004-open-checks-the-op-log-before-it-resumes-an-interrupted-write), [Sprint 6 T-005 build plan](../sprints/s6/sprint-plans/build-plan.md#t-005-undo-and-restore-scan-the-working-copy-once), [Sprint 6 T-008 build plan](../sprints/s6/sprint-plans/build-plan.md#t-008-commands-find-their-working-copy-from-any-directory-inside-it), [Sprint 6 T-010 build plan](../sprints/s6/sprint-plans/build-plan.md#t-010-describe-sets-the-description-of-the-current-change), [Sprint 6 T-012 build plan](../sprints/s6/sprint-plans/build-plan.md#t-012-a-write-leaves-a-directory-it-cannot-remove), [Sprint 6 T-013 build plan](../sprints/s6/sprint-plans/build-plan.md#t-013-readme-specs-and-credits)
+- **Completion evidence:** [Sprint 2 T-005 completion](../work/completed-tasks.md#t-005-sprint-2), [Sprint 2 T-006 completion](../work/completed-tasks.md#t-006-sprint-2), [Sprint 2 T-007 completion](../work/completed-tasks.md#t-007-sprint-2), [Sprint 2 T-008 completion](../work/completed-tasks.md#t-008-sprint-2), [Sprint 6 T-003 completion](../work/completed-tasks.md#t-003-sprint-6), [Sprint 6 T-004 completion](../work/completed-tasks.md#t-004-sprint-6), [Sprint 6 T-005 completion](../work/completed-tasks.md#t-005-sprint-6), [Sprint 6 T-008 completion](../work/completed-tasks.md#t-008-sprint-6), [Sprint 6 T-010 completion](../work/completed-tasks.md#t-010-sprint-6), [Sprint 6 T-012 completion](../work/completed-tasks.md#t-012-sprint-6), [Sprint 6 T-013 completion](../work/completed-tasks.md#t-013-sprint-6)
 - **Code evidence:** [crates/workspace](../../crates/workspace/src/lib.rs), [praps](../../crates/praps/src/main.rs)
-- **Test evidence:** [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md), [Sprint 3 test report](../sprints/s3/sprint-tests/test-report.md), [Sprint 4 test report](../sprints/s4/sprint-tests/test-report.md)
+- **Test evidence:** [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md), [Sprint 3 test report](../sprints/s3/sprint-tests/test-report.md), [Sprint 4 test report](../sprints/s4/sprint-tests/test-report.md), [Sprint 6 test report](../sprints/s6/sprint-tests/test-report.md)
 - **Documentation evidence:** [The working copy](../spec/working-copy.md)
 
 ## Intent
@@ -25,6 +25,16 @@ a checkout). A workspace is the "lane" of
 [INT-0021](INT-0021-lanes-and-review-requests.md), replacing per-lane clones and
 git worktrees.
 
+Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
+[INT-0037](INT-0037-command-set.md):
+- **A workspace is cheap.** Making one writes one view entry and no
+  working-copy file, so every agent task can have its own. The API-only form
+  is the usual one for an agent.
+- **Nothing unchanged is read.** A command reads no file whose metadata is
+  unchanged since the last snapshot.
+- **Anywhere inside.** A command run in any directory of a working copy acts
+  on that working copy.
+
 ## Acceptance criteria
 - **AC-1** `necessary` `empirical` — Auto-snapshot: every file modification made between two commands is captured in the working-copy change by the second command.
   - Threshold: 0 lost edits over a randomized edit-and-command corpus, on Windows and Linux.
@@ -33,8 +43,14 @@ git worktrees.
   - Threshold: 0 violations in simulation.
 - **AC-4** `supporting` `empirical` — An agent can create and describe a change touching N files through an API-only workspace without materialising a checkout.
 - **AC-5** `supporting` `empirical` — `status` on an unchanged working copy of 100,000 files completes within a time budget that is fixed before the first measurement and recorded in this chapter.
+  - Threshold: the budget, fixed on 2026-11-10, is workload W2 of [INT-0036](INT-0036-measured-speed.md): below the faster of Git and Jujutsu on the same tree and machine at equal durability (AC-2 there), with 100 ms as the aim (AC-5 there).
 - **AC-6** `necessary` `empirical` — A conflicted file that no line layer reads is written as one of its sides and never with conflict markers; it stays conflicted while its bytes are unchanged, and once they change, the bytes found are recorded as its resolution.
   - Threshold: 100% over a corpus of conflicts in binaries, random bytes and files in a synthetic language.
+- **AC-7** `necessary` `empirical` — A thousand workspaces: 1,000 workspaces over one repository operate at once in simulation without clones, duplicated objects or lost ops, and making a workspace writes the same number of bytes, within a factor of 2, whether 10 or 10,000 already exist.
+  - Threshold: 0 violations ([INT-0035](INT-0035-scale-and-asynchrony.md) AC-3 and AC-4).
+- **AC-8** `necessary` `empirical` — Nothing unchanged is read: a command on a working copy in which no file's metadata has changed since the last snapshot reads the content of no file.
+  - Sample: working copies of 10 and 100,000 files in the simulator.
+  - Threshold: 0 reads of file content.
 
 ## Rationale
 - Snapshot-before-overwrite is what makes the history complete (R1-E2,
@@ -72,10 +88,10 @@ git worktrees.
 - Windows has no executable bit, so a snapshot taken there keeps the mode the
   working-copy change, or else its parent, last recorded for a tracked file,
   and records a new file as regular.
-- Every command that opens the working copy snapshots it first. `fsck`
-  checks the store read-only and `init` on an existing repository writes
-  nothing, so neither snapshots; an edit made before them is captured by the
-  next command that does. AC-1's "second command" means the next command
+- Every command that opens the working copy snapshots it first. `verify`
+  (named `fsck` before Sprint 6) checks the store read-only and `init` on an
+  existing repository writes nothing, so neither snapshots; an edit made
+  before them is captured by the next command that does. AC-1's "second command" means the next command
   that opens the working copy.
 - `new` starts a fresh working-copy change, with a newly minted change ID,
   on top of the current one; it writes no working-copy file. Its rewriting
@@ -94,8 +110,13 @@ git worktrees.
   the stat cache, content is kept only for blobs the store does not have yet.
 
 - Every command that opens the working copy resumes an interrupted write
-  before anything else, through the record in `.praps/`; `init` never resumes, so a
-  repeated `init` still writes nothing. A write uses deterministic temporary
+  before it does anything of its own, through the record in `.praps/`; `init`
+  never resumes, so a repeated `init` still writes nothing. From Sprint 6 it
+  first checks that every op file is whole, and stops if one is not, leaving
+  the record in place (T-004). Before, resume looked for the record's target
+  among the valid ops only. A target whose file was damaged then looked like
+  a write that had never begun, and the record was dropped, though files
+  might already have been written. A write uses deterministic temporary
   names, `.praps-tmp-<n>`, which exist only while the record names them. No
   name is silently ignored: a user's file with that prefix is tracked like any
   other (Sprint 3 plan critique, C-012, C-013). While a record exists, its
@@ -107,6 +128,47 @@ git worktrees.
   still has a small gap: an edit saved between that read and the next
   syscall can be lost, and the mode is not re-read. Closing the gap would
   need an atomic compare-and-replace. The spec states the window.
+- What the missing stat cache costs was measured in Sprint 6
+  ([research](../sprints/s6/sprint-research/research-report.md)): `status`
+  with nothing changed on 10,000 files took 148 ms on Linux and 1,188 ms on
+  Windows, about fifteen times Git's time on each. AC-8 is the rule that
+  removes that cost, and AC-5 the budget it must meet.
+- From Sprint 6 a command reads the op log once and keeps what it derives
+  while it runs (T-003). Before, it read the whole log three to six times.
+  A command starts from the log as it is on disk when it begins, so it sees
+  what another process wrote before then. There is one exception: the first
+  command on a workspace just opened uses the reading that opening made, so
+  that a `praps` process, which opens and runs one command, reads the log
+  once. An operation another process writes between the opening and that
+  command is treated as one written while the command ran: both stand, the
+  log has two heads, and the next command says so.
+- From Sprint 6 `praps` finds the working copy from any directory inside it,
+  and `init` refuses to make a repository inside one (T-008). Without that,
+  `praps status` in a subdirectory said the directory was not a repository
+  and suggested `praps init`, which would have nested one.
+- The top of a working copy is the directory that holds `.praps/store`. A
+  directory named `.praps` below the top that holds no store is tracked like
+  any other directory. One that holds a store is the top of a repository of
+  its own: commands run inside it act on it, and the working copy around it
+  still tracks its files as content. What should happen there is not decided
+  (backlog T-031).
+- From Sprint 6 `describe` sets the working-copy change's description
+  (T-010). A snapshot carries the description forward, as it carries the
+  change ID.
+- A write removes each directory it emptied, if it can. Running commands
+  from inside the working copy makes one case common: the directory a shell
+  stands in is one the write empties. From Sprint 6 a removal that fails
+  does not stop the write (Sprint 6's T-012). The directory is left, with a note.
+  Directories are not tracked, so the working copy still equals the target.
+  The one exception is a file the write must put at that path or at a path
+  above it, which a directory left there would keep it from putting: there
+  the write stops, as before, and the next command finishes it once the
+  directory can be removed. That task tests a directory that is another
+  process's current directory on Windows and on Linux, and records what
+  each system does. Where a system removes it, the shell that stood there
+  has no current directory, and a command run from it says so (T-008).
+  Whether a write should spare the directory a command was started in is
+  not decided (backlog T-031).
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §4 Phase 1 and R5 §C.1).
@@ -120,3 +182,8 @@ git worktrees.
 - 2026-11-07: revised while `active` (Sprint 3 plan critique, round 1): Consequences record that every command except `init` resumes an interrupted write, and that temporary names are deterministic and never ignored.
 - 2026-11-07: revised while `active` (Sprint 3 plan critique, round 2): every command that opens the working copy resumes, not only those that write it.
 - 2026-11-07: revised while `active` (Sprint 3 plan critique, round 3): temporary names belong to `praps` while a record exists, and every way resume drops a record removes them.
+- 2026-11-10: revised while `active` (Sprint 6 Plan, on owner direction of 2026-11-09 for thousands of agents, speed and a more intuitive command set): the Intent adds three rules (a workspace is cheap, nothing unchanged is read, a command works anywhere inside a working copy). AC-5's budget is fixed by reference to [INT-0036](INT-0036-measured-speed.md), and AC-7 and AC-8 are added. Consequences record Sprint 6's measurements and its tasks in this chapter's code.
+- 2026-11-10: revised while `active` (Sprint 6 plan critique, round 1, C-001 and C-008; `semantic`): Consequences now say that opening checks the op log before it resumes, and why; that the first command after opening uses the reading opening made, and what follows if another process writes in between; and what marks the top of a working copy, with a `.praps` directory below the top left as it is today.
+- 2026-11-10: revised while `active` (Sprint 6 plan critique, round 2, C-005; `semantic`): Consequences record that a write leaves a directory it emptied and cannot remove, with a note, unless the target has a file at that path; and that a command run from a directory that no longer exists says so.
+- 2026-11-10: revised while `active` (Sprint 6 plan critique, round 3, C-001; `semantic`): the exception to leaving a directory covers a file due at a path above it as well as at the path itself.
+- 2026-11-10: kept `active` at the close of Sprint 6. AC-1 is kept through one read of the op log for each command, the check of the log before resume, one scan for `undo` and `restore`, `describe`, the search for the working copy, and a write that leaves a directory it cannot remove. Its other criteria are as they were: several workspaces and the stat cache are not built.

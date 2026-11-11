@@ -109,7 +109,11 @@ fn open_without_ops_fails() {
     fs.create_dir(Path::new(ROOT)).unwrap();
     let error = Workspace::open(&fs, Path::new(ROOT), 0).err().unwrap();
     assert!(matches!(error, Error::NotInitialised(_)), "{error}");
-    assert!(error.to_string().contains("praps init"));
+    // The message says what is wrong; what to do is `praps`'s hint.
+    assert_eq!(
+        error.to_string(),
+        "repo is not an initialised Periapsis repository"
+    );
 }
 
 /// Two ops with the same parent: every command stops, names both heads and
@@ -717,7 +721,8 @@ fn invalid_op_files_are_refused() {
     fs.overwrite(&op_path, &bytes).unwrap();
     let error = ws.snapshot().unwrap_err();
     assert!(
-        matches!(&error, Error::Corrupt(what) if what.contains("praps fsck")),
+        matches!(&error, Error::Corrupt(what)
+            if what == "1 of 2 op files do not hash to their names or do not decode"),
         "{error}"
     );
     let error = Workspace::init(Arc::clone(&fs), Path::new(ROOT), 24)
@@ -835,4 +840,432 @@ fn ignore_strips_cr_before_an_escaped_space() {
     put(&fs, "x", b"kept");
     ws.snapshot().unwrap();
     assert_eq!(paths(&ws.working_copy().unwrap().2), [".gitignore", "x"]);
+}
+
+// ------------------------------------------- reading the op log (Sprint 6 T-003)
+
+const OPS: &str = "repo/.praps/store/ops";
+
+/// The listings of `ops/` and the reads of op files in a trace.
+fn op_log_calls(trace: &[String]) -> (usize, Vec<String>) {
+    let lists = trace
+        .iter()
+        .filter(|line| *line == &format!("list {OPS}"))
+        .count();
+    let reads = trace
+        .iter()
+        .filter_map(|line| line.strip_prefix(&format!("read {OPS}/")))
+        .map(str::to_owned)
+        .collect();
+    (lists, reads)
+}
+
+/// A repository with five ops: init, three snapshots and a `new`. Returns
+/// its filesystem and the view an early op left, to restore to.
+fn five_ops(seed: u64) -> (Arc<SimFs>, hash::HashRef) {
+    let mut ws = fresh(seed);
+    let fs = fs_of(&ws);
+    put(&fs, "keep", b"k");
+    put(&fs, "a", b"1");
+    ws.snapshot().unwrap();
+    let early = {
+        let ops = ws.store().ops().unwrap();
+        let head = *store::heads_of(&ops).first().unwrap();
+        ops[&head].view
+    };
+    put(&fs, "a", b"2");
+    ws.snapshot().unwrap();
+    ws.new_change().unwrap();
+    put(&fs, "b", b"1");
+    ws.snapshot().unwrap();
+    assert_eq!(ws.store().ops().unwrap().len(), 5);
+    (fs, early)
+}
+
+/// The op files there now, by name, sorted.
+fn op_files(fs: &SimFs) -> Vec<String> {
+    let mut names = fs.list(Path::new(OPS)).unwrap();
+    names.sort();
+    names
+}
+
+/// `open` and one command read the op log once between them: `ops/` is
+/// listed twice (the store lists it to see that it exists, and the log is
+/// read with one listing), each op file there at the start is read once,
+/// and each op the command commits costs two more reads, its parent and its
+/// own name (Sprint 6 T-003).
+#[test]
+fn open_and_one_command_read_the_op_log_once() {
+    type Command = fn(&mut Workspace<Arc<SimFs>>, &SimFs, &hash::HashRef);
+    let commands: [(&str, Command, usize); 11] = [
+        (
+            "snapshot, nothing to record",
+            |ws, _, _| drop(ws.snapshot().unwrap()),
+            0,
+        ),
+        (
+            "snapshot of an edit",
+            |ws, fs, _| {
+                put(fs, "c", b"new");
+                assert!(ws.snapshot().unwrap().op.is_some());
+            },
+            1,
+        ),
+        ("status", |ws, _, _| drop(ws.status().unwrap()), 0),
+        ("new_change", |ws, _, _| _ = ws.new_change().unwrap(), 1),
+        ("ops", |ws, _, _| drop(ws.ops().unwrap()), 0),
+        ("changes", |ws, _, _| drop(ws.changes().unwrap()), 0),
+        (
+            "describe",
+            |ws, _, _| assert!(ws.describe(b"why").unwrap().op.is_some()),
+            1,
+        ),
+        (
+            "describe, the text it has",
+            |ws, _, _| assert!(ws.describe(b"").unwrap().op.is_none()),
+            0,
+        ),
+        ("undo", |ws, _, _| _ = ws.undo().unwrap(), 1),
+        (
+            "restore",
+            |ws, _, _| {
+                let first = ws.store().ops().unwrap();
+                let root = first
+                    .iter()
+                    .find(|(_, op)| op.parents.is_empty())
+                    .map(|(id, _)| id.to_string())
+                    .unwrap();
+                ws.restore(&root).unwrap();
+            },
+            1,
+        ),
+        (
+            "restore_view",
+            |ws, _, early| _ = ws.restore_view(early).unwrap(),
+            1,
+        ),
+    ];
+    for (name, command, commits) in commands {
+        let (fs, early) = five_ops(40);
+        let at_start = op_files(&fs);
+        assert_eq!(at_start.len(), 5);
+        let before = fs.trace().len();
+        let mut ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 41).unwrap();
+        let opened = fs.trace().len();
+        command(&mut ws, &fs, &early);
+        let trace = fs.trace();
+        // `restore` looks up the root op through the store, which is the
+        // test's own read: the command's calls are counted from after it.
+        let (lists, mut reads) = if name == "restore" {
+            let own = trace[opened..]
+                .iter()
+                .position(|line| *line == format!("list {OPS}"))
+                .map(|at| opened + at)
+                .unwrap();
+            let after_own = own + 1 + at_start.len();
+            let (open_lists, mut open_reads) = op_log_calls(&trace[before..opened]);
+            let (more_lists, more_reads) = op_log_calls(&trace[after_own..]);
+            open_reads.extend(more_reads);
+            (open_lists + more_lists, open_reads)
+        } else {
+            op_log_calls(&trace[before..])
+        };
+        assert_eq!(lists, 2, "{name}: listings of ops/");
+        let committed: Vec<String> = op_files(&fs)
+            .into_iter()
+            .filter(|file| !at_start.contains(file))
+            .collect();
+        assert_eq!(committed.len(), commits, "{name}: ops committed");
+        // Each op file there at the start is read once to load the log. A
+        // commit reads its parent once more, and its own name once.
+        let mut expected = at_start.clone();
+        let mut heads: Vec<String> = Vec::new();
+        for new in &committed {
+            let parent = ws.store().ops().unwrap()[&store::names::parse_name(new).unwrap()]
+                .parents
+                .first()
+                .map(store::names::file_name)
+                .unwrap();
+            heads.push(parent);
+            expected.push(new.clone());
+        }
+        expected.extend(heads);
+        expected.sort();
+        reads.sort();
+        // The reads the lookup above made through `ws.store().ops()` came
+        // after `trace` was taken, so they are not in `reads`.
+        assert_eq!(reads, expected, "{name}: reads under ops/");
+    }
+}
+
+/// A later command on the same workspace, and the first on a workspace
+/// `init` returned, each read the op log once more: one listing and one
+/// read of each op file (Sprint 6 T-003).
+#[test]
+fn a_later_command_reads_the_op_log_once_more() {
+    let (fs, _) = five_ops(42);
+    let mut ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 43).unwrap();
+    ws.status().unwrap();
+    for round in 0..2 {
+        let before = fs.trace().len();
+        ws.status().unwrap();
+        let (lists, mut reads) = op_log_calls(&fs.trace()[before..]);
+        assert_eq!(lists, 1, "round {round}");
+        reads.sort();
+        assert_eq!(reads, op_files(&fs), "round {round}");
+    }
+    // A later command that commits: it too lists `ops/` once and reads each
+    // op file once, all of it before its first write. The commit then reads
+    // its parent once more and its own name once, and nothing is read again
+    // after it (test critique C-008).
+    let at_start = op_files(&fs);
+    put(&fs, "later", b"edit");
+    let before = fs.trace().len();
+    assert!(ws.snapshot().unwrap().op.is_some());
+    let part = fs.trace()[before..].to_vec();
+    let (lists, mut reads) = op_log_calls(&part);
+    assert_eq!(lists, 1);
+    let first_write = part
+        .iter()
+        .position(|line| writes(std::slice::from_ref(line)).len() == 1)
+        .unwrap();
+    let (lists_at_start, mut reads_at_start) = op_log_calls(&part[..first_write]);
+    assert_eq!(lists_at_start, 1, "the listing comes before any write");
+    reads_at_start.sort();
+    assert_eq!(reads_at_start, at_start, "and so does each op file's read");
+    let committed: Vec<String> = op_files(&fs)
+        .into_iter()
+        .filter(|file| !at_start.contains(file))
+        .collect();
+    assert_eq!(committed.len(), 1);
+    let parent = ws.store().ops().unwrap()[&store::names::parse_name(&committed[0]).unwrap()]
+        .parents
+        .first()
+        .map(store::names::file_name)
+        .unwrap();
+    let mut expected = at_start.clone();
+    expected.push(parent);
+    expected.push(committed[0].clone());
+    expected.sort();
+    reads.sort();
+    assert_eq!(reads, expected);
+    // A workspace `init` returned keeps no state: its first command reads.
+    let mut ws = fresh(44);
+    let fs = fs_of(&ws);
+    let before = fs.trace().len();
+    ws.status().unwrap();
+    let (lists, reads) = op_log_calls(&fs.trace()[before..]);
+    assert_eq!(lists, 1);
+    assert_eq!(reads, op_files(&fs));
+}
+
+/// A second handle on the same store, as another process would hold.
+fn other_handle(fs: &Arc<SimFs>, seed: u64) -> Store<Arc<SimFs>> {
+    Store::open(
+        Arc::clone(fs),
+        Path::new("repo/.praps/store"),
+        HashAlg::DEFAULT,
+        seed,
+    )
+    .unwrap()
+}
+
+/// Commits, through `other`, one op over the single head whose view is the
+/// head's own. Returns the head it was committed over and the new op.
+fn commit_over_head(other: &mut Store<Arc<SimFs>>) -> (hash::HashRef, hash::HashRef) {
+    let ops = other.ops().unwrap();
+    let heads = store::heads_of(&ops);
+    assert_eq!(heads.len(), 1);
+    let head = *heads.first().unwrap();
+    let mut view = View::from_envelope(&other.get_object(&ops[&head].view).unwrap()).unwrap();
+    view.workspaces
+        .insert("other".to_owned(), view.workspaces["default"]);
+    let view = other.put_object(&view.to_envelope()).unwrap();
+    let new = other
+        .commit_op(&Operation {
+            parents: [head].into(),
+            view,
+        })
+        .unwrap();
+    (head, new)
+}
+
+/// The one case in which a command does not start from the log on disk:
+/// an op another handle commits between `open` and the first command. The
+/// command succeeds, both ops stand over the old head, and the next
+/// command says the log has two heads (INT-0014; Sprint 6 T-003).
+#[test]
+fn an_operation_written_after_open_leaves_two_heads() {
+    let (fs, _) = five_ops(45);
+    let mut ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 46).unwrap();
+    let (old_head, theirs) = commit_over_head(&mut other_handle(&fs, 47));
+    put(&fs, "mine", b"edit");
+    let ours = ws.snapshot().unwrap().op.expect("the edit is recorded");
+    let ops = ws.store().ops().unwrap();
+    assert_eq!(ops.len(), 7);
+    for id in [ours, theirs] {
+        assert_eq!(
+            ops[&id].parents.iter().collect::<Vec<_>>(),
+            [&old_head],
+            "both stand over the head `open` read"
+        );
+    }
+    let before = fs.snapshot();
+    let error = ws.status().unwrap_err();
+    let mut expected = vec![ours, theirs];
+    expected.sort();
+    assert!(
+        matches!(&error, Error::SeveralHeads(heads) if *heads == expected),
+        "{error}"
+    );
+    assert_eq!(fs.snapshot(), before, "the stopped command wrote nothing");
+}
+
+/// After a command has finished, the next one starts from the log on disk:
+/// an op another handle committed over the head is the head it builds on
+/// (Sprint 6 T-003).
+#[test]
+fn the_next_command_builds_on_another_handles_op() {
+    let (fs, _) = five_ops(48);
+    let mut ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 49).unwrap();
+    ws.status().unwrap();
+    let (_, theirs) = commit_over_head(&mut other_handle(&fs, 50));
+    put(&fs, "mine", b"edit");
+    let ours = ws.snapshot().unwrap().op.expect("the edit is recorded");
+    let ops = ws.store().ops().unwrap();
+    assert_eq!(ops[&ours].parents.iter().collect::<Vec<_>>(), [&theirs]);
+    assert_eq!(store::heads_of(&ops).len(), 1);
+    // The other handle's view entry is kept by the snapshot that follows it.
+    let view = View::from_envelope(&ws.store().get_object(&ops[&ours].view).unwrap()).unwrap();
+    assert!(view.workspaces.contains_key("other"));
+}
+
+/// `working_copy` and `parent_tree` read the store each time: straight
+/// after `open`, with no command in between, they show what another handle
+/// has since committed, not the state `open` kept (Sprint 6 T-003).
+#[test]
+fn accessors_read_what_is_stored() {
+    let (fs, _) = five_ops(51);
+    let ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 52).unwrap();
+    let (opened_wc, ..) = ws.working_copy().unwrap();
+    let opened_parent = ws.parent_tree().unwrap();
+    // Another handle commits an op whose view names a new working-copy
+    // changeset: a child of the old one that deletes `b`.
+    let mut other = other_handle(&fs, 53);
+    let ops = other.ops().unwrap();
+    let head = *store::heads_of(&ops).first().unwrap();
+    let child = Changeset {
+        parents: vec![opened_wc],
+        change_id: [7; 16],
+        changes: [(path("b"), codec::Entry::Delete)].into(),
+        description: Vec::new(),
+    };
+    let child = other.put_object(&child.to_envelope()).unwrap();
+    let view = View {
+        heads: [child].into(),
+        workspaces: [("default".to_owned(), child)].into(),
+    };
+    let view = other.put_object(&view.to_envelope()).unwrap();
+    other
+        .commit_op(&Operation {
+            parents: [head].into(),
+            view,
+        })
+        .unwrap();
+
+    let (wc, change_id, tree) = ws.working_copy().unwrap();
+    assert_eq!(wc, child);
+    assert_eq!(change_id, [7; 16]);
+    assert_eq!(paths(&tree), ["a", "keep"]);
+    let parent = ws.parent_tree().unwrap();
+    assert_eq!(paths(&parent), ["a", "b", "keep"]);
+    assert_ne!(parent, opened_parent);
+}
+
+/// Each error says only what is wrong. Its text is fixed here, variant by
+/// variant, and none holds advice: what to do about it is said once, by
+/// the hint `praps` prints after it (Sprint 6 T-011; INT-0037 AC-4).
+#[test]
+fn messages_say_only_what_is_wrong() {
+    let id = |text: &[u8]| HashAlg::DEFAULT.hash(text);
+    let (one, two) = (id(b"one"), id(b"two"));
+    let hazard = workspace::hazard::Hazard {
+        path: path("dir/aux.txt"),
+        component: "aux.txt".to_owned(),
+        problem: workspace::hazard::Problem::Reserved("AUX".to_owned()),
+    };
+    let cases: Vec<(Error, String)> = vec![
+        (
+            Error::Io(std::io::Error::other("the disk said no")),
+            "the disk said no".to_owned(),
+        ),
+        (
+            Error::NotInitialised("project".into()),
+            "project is not an initialised Periapsis repository".to_owned(),
+        ),
+        (
+            Error::SeveralHeads(vec![one, two]),
+            format!("the op log has 2 heads, which cannot be merged yet: {one} {two}"),
+        ),
+        (
+            Error::Corrupt("view x: truncated".to_owned()),
+            "the repository is corrupt: view x: truncated".to_owned(),
+        ),
+        (
+            Error::Merge(one),
+            format!("changeset {one} has several parents; merges are not supported yet"),
+        ),
+        (
+            Error::Hazards(vec![hazard.clone()]),
+            format!(
+                "the working copy cannot be written on this filesystem; no file was changed:\n  {hazard}"
+            ),
+        ),
+        (
+            Error::Blocked(vec!["b: a directory is where a file must be written".to_owned()]),
+            "untracked entries are in the way, and no file was changed:\n  b: a directory is where a file must be written"
+                .to_owned(),
+        ),
+        (
+            Error::NothingToUndo,
+            "nothing to undo: the last op is the root op".to_owned(),
+        ),
+        (
+            Error::UnknownOp("3f".to_owned()),
+            "no op matches `3f`".to_owned(),
+        ),
+        (
+            Error::AmbiguousOp("3".to_owned(), vec![one, two]),
+            format!("`3` matches 2 ops:\n  {one}\n  {two}"),
+        ),
+    ];
+    // Every variant is here: this match has no catch-all arm, so a variant
+    // added to the crate must be named, and then counted below.
+    let name = |error: &Error| match error {
+        Error::Io(_) => "Io",
+        Error::NotInitialised(_) => "NotInitialised",
+        Error::SeveralHeads(_) => "SeveralHeads",
+        Error::Corrupt(_) => "Corrupt",
+        Error::Merge(_) => "Merge",
+        Error::Hazards(_) => "Hazards",
+        Error::Blocked(_) => "Blocked",
+        Error::NothingToUndo => "NothingToUndo",
+        Error::UnknownOp(_) => "UnknownOp",
+        Error::AmbiguousOp(..) => "AmbiguousOp",
+    };
+    let names: std::collections::BTreeSet<&str> =
+        cases.iter().map(|(error, _)| name(error)).collect();
+    assert_eq!(names.len(), 10, "{names:?}");
+    assert_eq!(cases.len(), 10);
+    for (error, text) in &cases {
+        let shown = error.to_string();
+        assert_eq!(&shown, text, "{}", name(error));
+        for advice in ["praps", "run ", "try again", "hint", "move them", "(run"] {
+            assert!(
+                !shown.contains(advice),
+                "{}: {shown:?} holds {advice:?}",
+                name(error)
+            );
+        }
+    }
 }

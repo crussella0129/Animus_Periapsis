@@ -136,6 +136,12 @@ flagged work is still right is a review decision, recorded like any other.
   revisions from editorial ones.
 - A broad semantic revision can flag much of the codebase. That is the intended
   effect: the review it asks for is the cost of changing what is wanted.
+- An agent should learn that its intent changed before it finishes, not at
+  review. Every replica therefore follows the Book's records, whatever else
+  it follows ([INT-0024](INT-0024-staged-sync.md)), and the review list is
+  kept up to date as derived data ([INT-0013](INT-0013-derived-data.md)), not
+  recomputed over the whole history for each question.
 
 ## Transition history
 - 2026-11-01: created as `proposed` (Sprint 0 Loop; owner direction given during the Sprint 0 Test phase).
+- 2026-11-10: revised while `proposed` (Sprint 6 Plan, on owner direction of 2026-11-09 for thousands of agents; `editorial`: no criterion changes): Consequences record that every replica follows the Book's records and that the review list is kept as derived data.

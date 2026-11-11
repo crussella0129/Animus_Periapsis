@@ -43,6 +43,8 @@ confirmed from a primary source.
 | Attestation statements and signing envelopes, as export formats | [in-toto](https://in-toto.io/), [DSSE](https://github.com/secure-systems-lab/dsse) | not verified; Apache-2.0 | INT-0016 |
 | Build provenance trust model (the signer of an evaluation must not be the evaluated party) | [SLSA](https://slsa.dev/) | not verified (specification) | INT-0016 |
 | Per-line AI attribution, as an optional export | Agent Trace (provenance format) | not verified | INT-0016 |
+| What `praps` says about itself: the command list when run alone, `help` under `-h` and `--help`, the nearest command for a mistyped word, and a refusal that says what to do next (`praps`) | [Command Line Interface Guidelines](https://clig.dev/) (licence read from its repository on 2026-11-10) | CC-BY-SA-4.0 (the guide's text; practice only, no text taken) | INT-0037 |
+| The name `verify` for the integrity check | [Mercurial](https://www.mercurial-scm.org/) (`hg verify`) | GPL-2.0-or-later (name only) | INT-0037 |
 | Agent interface protocol for `praps mcp` | [Model Context Protocol](https://modelcontextprotocol.io/) | not verified (specification) | INT-0022 |
 
 ## Designs evaluated and not adopted in core
@@ -52,6 +54,7 @@ confirmed from a primary source.
 | Commutative patch theory as the storage core | [Pijul](https://pijul.org/), Darcs | GPL-2.0-or-later | Deprioritised: no correctness gap observed (INT-0012) |
 | Content-defined chunking for every file | [Xet](https://github.com/huggingface/xet-core) (FastCDC) | Apache-2.0 | Optional extension only (INT-0008) |
 | Range-based set reconciliation as the sync protocol | [Negentropy](https://github.com/hoytech/negentropy) | MIT | Optional optimisation over head sets (INT-0024) |
+| A map whose stored form depends only on its contents, never on the order of edits (a Prolly tree), so two versions share storage and a comparison skips equal subtrees | [Dolt](https://github.com/dolthub/dolt) (licence read on 2026-11-10) | Apache-2.0 | Evaluated in Sprint 6 research for the view; the view's form is not chosen yet (INT-0006) |
 | CRDT record layer | Radicle collaborative objects | Apache-2.0 | Replaced by immutable events (INT-0017) |
 
 ## The owner's own projects

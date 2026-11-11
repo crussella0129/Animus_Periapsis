@@ -33,6 +33,41 @@ On a repository that already has an op, `init` writes nothing. Running it
 again therefore completes an interrupted `init`. Opening a repository makes
 `.praps` and the root durable in the same way.
 
+## Finding the working copy
+
+A directory is the **top** of a working copy when listing its `.praps/store`
+succeeds. A command that opens a working copy (`status`, `describe`, `new`,
+`log`, `ops`, `undo`, `restore`) acts on the nearest top among the directory
+it is given, or the current directory when it is given none, and the
+directories above that one. So a command does the same thing wherever inside
+the working copy it is run.
+
+- **Above the starting directory.** `praps` then makes the top its current
+  directory and runs as if started there, so what it writes and syncs is what
+  a run from the top writes and syncs.
+- **A directory that is not there**, or is not a directory, is refused by the
+  name given. Nothing above it is acted on.
+- **No top there or above** is a refusal that says so.
+- **A `.praps/store` that cannot be listed** for a reason other than absence
+  stops the search. A repository further up is never used in its place.
+- **Names.** A refusal names the working copy by the directory given, when
+  one was given and it is the top, and by the top's full path otherwise.
+- **Links.** The directories above are taken from the starting directory's
+  full path as written. A symbolic link in it is not resolved first.
+
+`praps init` never makes a repository inside another: with a top above the
+directory it is given, it writes nothing and names that working copy,
+whatever the directory holds. An entry named `.praps` below the top that is a
+file, or a directory with no `store` in it, is tracked like any other entry.
+
+`praps verify DIR` checks the first of: the store of DIR, if DIR is a top;
+DIR itself, if it holds `objects` and `ops`; the store of the nearest top
+above DIR; DIR itself, which then fails as not a store. If whether DIR holds
+them cannot be read, `verify` stops there and checks no other store.
+
+Every refusal ends with one line that starts `hint:` and says what to do
+next ([INT-0037](../intents/INT-0037-command-set.md) AC-4).
+
 ## The working-copy change
 
 The view names the working-copy change of workspace `default`. A
@@ -43,17 +78,44 @@ the chain of first parents, and it is never stored
 parents is refused with an error until merges exist
 ([INT-0012](../intents/INT-0012-conflicts-and-merge.md)).
 
+## Reading the op log
+
+A command reads the op log once, at its start: one listing of `ops/` and one
+read of each op file. From that it knows every valid op, the single head, the
+view and the working-copy change, and it keeps them for as long as it runs. A
+step that commits an op adds that op to what the command holds, so a later
+step of the same command reads nothing again.
+
+Each command starts from the log as it is on disk, with one exception. The
+first command on a workspace that was just opened uses the reading that
+opening made, so a `praps` process, which opens the repository and runs one
+command, reads the log once. An op another process writes between the opening
+and that command is treated like any op written while a command runs: both
+stand, the log has two heads, and the next command stops and names them.
+
+`Workspace::working_copy` and `Workspace::parent_tree` read the store every
+time they are called. They exist for tests that compare what is stored with a
+model, and never return what a command kept.
+
+Two costs that grow with the history remain. Opening a store lists `objects/`
+and `ops/` once each, to see that they exist. And every command reads the
+whole chain of changes to build a tree. Both wait for the storage form
+([INT-0008](../intents/INT-0008-compact-history-storage.md)).
+
 ## Snapshot
 
-Every command that opens the working copy snapshots it first: `praps new` and
-`praps status`. `praps fsck` only reads, and `praps init` on an existing
-repository writes nothing, so neither snapshots. An edit made before one of
+Every command that opens the working copy snapshots it first: `status`,
+`describe`, `new`, `log`, `ops`, `undo` and `restore`. `praps verify` only
+reads, `praps init` on an existing repository writes nothing, and `help` and
+`version` look at no directory, so none of those snapshots. An edit made before one of
 them is captured by the next command that does.
 
 A snapshot does the following:
-1. **Loads the state.** If `ops/` holds an op file that does not hash to
-   its name or does not decode, it stops and points to `praps fsck`. It finds
-   the single op head. With no op it reports
+1. **Loads the state**, or takes the one its command already read
+   ([Reading the op log](#reading-the-op-log)). If `ops/` holds an op file
+   that does not hash to its name or does not decode, it stops and says how
+   many are not whole; `praps` then ends its refusal with a hint that names
+   `praps verify`. It finds the single op head. With no op it reports
    that the repository is not initialised. With several op heads it stops,
    names every head, and writes nothing. Concurrent ops are not merged
    until [INT-0010](../intents/INT-0010-lock-free-concurrency.md).
@@ -81,6 +143,30 @@ A snapshot does the following:
 current one: a changeset whose only parent is the current change, with a
 fresh change ID and no changes. It replaces its parent as a head. No
 working-copy file is written.
+
+`praps describe TEXT` snapshots, then sets the description of the
+working-copy change. It writes a changeset with the same change ID, parents
+and changes and with TEXT's bytes as its description, a view in which that
+changeset replaces the current one, both as a head and as the `default`
+workspace's change, and one op whose single parent is the head. No
+working-copy file is written. It prints one line that names the change and
+shows the first line of the text, escaped as names are. If TEXT is already
+the change's description, it writes nothing for it and says that nothing
+changed. An empty TEXT removes a description.
+
+What is stored is what was given:
+- on Linux, the argument's bytes, whatever they are;
+- on Windows, the argument's UTF-8 form. Text that has none, because it
+  holds an unpaired surrogate, is refused as a usage error with nothing
+  written.
+
+TEXT is one argument, so more than one word needs quotes. It cannot begin
+with `-` ([INT-0037](../intents/INT-0037-command-set.md)).
+
+A later snapshot keeps the description (step 4 above), and `praps new`
+starts a change with none. `describe` commits an op like any other, so
+`undo` takes the description back and `restore` returns to it, and neither
+writes a working-copy file for it.
 
 `praps status` snapshots, then lists each path of the working-copy change
 against its parent: `A` added, `M` modified (content or mode), `D` deleted.
@@ -161,9 +247,18 @@ This is called *materialising* F → T.
 
 ### History commands
 
-- **`log`** snapshots, then lists every op, newest first: its id, parents and
-  working-copy change. "Newest first" means a topological order, children
-  before parents, ties broken by id.
+- **`ops`** snapshots, then lists every op, newest first: its id, the change
+  ID of its working-copy change, and the number of paths that change
+  changes. "Newest first" means a topological order, children before
+  parents, ties broken by id. It reads two objects for each op, the view and
+  the working-copy changeset, however long the history is. (Until Sprint 6
+  this command was `log`, and it counted the files of each op's whole tree,
+  which read the chain of changes again for every line.)
+- **`log`** snapshots, then lists the working-copy change and the changes
+  before it along first parents, newest first: the change ID, the number of
+  paths the change changes, and the first line of its description, or
+  `(no description)`. The line is escaped as names are, so it stays one line
+  whatever bytes the description holds. It reads one object for each change.
 - **`undo`** takes H, the single op head when the command starts, before its
   snapshot. It then snapshots. If H has no parent, it fails with "nothing to
   undo", having written only that snapshot. Otherwise the target view is the
@@ -182,6 +277,12 @@ Both `undo` and `restore` then:
 3. commit an op whose single parent is the head after the snapshot and whose
    view is the target view, the exact view object, unchanged;
 4. materialise F → T.
+
+Each of them scans the working copy once: the snapshot named above is the
+only one. An edit made before the command is in that snapshot, in an op of
+its own, and step 4 reads each path again just before it removes or replaces
+it and leaves one that has changed since
+([Materialise](#materialise)).
 
 No command removes an op (INT-0009 AC-1).
 
@@ -275,6 +376,24 @@ With nothing blocking, materialise does the following, in order:
 6. remove the record;
 7. sync `.praps`.
 
+A directory that step 2 cannot remove is left, empty, and a note names it.
+On Windows a directory cannot be removed while a process has it as its
+current directory, which is common now that a command may be run from any
+directory inside the working copy. Directories are not tracked, so an empty
+one changes nothing a snapshot records, and the write goes on to steps 3 to
+7.
+
+There is one exception. If the write must put a file at the directory's
+path, or at a path above it, that file could not be put while the directory
+stays. The write then stops with a failure that names the directory, the
+record is kept, and each later command resumes the write and stops the same
+way until the directory can be removed. Going on there would drop the record with a file of T
+missing, and the next snapshot would record it as deleted.
+
+A removal that fails because the process crashed is not a refusal: it stops
+the write like a crash at any other step. A directory that is already gone
+when step 2 comes to remove it is passed over.
+
 Just before a path is removed (step 1) or renamed over (step 4), it is read
 again. If it no longer holds F's bytes (or, for a path F did not have, is no
 longer absent), it was edited during the write: it is kept, the temporary
@@ -288,8 +407,15 @@ mode is kept as described in [The executable bit](#the-executable-bit).
 
 ### Resume
 
-Every command that opens the working copy (every one but `init`) first looks
-for a record:
+Every command that opens the working copy (every one but `init`) first
+checks that every file in `ops/` is a whole op, and stops if one is not,
+leaving the record and every file as they are. Resume looks for the record's
+target among the valid ops, so without that check a target whose file was
+damaged would look like a write that never began: the record would be
+dropped, though files might already have been written, and the half-written
+working copy would be snapshotted as edits once the op file was repaired.
+
+It then looks for a record:
 - **The target op is the current single head.** Resume removes the files
   at the diff's temporary names (never an F or T path, and never anything
   but a file), then materialises F → T again with the same rules. A
