@@ -67,3 +67,4 @@
   - [Research report](sprints/s6/sprint-research/research-report.md)
   - [Book audit (research artifact)](sprints/s6/sprint-research/book-audit.md)
   - [Code audit (research artifact)](sprints/s6/sprint-research/code-audit.md)
+- [Sprint 7](sprints/s7/sprint-meta.md)
