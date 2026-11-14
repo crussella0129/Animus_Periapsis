@@ -1261,6 +1261,26 @@ fn messages_say_only_what_is_wrong() {
             Error::AmbiguousOp("3".to_owned(), vec![one, two]),
             format!("`3` matches 2 ops:\n  {one}\n  {two}"),
         ),
+        (
+            Error::LaneExists("agent-17".to_owned()),
+            "agent-17 is already a workspace".to_owned(),
+        ),
+        (
+            Error::NotFree("lanes/a".into()),
+            "lanes/a is not empty, so no lane can be made there".to_owned(),
+        ),
+        (
+            Error::UnfinishedLane("a".to_owned(), "lanes/a".into()),
+            "the lane a at lanes/a was never finished: no op made it".to_owned(),
+        ),
+        (
+            Error::StoreGone("repo/.praps/store".into(), "gone".to_owned()),
+            "the store this lane names, repo/.praps/store, does not open: gone".to_owned(),
+        ),
+        (
+            Error::BadWorkspaceFile("lanes/a/.praps/workspace".into(), "it is not UTF-8".to_owned()),
+            "lanes/a/.praps/workspace cannot be read: it is not UTF-8".to_owned(),
+        ),
     ];
     // Every variant is here: this match has no catch-all arm, so a variant
     // added to the crate must be named, and then counted below.
@@ -1274,15 +1294,29 @@ fn messages_say_only_what_is_wrong() {
         Error::NothingToUndo => "NothingToUndo",
         Error::UnknownOp(_) => "UnknownOp",
         Error::AmbiguousOp(..) => "AmbiguousOp",
+        Error::LaneExists(_) => "LaneExists",
+        Error::NotFree(_) => "NotFree",
+        Error::UnfinishedLane(..) => "UnfinishedLane",
+        Error::StoreGone(..) => "StoreGone",
+        Error::BadWorkspaceFile(..) => "BadWorkspaceFile",
     };
     let names: std::collections::BTreeSet<&str> =
         cases.iter().map(|(error, _)| name(error)).collect();
-    assert_eq!(names.len(), 9, "{names:?}");
-    assert_eq!(cases.len(), 9);
+    assert_eq!(names.len(), 14, "{names:?}");
+    assert_eq!(cases.len(), 14);
     for (error, text) in &cases {
         let shown = error.to_string();
         assert_eq!(&shown, text, "{}", name(error));
-        for advice in ["praps", "run ", "try again", "hint", "move them", "(run"] {
+        // A command is advice; a path under `.praps` is not.
+        for advice in [
+            "praps ",
+            "`praps",
+            "run ",
+            "try again",
+            "hint",
+            "move them",
+            "(run",
+        ] {
             assert!(
                 !shown.contains(advice),
                 "{}: {shown:?} holds {advice:?}",

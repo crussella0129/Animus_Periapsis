@@ -16,6 +16,7 @@
 
 pub mod hazard;
 mod ignore;
+pub mod lane;
 pub mod materialise;
 pub mod merge;
 pub mod points;
@@ -77,6 +78,19 @@ pub enum Error {
     UnknownOp(String),
     /// `restore` was given a prefix that names several ops.
     AmbiguousOp(String, Vec<HashRef>),
+    /// Making a lane: the name is already a workspace's. Nothing but the
+    /// opening snapshot was written.
+    LaneExists(String),
+    /// Making a lane: the directory holds more than an interrupted making
+    /// leaves. Nothing but the opening snapshot was written.
+    NotFree(PathBuf),
+    /// A lane whose `.praps/workspace` names a workspace no op made: its
+    /// making stopped before its op was committed.
+    UnfinishedLane(String, PathBuf),
+    /// The store a lane's `.praps/workspace` names does not open.
+    StoreGone(PathBuf, String),
+    /// A lane's `.praps/workspace` cannot be read or does not parse.
+    BadWorkspaceFile(PathBuf, String),
 }
 
 /// Each message says only what is wrong. What to do about it is said once,
@@ -124,6 +138,27 @@ impl fmt::Display for Error {
                     write!(f, "\n  {candidate}")?;
                 }
                 Ok(())
+            }
+            Error::LaneExists(name) => write!(f, "{name} is already a workspace"),
+            Error::NotFree(dir) => write!(
+                f,
+                "{} is not empty, so no lane can be made there",
+                dir.display()
+            ),
+            Error::UnfinishedLane(name, dir) => write!(
+                f,
+                "the lane {name} at {} was never finished: no op made it",
+                dir.display()
+            ),
+            Error::StoreGone(store, why) => {
+                write!(
+                    f,
+                    "the store this lane names, {}, does not open: {why}",
+                    store.display()
+                )
+            }
+            Error::BadWorkspaceFile(path, why) => {
+                write!(f, "{} cannot be read: {why}", path.display())
             }
         }
     }
@@ -512,18 +547,37 @@ impl<F: Fs> Workspace<F> {
     /// one head. It reads the op log once, and keeps what it read for the
     /// first command. `seed` drives the change IDs it mints.
     pub fn open(fs: F, root: &Path, seed: u64) -> Result<Self, Error> {
-        if !dir_exists(&fs, &root.join(PRAPS_DIR).join(STORE_DIR))? {
-            return Err(Error::NotInitialised(root.to_path_buf()));
-        }
-        let store_root = prepare(&fs, root)?;
-        let store = Store::open(fs, &store_root, ALG, seed).map_err(|error| {
-            if error.kind() == ErrorKind::NotFound {
-                Error::NotInitialised(root.to_path_buf())
-            } else {
-                Error::Io(error)
-            }
-        })?;
-        let mut workspace = Self::new(store, root, seed);
+        let praps = root.join(PRAPS_DIR);
+        let mut workspace = if dir_exists(&fs, &praps.join(STORE_DIR))? {
+            let store_root = prepare(&fs, root)?;
+            let store = Store::open(fs, &store_root, ALG, seed).map_err(|error| {
+                if error.kind() == ErrorKind::NotFound {
+                    Error::NotInitialised(root.to_path_buf())
+                } else {
+                    Error::Io(error)
+                }
+            })?;
+            Self::new(store, root, seed)
+        } else {
+            // A lane: `.praps/workspace` names its workspace and the store
+            // it shares. Probed only where there is no store, so opening a
+            // repository's own working copy makes no new syscall.
+            let file = match lane::read(&fs, &praps)? {
+                None => return Err(Error::NotInitialised(root.to_path_buf())),
+                Some(Err(why)) => {
+                    return Err(Error::BadWorkspaceFile(
+                        praps.join(lane::WORKSPACE_FILE),
+                        why,
+                    ));
+                }
+                Some(Ok(file)) => file,
+            };
+            let store = Store::open(fs, &file.store, ALG, seed)
+                .map_err(|error| Error::StoreGone(file.store.clone(), error.to_string()))?;
+            let mut workspace = Self::new(store, root, seed);
+            workspace.name = file.name;
+            workspace
+        };
         let log = workspace.store.op_log()?;
         // Before resume, which looks for the record's target among the
         // valid ops: a target whose file is damaged would look like a write
@@ -563,6 +617,16 @@ impl<F: Fs> Workspace<F> {
     #[cfg(not(feature = "variants"))]
     fn writes_record(&self) -> bool {
         true
+    }
+
+    #[cfg(feature = "variants")]
+    fn writes_lane_file_in_place(&self) -> bool {
+        self.variant == Variant::LaneFileInPlace
+    }
+
+    #[cfg(not(feature = "variants"))]
+    fn writes_lane_file_in_place(&self) -> bool {
+        false
     }
 
     #[cfg(feature = "variants")]
@@ -809,7 +873,13 @@ impl<F: Fs> Workspace<F> {
         let pointer = &view
             .workspaces
             .get(&self.name)
-            .ok_or_else(|| corrupt(format!("the view has no workspace {}", self.name)))?
+            .ok_or_else(|| {
+                if self.name == DEFAULT_WORKSPACE {
+                    corrupt(format!("the view has no workspace {}", self.name))
+                } else {
+                    Error::UnfinishedLane(self.name.clone(), self.root.clone())
+                }
+            })?
             .working_copy;
         // The race rule: the smallest of several, the others kept.
         let wc_id = *pointer
@@ -1013,6 +1083,138 @@ impl<F: Fs> Workspace<F> {
         };
         self.replace_working_copy(&mut state, changeset)?;
         Ok(change_id)
+    }
+
+    /// Snapshots, then makes lane `name` at `dir`, a working copy over this
+    /// store (INT-0014; "Lanes" in the spec), in this order:
+    /// 1. refuses unless `name` is no workspace yet and `dir` is free;
+    /// 2. forms the lane's first change: no changes, on the parent of this
+    ///    workspace's working-copy change (on nothing when it has none);
+    /// 3. makes `dir` and `dir/.praps` durable and writes
+    ///    `dir/.praps/workspace`;
+    /// 4. writes the record, `from empty`, in `dir/.praps`;
+    /// 5. commits one op made in `name` over every head, whose view adds
+    ///    `name`'s entry;
+    /// 6. writes the change's files into `dir`, and drops the record.
+    ///
+    /// Returns the op and the lane's change ID.
+    pub fn make_lane(
+        &mut self,
+        name: &str,
+        dir: &Path,
+    ) -> Result<(HashRef, [u8; CHANGE_ID_LEN]), Error> {
+        let mut state = self.begin()?;
+        self.snapshot_in(&mut state)?;
+        if state.at.view.workspaces.contains_key(name) {
+            return Err(Error::LaneExists(name.to_owned()));
+        }
+        self.refuse_unless_free(dir, &state.at.view)?;
+        let parents = match state.at.wc.parents.as_slice() {
+            [] => Vec::new(),
+            [parent] => vec![*parent],
+            _ => return Err(Error::Merge(state.at.wc_id)),
+        };
+        let tree = match parents.as_slice() {
+            [parent] => self.tree_of(parent)?,
+            _ => Tree::new(),
+        };
+        let change_id = self.change_id();
+        let changeset = Changeset {
+            parents,
+            change_id,
+            changes: BTreeMap::new(),
+            description: Vec::new(),
+        };
+        let change = self.store.put_object(&changeset.to_envelope())?;
+        let mut view = state.at.view.clone();
+        view.workspaces.insert(
+            name.to_owned(),
+            WorkspaceEntry {
+                working_copy: [change].into(),
+                heads: [change].into(),
+            },
+        );
+        let view_id = self.store.put_object(&view.to_envelope())?;
+        let op = Operation {
+            parents: state.at.heads.clone(),
+            workspace: name.to_owned(),
+            view: view_id,
+        };
+        let id = object_id(ALG, &op.to_envelope());
+        let fs = self.store.fs();
+        prepare(fs, dir)?;
+        let praps = dir.join(PRAPS_DIR);
+        let plan = materialise::plan(fs, dir, &Tree::new(), &tree, fs.name_rules(), ALG, false)?;
+        if !plan.hazards.is_empty() {
+            return Err(Error::Hazards(plan.hazards));
+        }
+        lane::write(
+            fs,
+            &praps,
+            &lane::LaneFile {
+                name: name.to_owned(),
+                store: self.store.root().to_path_buf(),
+            },
+            self.writes_lane_file_in_place(),
+        )?;
+        record::write(
+            fs,
+            &praps,
+            &Record {
+                from: None,
+                target: id,
+            },
+        )?;
+        let committed = self.store.commit_op(&op)?;
+        if committed != id {
+            return Err(corrupt(format!(
+                "op {committed} was committed where {id} was expected"
+            )));
+        }
+        let fs = self.store.fs();
+        let kept =
+            materialise::apply(fs, dir, &Tree::new(), ALG, &plan, |blob| self.content(blob))?;
+        self.notes.extend(kept);
+        record::drop_record(fs, &praps)?;
+        Ok((committed, change_id))
+    }
+
+    /// Refuses `dir` unless it is free for a lane: absent, empty, or holding
+    /// nothing but the `.praps` an interrupted making left. Such a `.praps`
+    /// holds no `workspace` file, or one naming a workspace `view` has no
+    /// entry for, and at most the temporary names and the record beside it.
+    fn refuse_unless_free(&self, dir: &Path, view: &View) -> Result<(), Error> {
+        let fs = self.store.fs();
+        if !dir_exists(fs, dir)? {
+            return Ok(());
+        }
+        let not_free = || Error::NotFree(dir.to_path_buf());
+        let entries = fs.list(dir)?;
+        if entries.is_empty() {
+            return Ok(());
+        }
+        if entries.len() != 1 || entries[0] != PRAPS_DIR {
+            return Err(not_free());
+        }
+        let praps = dir.join(PRAPS_DIR);
+        let left = [
+            lane::WORKSPACE_FILE,
+            lane::WORKSPACE_FILE_NEW,
+            record::RECORD,
+            record::RECORD_NEW,
+        ];
+        if fs
+            .list(&praps)?
+            .iter()
+            .any(|entry| !left.contains(&entry.as_str()))
+        {
+            return Err(not_free());
+        }
+        match lane::read(fs, &praps)? {
+            None => Ok(()),
+            Some(Ok(file)) if !view.workspaces.contains_key(&file.name) => Ok(()),
+            Some(_) => Err(not_free()),
+        }
     }
 
     /// Snapshots, then sets the working-copy change's description to

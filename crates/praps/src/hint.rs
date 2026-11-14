@@ -82,6 +82,19 @@ pub fn for_error(error: &workspace::Error) -> Hint {
         Error::AmbiguousOp(..) => {
             Hint::Fix("give more digits of the id, enough to name one of those")
         }
+        Error::LaneExists(_) => {
+            Hint::Fix("give the lane a directory whose last name no workspace has")
+        }
+        Error::NotFree(_) => Hint::Fix("give a directory that does not exist yet, or an empty one"),
+        Error::UnfinishedLane(..) => Hint::Fix(
+            "make the lane again at this directory, from the working copy it was made from",
+        ),
+        Error::StoreGone(..) => Hint::Fix(
+            "put the store back where this lane names it; a lane holds no store of its own",
+        ),
+        Error::BadWorkspaceFile(..) => {
+            Hint::Fix("put that file right: it holds two lines, `name NAME` and `store PATH`")
+        }
     }
 }
 
@@ -248,10 +261,15 @@ mod tests {
             Error::NothingToUndo => "NothingToUndo",
             Error::UnknownOp(_) => "UnknownOp",
             Error::AmbiguousOp(..) => "AmbiguousOp",
+            Error::LaneExists(_) => "LaneExists",
+            Error::NotFree(_) => "NotFree",
+            Error::UnfinishedLane(..) => "UnfinishedLane",
+            Error::StoreGone(..) => "StoreGone",
+            Error::BadWorkspaceFile(..) => "BadWorkspaceFile",
         }
     }
 
-    const VARIANTS: [&str; 9] = [
+    const VARIANTS: [&str; 14] = [
         "Io",
         "NotInitialised",
         "Corrupt",
@@ -261,6 +279,11 @@ mod tests {
         "NothingToUndo",
         "UnknownOp",
         "AmbiguousOp",
+        "LaneExists",
+        "NotFree",
+        "UnfinishedLane",
+        "StoreGone",
+        "BadWorkspaceFile",
     ];
 
     /// One error of each variant, as the crate would make it.
@@ -286,6 +309,17 @@ mod tests {
             Error::NothingToUndo,
             Error::UnknownOp("3f9a".into()),
             Error::AmbiguousOp("3".into(), vec![id(b"one"), id(b"two")]),
+            Error::LaneExists("agent-17".into()),
+            Error::NotFree(PathBuf::from("../agent-17")),
+            Error::UnfinishedLane("agent-17".into(), PathBuf::from("../agent-17")),
+            Error::StoreGone(
+                PathBuf::from("/work/project/.praps/store"),
+                "The system cannot find the path specified. (os error 3)".into(),
+            ),
+            Error::BadWorkspaceFile(
+                PathBuf::from("../agent-17/.praps/workspace"),
+                "it has no `store` line".into(),
+            ),
         ]
     }
 

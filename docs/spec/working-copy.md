@@ -145,6 +145,53 @@ workspace's heads, and prints one note naming every one of them. Once it
 commits, the pointer holds one change again
 ([INT-0014](../intents/INT-0014-working-copy-and-workspaces.md)).
 
+## Lanes
+
+A lane is a working copy over the store of the working copy it was made
+from ([INT-0014](../intents/INT-0014-working-copy-and-workspaces.md)). Its
+`.praps` holds no store, only `.praps/workspace`: two lines, `name NAME` and
+`store PATH`, where PATH is the store's directory (`praps` writes its full
+path, as a linked Git worktree names its repository). Every op and object a
+lane makes goes into that one store, so a lane is no clone.
+
+**Opening a lane.** A directory with no `.praps/store` but a
+`.praps/workspace` is opened as workspace NAME over the store the file
+names. A file that cannot be read or does not parse is an error naming it,
+and a store that does not open is an error of its own. `.praps/store` is
+probed first, so opening a repository's own working copy makes no syscall
+it did not make before.
+
+**Making a lane** NAME at DIR from workspace W:
+1. W snapshots.
+2. NAME must not be a workspace yet, and DIR must be free: absent, empty, or
+   holding nothing but a `.praps` an interrupted making left. Such a `.praps`
+   holds no `workspace` file, or one naming a workspace no op made; beside
+   it there may be at most `workspace.new`, the record and `working-copy.new`.
+   Otherwise nothing more is written.
+3. The lane's first change has no changes, and as its only parent the parent
+   of W's working-copy change, or no parent when that change has none. W
+   rewrites its working-copy change at every snapshot and `describe`, so a
+   lane made on it would sit on a version W has already replaced. W's edits
+   in progress are therefore not in the lane.
+4. DIR and `DIR/.praps` are made durable, then `.praps/workspace` is written
+   as `workspace.new`, synced, renamed, and `.praps` synced.
+5. The record is written in `DIR/.praps`: `from empty`, and the lane's op as
+   its target ([The record](#the-record)).
+6. The op is committed: made in NAME, over every head, its view the merge
+   with NAME's entry added, the new change as its working copy and its head.
+7. The change's files are written into DIR ([Materialise](#materialise)).
+8. The record is dropped.
+
+**An interrupted making.** Before `.praps/workspace` is in place, DIR is no
+repository. Once it is, but before the op lands, a command at DIR drops the
+record if one is left, as resume drops one whose target is absent, and
+refuses, naming the lane; nothing else is written. In both cases DIR is
+free, and making the lane again there finishes it. Once the op has landed,
+the next command at DIR resumes the write and finishes the lane's files.
+
+A lane is a checkout: making one writes every file. The cheap workspace,
+one view entry and no file (INT-0014 AC-4), is still to come.
+
 ## Snapshot
 
 Every command that opens the working copy snapshots it first: `status`,
