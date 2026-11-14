@@ -67,7 +67,6 @@ pub fn for_error(error: &workspace::Error) -> Hint {
             "praps init",
             "in that directory to finish making it a repository",
         ),
-        Error::SeveralHeads(_) => Hint::NoRemedy("join operations made at the same time"),
         Error::Corrupt(_) => run(
             "praps verify",
             "to list what is damaged in the store; this build cannot repair what it finds, or \
@@ -83,6 +82,24 @@ pub fn for_error(error: &workspace::Error) -> Hint {
         Error::AmbiguousOp(..) => {
             Hint::Fix("give more digits of the id, enough to name one of those")
         }
+        Error::LaneExists(_) => {
+            Hint::Fix("give the lane a directory whose last name no workspace has")
+        }
+        Error::NotFree(_) => Hint::Fix("give a directory that does not exist yet, or an empty one"),
+        Error::UnfinishedLane(_, dir) => Hint::Run(
+            format!("praps lane {}", dir.display()),
+            "from the working copy it was made from, to finish the lane",
+        ),
+        Error::StoreGone(..) => Hint::Fix(
+            "put the store back where this lane names it; a lane holds no store of its own",
+        ),
+        Error::BadWorkspaceFile(..) => {
+            Hint::Fix("put that file right: it holds two lines, `name NAME` and `store PATH`")
+        }
+        Error::NotInWorkspace(..) => run(
+            "praps ops",
+            "to list the operations, and give one made since this workspace was",
+        ),
     }
 }
 
@@ -145,6 +162,11 @@ pub fn unreadable_directory() -> Hint {
     Hint::Fix("make that directory readable, then run the command again")
 }
 
+/// A file a command must read to know what it acts on, which it could not.
+pub fn unreadable_file() -> Hint {
+    Hint::Fix("make that file readable, then run the command again")
+}
+
 /// A directory above the starting one whose `.praps/store` could not be
 /// listed. The message names only where the search started.
 pub fn unreadable_above() -> Hint {
@@ -178,6 +200,16 @@ pub fn inside_a_working_copy() -> Hint {
         "praps status",
         "to work in that working copy, or give `praps init` a directory outside it",
     )
+}
+
+/// A lane's directory whose last name is no plain name.
+pub fn lane_name() -> Hint {
+    Hint::Fix("give a directory whose last name is plain text, which names the lane")
+}
+
+/// A lane's directory inside a working copy.
+pub fn lane_outside() -> Hint {
+    Hint::Fix("give a directory outside every working copy, beside this one for example")
 }
 
 /// `init` stopped by the filesystem.
@@ -242,7 +274,6 @@ mod tests {
         match error {
             Error::Io(_) => "Io",
             Error::NotInitialised(_) => "NotInitialised",
-            Error::SeveralHeads(_) => "SeveralHeads",
             Error::Corrupt(_) => "Corrupt",
             Error::Merge(_) => "Merge",
             Error::Hazards(_) => "Hazards",
@@ -250,13 +281,18 @@ mod tests {
             Error::NothingToUndo => "NothingToUndo",
             Error::UnknownOp(_) => "UnknownOp",
             Error::AmbiguousOp(..) => "AmbiguousOp",
+            Error::LaneExists(_) => "LaneExists",
+            Error::NotFree(_) => "NotFree",
+            Error::UnfinishedLane(..) => "UnfinishedLane",
+            Error::StoreGone(..) => "StoreGone",
+            Error::BadWorkspaceFile(..) => "BadWorkspaceFile",
+            Error::NotInWorkspace(..) => "NotInWorkspace",
         }
     }
 
-    const VARIANTS: [&str; 10] = [
+    const VARIANTS: [&str; 15] = [
         "Io",
         "NotInitialised",
-        "SeveralHeads",
         "Corrupt",
         "Merge",
         "Hazards",
@@ -264,6 +300,12 @@ mod tests {
         "NothingToUndo",
         "UnknownOp",
         "AmbiguousOp",
+        "LaneExists",
+        "NotFree",
+        "UnfinishedLane",
+        "StoreGone",
+        "BadWorkspaceFile",
+        "NotInWorkspace",
     ];
 
     /// One error of each variant, as the crate would make it.
@@ -276,7 +318,6 @@ mod tests {
                 "Access is denied. (os error 5)",
             )),
             Error::NotInitialised(PathBuf::from("project")),
-            Error::SeveralHeads(vec![id(b"one"), id(b"two")]),
             Error::Corrupt("2 of 9 op files do not hash to their names or do not decode".into()),
             Error::Merge(id(b"merge")),
             Error::Hazards(vec![workspace::hazard::Hazard {
@@ -290,6 +331,18 @@ mod tests {
             Error::NothingToUndo,
             Error::UnknownOp("3f9a".into()),
             Error::AmbiguousOp("3".into(), vec![id(b"one"), id(b"two")]),
+            Error::LaneExists("agent-17".into()),
+            Error::NotFree(PathBuf::from("../agent-17")),
+            Error::UnfinishedLane("agent-17".into(), PathBuf::from("../agent-17")),
+            Error::StoreGone(
+                PathBuf::from("/work/project/.praps/store"),
+                "The system cannot find the path specified. (os error 3)".into(),
+            ),
+            Error::BadWorkspaceFile(
+                PathBuf::from("../agent-17/.praps/workspace"),
+                "it has no `store` line".into(),
+            ),
+            Error::NotInWorkspace(id(b"old"), "agent-17".into()),
         ]
     }
 
@@ -425,6 +478,16 @@ mod tests {
                 "3 problems".to_owned(),
                 damaged_store(),
             ),
+            (
+                "lane: a directory whose last name is no plain text",
+                "praps lane: /: a lane is named after its directory's last name".to_owned(),
+                lane_name(),
+            ),
+            (
+                "lane: a directory inside a working copy",
+                "praps lane: ../repo/sub: it lies inside the working copy at ../repo".to_owned(),
+                lane_outside(),
+            ),
         ];
         rows.extend(
             own.into_iter()
@@ -498,7 +561,7 @@ mod tests {
             forms[2]
         );
         assert!(forms.iter().all(|count| *count > 0), "{forms:?}");
-        assert_eq!(table.len(), VARIANTS.len() + 22);
+        assert_eq!(table.len(), VARIANTS.len() + 24);
     }
 
     /// Every command a hint names, wherever in the line, is one the

@@ -3,7 +3,7 @@
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0014
 - **State:** active
-- **Work evidence:** [Sprint 2 T-005 build plan](../sprints/s2/sprint-plans/build-plan.md#t-005-the-workspace-crate-init-snapshot-new-and-status), [Sprint 2 T-006 build plan](../sprints/s2/sprint-plans/build-plan.md#t-006-praps-init-praps-new-and-praps-status), [Sprint 2 T-007 build plan](../sprints/s2/sprint-plans/build-plan.md#t-007-snapshot-crash-scenario-and-edit-corpora), [Sprint 2 T-008 build plan](../sprints/s2/sprint-plans/build-plan.md#t-008-working-copy-spec-readme-credits-and-backlog), [Sprint 3 T-004 build plan](../sprints/s3/sprint-plans/build-plan.md#t-004-specify-writing-the-working-copy-undo-restore-and-log), [Sprint 3 T-006 build plan](../sprints/s3/sprint-plans/build-plan.md#t-006-materialise-the-working-copy-record-and-resume), [Sprint 3 T-009 build plan](../sprints/s3/sprint-plans/build-plan.md#t-009-reversibility-and-hazard-corpora-the-materialise-crash-scenario-and-the-extended-edit-corpus), [Sprint 4 T-006 build plan](../sprints/s4/sprint-plans/build-plan.md#t-006-plant-and-register-points-in-store-and-workspace-and-move-the-two-writer-race-to-a-named-point), [Sprint 4 T-009 build plan](../sprints/s4/sprint-plans/build-plan.md#t-009-report-skipped-names-from-every-command-that-snapshots-backlog-t-019), [Sprint 6 T-003 build plan](../sprints/s6/sprint-plans/build-plan.md#t-003-a-command-reads-the-op-log-once), [Sprint 6 T-004 build plan](../sprints/s6/sprint-plans/build-plan.md#t-004-open-checks-the-op-log-before-it-resumes-an-interrupted-write), [Sprint 6 T-005 build plan](../sprints/s6/sprint-plans/build-plan.md#t-005-undo-and-restore-scan-the-working-copy-once), [Sprint 6 T-008 build plan](../sprints/s6/sprint-plans/build-plan.md#t-008-commands-find-their-working-copy-from-any-directory-inside-it), [Sprint 6 T-010 build plan](../sprints/s6/sprint-plans/build-plan.md#t-010-describe-sets-the-description-of-the-current-change), [Sprint 6 T-012 build plan](../sprints/s6/sprint-plans/build-plan.md#t-012-a-write-leaves-a-directory-it-cannot-remove), [Sprint 6 T-013 build plan](../sprints/s6/sprint-plans/build-plan.md#t-013-readme-specs-and-credits)
+- **Work evidence:** [Sprint 2 T-005 build plan](../sprints/s2/sprint-plans/build-plan.md#t-005-the-workspace-crate-init-snapshot-new-and-status), [Sprint 2 T-006 build plan](../sprints/s2/sprint-plans/build-plan.md#t-006-praps-init-praps-new-and-praps-status), [Sprint 2 T-007 build plan](../sprints/s2/sprint-plans/build-plan.md#t-007-snapshot-crash-scenario-and-edit-corpora), [Sprint 2 T-008 build plan](../sprints/s2/sprint-plans/build-plan.md#t-008-working-copy-spec-readme-credits-and-backlog), [Sprint 3 T-004 build plan](../sprints/s3/sprint-plans/build-plan.md#t-004-specify-writing-the-working-copy-undo-restore-and-log), [Sprint 3 T-006 build plan](../sprints/s3/sprint-plans/build-plan.md#t-006-materialise-the-working-copy-record-and-resume), [Sprint 3 T-009 build plan](../sprints/s3/sprint-plans/build-plan.md#t-009-reversibility-and-hazard-corpora-the-materialise-crash-scenario-and-the-extended-edit-corpus), [Sprint 4 T-006 build plan](../sprints/s4/sprint-plans/build-plan.md#t-006-plant-and-register-points-in-store-and-workspace-and-move-the-two-writer-race-to-a-named-point), [Sprint 4 T-009 build plan](../sprints/s4/sprint-plans/build-plan.md#t-009-report-skipped-names-from-every-command-that-snapshots-backlog-t-019), [Sprint 6 T-003 build plan](../sprints/s6/sprint-plans/build-plan.md#t-003-a-command-reads-the-op-log-once), [Sprint 6 T-004 build plan](../sprints/s6/sprint-plans/build-plan.md#t-004-open-checks-the-op-log-before-it-resumes-an-interrupted-write), [Sprint 6 T-005 build plan](../sprints/s6/sprint-plans/build-plan.md#t-005-undo-and-restore-scan-the-working-copy-once), [Sprint 6 T-008 build plan](../sprints/s6/sprint-plans/build-plan.md#t-008-commands-find-their-working-copy-from-any-directory-inside-it), [Sprint 6 T-010 build plan](../sprints/s6/sprint-plans/build-plan.md#t-010-describe-sets-the-description-of-the-current-change), [Sprint 6 T-012 build plan](../sprints/s6/sprint-plans/build-plan.md#t-012-a-write-leaves-a-directory-it-cannot-remove), [Sprint 6 T-013 build plan](../sprints/s6/sprint-plans/build-plan.md#t-013-readme-specs-and-credits), [Sprint 7 T-002 build plan](../sprints/s7/sprint-plans/build-plan.md#t-002-an-operation-names-its-workspace-and-a-view-holds-one-entry-per-workspace), [Sprint 7 T-004 build plan](../sprints/s7/sprint-plans/build-plan.md#t-004-commands-work-from-merged-states), [Sprint 7 T-006 build plan](../sprints/s7/sprint-plans/build-plan.md#t-006-workspaces-over-one-store-in-the-library), [Sprint 7 T-007 build plan](../sprints/s7/sprint-plans/build-plan.md#t-007-praps-lane-dir-and-praps-lanes), [Sprint 7 T-009 build plan](../sprints/s7/sprint-plans/build-plan.md#t-009-the-concurrency-scenario), [Sprint 7 T-010 build plan](../sprints/s7/sprint-plans/build-plan.md#t-010-lanes-at-once-through-the-binary-spec-readme-credits-and-backlog)
 - **Completion evidence:** [Sprint 2 T-005 completion](../work/completed-tasks.md#t-005-sprint-2), [Sprint 2 T-006 completion](../work/completed-tasks.md#t-006-sprint-2), [Sprint 2 T-007 completion](../work/completed-tasks.md#t-007-sprint-2), [Sprint 2 T-008 completion](../work/completed-tasks.md#t-008-sprint-2), [Sprint 6 T-003 completion](../work/completed-tasks.md#t-003-sprint-6), [Sprint 6 T-004 completion](../work/completed-tasks.md#t-004-sprint-6), [Sprint 6 T-005 completion](../work/completed-tasks.md#t-005-sprint-6), [Sprint 6 T-008 completion](../work/completed-tasks.md#t-008-sprint-6), [Sprint 6 T-010 completion](../work/completed-tasks.md#t-010-sprint-6), [Sprint 6 T-012 completion](../work/completed-tasks.md#t-012-sprint-6), [Sprint 6 T-013 completion](../work/completed-tasks.md#t-013-sprint-6)
 - **Code evidence:** [crates/workspace](../../crates/workspace/src/lib.rs), [praps](../../crates/praps/src/main.rs)
 - **Test evidence:** [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md), [Sprint 3 test report](../sprints/s3/sprint-tests/test-report.md), [Sprint 4 test report](../sprints/s4/sprint-tests/test-report.md), [Sprint 6 test report](../sprints/s6/sprint-tests/test-report.md)
@@ -146,9 +146,12 @@ Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
   and `init` refuses to make a repository inside one (T-008). Without that,
   `praps status` in a subdirectory said the directory was not a repository
   and suggested `praps init`, which would have nested one.
-- The top of a working copy is the directory that holds `.praps/store`. A
-  directory named `.praps` below the top that holds no store is tracked like
-  any other directory. One that holds a store is the top of a repository of
+- The top of a working copy is the directory that holds `.praps/store`,
+  or, from Sprint 7, a readable `.praps/workspace`: the top of a lane. A
+  `.praps/workspace` that exists but cannot be read or does not parse stops
+  the search with an error naming it, as any failure other than absence
+  does. A directory named `.praps` below the top that holds neither is
+  tracked like any other directory. One that holds a store is the top of a repository of
   its own: commands run inside it act on it, and the working copy around it
   still tracks its files as content. What should happen there is not decided
   (backlog T-031).
@@ -169,6 +172,62 @@ Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
   has no current directory, and a command run from it says so (T-008).
   Whether a write should spare the directory a command was started in is
   not decided (backlog T-031).
+- Lanes (Sprint 7): `praps lane DIR` makes a workspace at DIR over the same
+  store. Its `.praps/workspace` names the workspace and the store, by the
+  store's full path, as a linked Git worktree names its repository. Its
+  `.praps` holds no store, so a lane is no clone.
+- A lane's first change is made on the parent of the working-copy change of
+  the workspace it was made from, which that workspace's commands do not
+  rewrite. Made on the working-copy change itself, the lane would sit on a
+  version its workspace replaces at the next snapshot, and the change would
+  diverge ([INT-0011](INT-0011-change-identity-and-rewriting.md)). Edits in
+  progress there are therefore not in the new lane. With no parent, the
+  lane starts from the empty tree (Sprint 7 plan critique, round 1, C-014).
+- A lane is a checkout: making one writes every file into DIR. The cheap
+  workspace this chapter's Intent describes, one view entry and no file
+  (AC-4), is still to come.
+- A lane may not be made inside any working copy, and `init` is refused at
+  a lane's top and below it: the working copy around it would track the
+  lane's files and its `.praps` as content (C-009). `lanes` snapshots like
+  every other command.
+- Two cases are left open in Sprint 7 (C-007, C-008):
+  - Two commands that write one working copy's files at the same moment
+    (`undo`, `restore`) can interfere through the record and the files. One
+    working copy is one agent's, and agents that work at once take a lane
+    each. The race rule below covers the commands that move the pointer
+    without writing files. Per-process records or a lock would close the
+    gap; Jujutsu's working copy, which knows the operation it was last
+    brought up to, is the starting point.
+  - Two `praps lane` commands started at the same moment with one name both
+    pass the check, and both directories then share one entry. Lanes are
+    made one at a time by whoever sets them up. Detecting the collision
+    needs each lane to know the operation that made it.
+
+  Both are in the backlog.
+- The race rule (the owner's decision of 2026-11-14): when two commands in one
+  workspace run at once, its working-copy pointer holds both changes. The
+  next command there continues from the one with the smallest id, keeps
+  the other visible and restorable, and says so. No command fails.
+- A write of the working copy names in its record the working-copy change
+  it started from, since a merged state has no single operation, or `empty`
+  for a lane's first write. Resume finishes the write while its operation
+  is still its workspace's latest, and leaves the files with a note once
+  another operation of that workspace has followed it or stands beside it.
+  A lane whose operation never landed is refused at its next command, and
+  `praps lane` makes it again at the same directory (C-006).
+- `praps lane DIR` looks for a working copy around DIR from DIR's parent
+  up. DIR itself only has to be free: absent, empty, or holding what an
+  interrupted making left, both temporary names and the record included.
+  So a lane made over an interrupted one finishes it (Sprint 7 plan
+  critique, round 2, C-002 and C-003).
+- Before `.praps/workspace` is in place, an interrupted making leaves DIR
+  holding at most an empty `.praps` or a temporary file, and nothing in the
+  store names it. DIR is then no repository, and a command there says so
+  with the hint every such directory gets, `praps init`. That hint stays:
+  the directory cannot be told from one an interrupted `init` left, for
+  which it is right. Making the lane again at DIR finishes the lane;
+  running `praps init` there instead makes DIR a repository of its own,
+  which is what that command says it does.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §4 Phase 1 and R5 §C.1).
@@ -187,3 +246,6 @@ Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
 - 2026-11-10: revised while `active` (Sprint 6 plan critique, round 2, C-005; `semantic`): Consequences record that a write leaves a directory it emptied and cannot remove, with a note, unless the target has a file at that path; and that a command run from a directory that no longer exists says so.
 - 2026-11-10: revised while `active` (Sprint 6 plan critique, round 3, C-001; `semantic`): the exception to leaving a directory covers a file due at a path above it as well as at the path itself.
 - 2026-11-10: kept `active` at the close of Sprint 6. AC-1 is kept through one read of the op log for each command, the check of the log before resume, one scan for `undo` and `restore`, `describe`, the search for the working copy, and a write that leaves a directory it cannot remove. Its other criteria are as they were: several workspaces and the stat cache are not built.
+- 2026-11-14: revised while `active` (Sprint 7 Plan; `editorial`: no criterion changes): Consequences record lanes and how a working copy finds its store, the race rule the owner chose, and what the record of a write names after a merge. Work evidence names Sprint 7's T-002, T-004, T-006, T-007, T-009 and T-010.
+- 2026-11-14: revised while `active` (Sprint 7 plan critique, round 1, C-006, C-007, C-008, C-009 and C-014; `editorial`: no criterion changes): Consequences define a lane's top and what stops the search, record that a lane starts from the parent of the working-copy change and why, that a lane is a checkout and the cheap workspace is still to come, where lanes and `init` are refused, the record's `empty` form and the interrupted lane, and the two cases Sprint 7 leaves open.
+- 2026-11-14: revised while `active` (Sprint 7 plan critique, round 2, C-002 and C-003; `editorial`: no criterion changes): Consequences say where `praps lane` looks for an enclosing working copy, what a free DIR may hold, and why the hint before `.praps/workspace` exists stays `praps init`.

@@ -10,9 +10,10 @@ use crate::operation::Operation;
 use crate::view::View;
 
 /// The ids the object in `envelope` names, in body order, after decoding it
-/// in full: a changeset's parents and put blobs; a view's heads and workspace
-/// changesets; an operation's parents and view; nothing for a blob. An
-/// envelope that does not decode as its kind is an error.
+/// in full: a changeset's parents and put blobs; for each of a view's
+/// entries, its working copy and then its heads; an operation's parents and
+/// view; nothing for a blob. An envelope that does not decode as its kind is
+/// an error.
 pub fn references(envelope: &[u8]) -> Result<Vec<HashRef>, DecodeError> {
     Ok(typed_references(envelope)?
         .into_iter()
@@ -21,9 +22,9 @@ pub fn references(envelope: &[u8]) -> Result<Vec<HashRef>, DecodeError> {
 }
 
 /// [`references`], each with the kind the named object must be: a
-/// changeset's parents are changesets and its puts blobs; a view's heads and
-/// workspaces are changesets; an operation's parents are operations and its
-/// view a view.
+/// changeset's parents are changesets and its puts blobs; everything a
+/// view's entries name is a changeset; an operation's parents are operations
+/// and its view a view.
 pub fn typed_references(envelope: &[u8]) -> Result<Vec<(HashRef, ObjectKind)>, DecodeError> {
     let kind = decode_envelope(envelope)?.kind;
     Ok(match kind {
@@ -42,9 +43,9 @@ pub fn typed_references(envelope: &[u8]) -> Result<Vec<(HashRef, ObjectKind)>, D
         }
         ObjectKind::View => {
             let view = View::from_envelope(envelope)?;
-            view.heads
-                .iter()
-                .chain(view.workspaces.values())
+            view.workspaces
+                .values()
+                .flat_map(|entry| entry.working_copy.iter().chain(&entry.heads))
                 .map(|id| (*id, ObjectKind::Changeset))
                 .collect()
         }

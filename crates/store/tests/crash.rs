@@ -94,7 +94,7 @@ fn matrix_runs_are_reproducible() {
     assert_eq!(first.len(), 32_840);
     assert_eq!(
         digest.to_string(),
-        "blake3:d36b8c9c77744d485a362ef3d94cebe40dcb67ca7260eb409f5430c2a13ae812"
+        "blake3:08b4e33445e94b1b154c19293d47a66da8b440a6f748d5a429d52ea40c8755d8"
     );
 }
 

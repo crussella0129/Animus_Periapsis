@@ -12,8 +12,8 @@
 //! nothing. A command that cannot do what was asked says what was wrong and
 //! ends with one `hint:` line that says what to do next ([`hint`]; INT-0037
 //! AC-4). Exit codes follow the project's convention: 0 success (for
-//! `verify`, clean), 1 a repository error (not a repository, several op heads,
-//! corruption, nothing to undo, an unknown or ambiguous op, a hazard or an
+//! `verify`, clean), 1 a repository error (not a repository, corruption,
+//! nothing to undo, an unknown or ambiguous op, a lane refused, a hazard or an
 //! entry in the way), 2 a usage error or a word that is not a command.
 //!
 //! No command takes a flag. `--help` and `-h` are spellings of `help`, and

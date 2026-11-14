@@ -53,6 +53,10 @@ pub enum DecodeError {
     ReservedMode { at: usize, byte: u8 },
     /// A string that is not a valid repository path.
     InvalidPath { at: usize },
+    /// A workspace name that is empty, in an operation or a view.
+    EmptyWorkspaceName { at: usize },
+    /// A view entry whose working copy names no changeset.
+    EmptyWorkingCopy { at: usize },
 }
 
 impl fmt::Display for DecodeError {
@@ -120,6 +124,12 @@ impl fmt::Display for DecodeError {
             }
             DecodeError::InvalidPath { at } => {
                 write!(f, "invalid repository path at byte {at}")
+            }
+            DecodeError::EmptyWorkspaceName { at } => {
+                write!(f, "empty workspace name at byte {at}")
+            }
+            DecodeError::EmptyWorkingCopy { at } => {
+                write!(f, "working copy at byte {at} names no changeset")
             }
         }
     }

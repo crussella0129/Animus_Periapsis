@@ -1,11 +1,12 @@
 //! The provisional `changeset` and `view` bodies and repository paths
-//! (`docs/spec/format-v1.md`; INT-0006 AC-1, AC-5; Sprint 2 T-002).
+//! (`docs/spec/format-v1.md`; INT-0006 AC-1, AC-5; Sprint 2 T-002; the view's
+//! entries, Sprint 7 T-002).
 
 use codec::{
-    Changeset, DecodeError, Entry, Mode, ObjectKind, PathError, RepoPath, View, encode_object,
-    from_slice, to_vec,
+    Changeset, DecodeError, Entry, Mode, ObjectKind, Operation, PathError, RepoPath, View,
+    WorkspaceEntry, encode_object, from_slice, to_vec, typed_references,
 };
-use hash::HashAlg;
+use hash::{HashAlg, HashRef};
 
 fn path(text: &str) -> RepoPath {
     RepoPath::new(text).unwrap()
@@ -86,31 +87,144 @@ fn changeset_rejects_duplicate_paths() {
     );
 }
 
+/// One view entry's bytes: `working_copy`, then `heads`.
+fn entry_body(working_copy: &[HashRef], heads: &[HashRef]) -> Vec<u8> {
+    let set = |ids: &[HashRef]| -> Vec<u8> {
+        let mut bytes = vec![ids.len() as u8];
+        for id in ids {
+            bytes.extend(to_vec(id));
+        }
+        bytes
+    };
+    [set(working_copy), set(heads)].concat()
+}
+
 #[test]
 fn view_rejects_unsorted_heads() {
     let low = HashAlg::Blake3.hash(b"");
     let high = HashAlg::Sha256.hash(b"");
-    let body = [
-        &[0x02][..],
-        &to_vec(&high),
-        &to_vec(&low),
-        &[0x00], // no workspaces
-    ]
-    .concat();
+    // One entry, "w": working copy {low}, heads out of order. The second
+    // head starts at 3 + 34 + 1 + 33 = 71.
+    let body = [&[0x01, 0x01, b'w'][..], &entry_body(&[low], &[high, low])].concat();
     assert_eq!(
         from_slice::<View>(&body),
-        Err(DecodeError::UnsortedOrDuplicateKey { at: 34 })
+        Err(DecodeError::UnsortedOrDuplicateKey { at: 71 })
     );
 }
 
 #[test]
 fn view_rejects_duplicate_workspaces() {
-    let id = to_vec(&HashAlg::Blake3.hash(b""));
-    let body = [&[0x00, 0x02][..], &[0x01, b'w'], &id, &[0x01, b'w'], &id].concat();
+    let id = HashAlg::Blake3.hash(b"");
+    let entry = entry_body(&[id], &[]);
+    // The second name starts after the count, the first name and the first
+    // entry: at 1 + 2 + 35 = 38.
+    let body = [&[0x02, 0x01, b'w'][..], &entry, &[0x01, b'w'], &entry].concat();
     assert_eq!(
         from_slice::<View>(&body),
-        Err(DecodeError::UnsortedOrDuplicateKey { at: 37 })
+        Err(DecodeError::UnsortedOrDuplicateKey { at: 38 })
     );
+}
+
+#[test]
+fn view_holds_one_entry_per_workspace() {
+    let a = HashAlg::Blake3.hash(b"a");
+    let b = HashAlg::Sha256.hash(b"b");
+    let view = View {
+        workspaces: [
+            (
+                "lane".to_owned(),
+                WorkspaceEntry {
+                    working_copy: [a, b].into(),
+                    heads: [a, b].into(),
+                },
+            ),
+            (
+                "default".to_owned(),
+                WorkspaceEntry {
+                    working_copy: [a].into(),
+                    heads: [a].into(),
+                },
+            ),
+        ]
+        .into(),
+    };
+    let body = to_vec(&view);
+    // The map in name order: "default" first, then "lane", whose pointer
+    // holds two changesets.
+    let expected = [
+        &[0x02, 0x07][..],
+        b"default",
+        &entry_body(&[a], &[a]),
+        &[0x04],
+        b"lane",
+        &entry_body(&[a, b], &[a, b]),
+    ]
+    .concat();
+    assert_eq!(body, expected);
+    assert_eq!(from_slice::<View>(&body), Ok(view.clone()));
+    assert_eq!(View::from_envelope(&view.to_envelope()), Ok(view));
+}
+
+#[test]
+fn empty_workspace_names_are_rejected() {
+    let id = HashAlg::Blake3.hash(b"");
+    // A view whose one entry is named "": the name starts at 1.
+    let body = [&[0x01, 0x00][..], &entry_body(&[id], &[])].concat();
+    assert_eq!(
+        from_slice::<View>(&body),
+        Err(DecodeError::EmptyWorkspaceName { at: 1 })
+    );
+    // An operation made in "": no parents, then the name, at 1.
+    let body = [&[0x00, 0x00][..], &to_vec(&id)].concat();
+    assert_eq!(
+        from_slice::<Operation>(&body),
+        Err(DecodeError::EmptyWorkspaceName { at: 1 })
+    );
+}
+
+#[test]
+fn empty_working_copies_are_rejected() {
+    let id = HashAlg::Blake3.hash(b"");
+    // Entry "w" with no working copy: the set starts at 3.
+    let body = [&[0x01, 0x01, b'w'][..], &entry_body(&[], &[id])].concat();
+    assert_eq!(
+        from_slice::<View>(&body),
+        Err(DecodeError::EmptyWorkingCopy { at: 3 })
+    );
+}
+
+#[test]
+fn view_references_are_each_entry() {
+    let h = |text: &[u8]| HashAlg::Blake3.hash(text);
+    let view = View {
+        workspaces: [
+            (
+                "b".to_owned(),
+                WorkspaceEntry {
+                    working_copy: [h(b"b-wc")].into(),
+                    heads: [h(b"b-head")].into(),
+                },
+            ),
+            (
+                "a".to_owned(),
+                WorkspaceEntry {
+                    working_copy: [h(b"a-wc")].into(),
+                    heads: [h(b"a-head-1"), h(b"a-head-2")].into(),
+                },
+            ),
+        ]
+        .into(),
+    };
+    // Entries in name order, each its working copy and then its heads, every
+    // one a changeset.
+    let a_heads: Vec<HashRef> = view.workspaces["a"].heads.iter().copied().collect();
+    let expected: Vec<(HashRef, ObjectKind)> = [h(b"a-wc")]
+        .into_iter()
+        .chain(a_heads)
+        .chain([h(b"b-wc"), h(b"b-head")])
+        .map(|id| (id, ObjectKind::Changeset))
+        .collect();
+    assert_eq!(typed_references(&view.to_envelope()), Ok(expected));
 }
 
 #[test]
@@ -182,7 +296,7 @@ fn bodies_reject_trailing_bytes() {
     assert_eq!(
         from_slice::<View>(&view_bytes),
         Err(DecodeError::TrailingBytes {
-            at: 2,
+            at: 1,
             remaining: 1
         })
     );
@@ -231,7 +345,7 @@ fn event_kind_stays_reserved() {
 
 #[test]
 fn references_of_each_kind() {
-    use codec::{Operation, blob, references};
+    use codec::{blob, references};
     let h = |s: &[u8]| HashAlg::Blake3.hash(s);
     assert_eq!(references(&blob(b"content")), Ok(Vec::new()));
     let changeset = Changeset {
@@ -262,15 +376,22 @@ fn references_of_each_kind() {
         Ok(vec![h(b"p2"), h(b"p1"), h(b"a"), h(b"c")])
     );
     let view = View {
-        heads: [h(b"head")].into(),
-        workspaces: [("default".to_owned(), h(b"wc"))].into(),
+        workspaces: [(
+            "default".to_owned(),
+            WorkspaceEntry {
+                working_copy: [h(b"wc")].into(),
+                heads: [h(b"head")].into(),
+            },
+        )]
+        .into(),
     };
     assert_eq!(
         references(&view.to_envelope()),
-        Ok(vec![h(b"head"), h(b"wc")])
+        Ok(vec![h(b"wc"), h(b"head")])
     );
     let op = Operation {
         parents: [h(b"op")].into(),
+        workspace: "default".to_owned(),
         view: h(b"view"),
     };
     assert_eq!(

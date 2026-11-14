@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use codec::{
     Bytes, Changeset, Decode, DecodeError, Encode, Entry, Envelope, Mode, ObjectKind, Operation,
-    RepoPath, View, blob, decode_envelope, from_slice, to_vec,
+    RepoPath, View, WorkspaceEntry, blob, decode_envelope, from_slice, to_vec,
 };
 use hash::{HashAlg, HashRef};
 
@@ -60,10 +60,12 @@ fn corpus() -> Vec<Case> {
     };
     let operation_root = Operation {
         parents: BTreeSet::new(),
+        workspace: "default".to_owned(),
         view: HashAlg::Blake3.hash(b""),
     };
     let operation_merge = Operation {
         parents: BTreeSet::from([HashAlg::Blake3.hash(b""), HashAlg::Sha256.hash(b"abc")]),
+        workspace: "default".to_owned(),
         view: HashAlg::Sha256.hash(b""),
     };
     let path = |p: &str| RepoPath::new(p).unwrap();
@@ -95,9 +97,25 @@ fn corpus() -> Vec<Case> {
         ]),
         description: b"fix".to_vec(),
     };
+    let one = BTreeSet::from([HashAlg::Blake3.hash(b"")]);
     let view = View {
-        heads: BTreeSet::from([HashAlg::Blake3.hash(b"")]),
-        workspaces: BTreeMap::from([("default".to_owned(), HashAlg::Blake3.hash(b""))]),
+        workspaces: BTreeMap::from([(
+            "default".to_owned(),
+            WorkspaceEntry {
+                working_copy: one.clone(),
+                heads: one,
+            },
+        )]),
+    };
+    let two = BTreeSet::from([HashAlg::Blake3.hash(b""), HashAlg::Sha256.hash(b"abc")]);
+    let view_conflict = View {
+        workspaces: BTreeMap::from([(
+            "default".to_owned(),
+            WorkspaceEntry {
+                working_copy: two.clone(),
+                heads: two,
+            },
+        )]),
     };
     vec![
         case("uvarint-0", 0u64),
@@ -149,6 +167,12 @@ fn corpus() -> Vec<Case> {
             Changeset::from_envelope,
         ),
         object_case("view", view, View::to_envelope, View::from_envelope),
+        object_case(
+            "view-conflict",
+            view_conflict,
+            View::to_envelope,
+            View::from_envelope,
+        ),
         object_case(
             "operation-root",
             operation_root,
@@ -317,6 +341,7 @@ fn golden_corpus_has_the_spec_types() {
             ("changeset-root", type_name::<Changeset>()),
             ("changeset-edit", type_name::<Changeset>()),
             ("view", type_name::<View>()),
+            ("view-conflict", type_name::<View>()),
             ("operation-root", type_name::<Operation>()),
             ("operation-merge", type_name::<Operation>()),
         ]

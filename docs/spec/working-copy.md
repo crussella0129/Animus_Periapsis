@@ -7,8 +7,12 @@ AC-7, on the provisional `changeset` and `view` kinds of
 [format v1](format-v1.md). The `workspace` crate implements it, through
 `sim::Fs`. Sprint 3 adds writing the working copy for `undo` and
 `restore` ([Writing the working copy](#writing-the-working-copy)) and INT-0004
-AC-3 and AC-4. Checkout of another change, conflicts, several workspaces and
-the stat cache come later.
+AC-3 and AC-4. Sprint 7 adds the merge of op heads
+([INT-0010](../intents/INT-0010-lock-free-concurrency.md)), several
+workspaces over one store, which `praps lane` makes (INT-0014 AC-3), and
+`undo` and `restore` scoped to the workspace that runs them
+([INT-0009](../intents/INT-0009-reversible-by-default.md)). Checkout of
+another change, conflicts and the stat cache come later.
 
 ## Layout
 
@@ -26,7 +30,8 @@ A repository is a directory, the working copy. Its store is
 
 The root op is three objects:
 - an empty changeset with no parents and a fresh change ID;
-- a view whose single head, and whose `default` workspace, is that changeset;
+- a view with one entry, `default`, whose working copy and heads are that
+  changeset;
 - an op naming that view, with no parents.
 
 On a repository that already has an op, `init` writes nothing. Running it
@@ -36,11 +41,13 @@ again therefore completes an interrupted `init`. Opening a repository makes
 ## Finding the working copy
 
 A directory is the **top** of a working copy when listing its `.praps/store`
-succeeds. A command that opens a working copy (`status`, `describe`, `new`,
-`log`, `ops`, `undo`, `restore`) acts on the nearest top among the directory
-it is given, or the current directory when it is given none, and the
-directories above that one. So a command does the same thing wherever inside
-the working copy it is run.
+succeeds, or, for a lane ([Lanes](#lanes)), when reading its
+`.praps/workspace` does. A command that opens a working copy (`status`,
+`describe`, `new`, `log`, `ops`, `undo`, `restore`, `lane`, `lanes`) acts on
+the nearest top among the directory it is given, or the current directory
+when it is given none, and the directories above that one. So a command does
+the same thing wherever inside the working copy it is run, and in a lane it
+acts on that lane.
 
 - **Above the starting directory.** `praps` then makes the top its current
   directory and runs as if started there, so what it writes and syncs is what
@@ -48,19 +55,37 @@ the working copy it is run.
 - **A directory that is not there**, or is not a directory, is refused by the
   name given. Nothing above it is acted on.
 - **No top there or above** is a refusal that says so.
-- **A `.praps/store` that cannot be listed** for a reason other than absence
-  stops the search. A repository further up is never used in its place.
+- **A `.praps/store` that cannot be listed**, or a `.praps/workspace` that
+  cannot be read, for a reason other than absence, stops the search. A
+  repository further up is never used in its place. A `.praps/workspace`
+  that reads but does not parse is a top too: opening it says what is wrong.
 - **Names.** A refusal names the working copy by the directory given, when
   one was given and it is the top, and by the top's full path otherwise.
 - **Links.** The directories above are taken from the starting directory's
   full path as written. A symbolic link in it is not resolved first.
 
 `praps init` never makes a repository inside another: with a top above the
-directory it is given, it writes nothing and names that working copy,
-whatever the directory holds. An entry named `.praps` below the top that is a
+directory it is given, or a lane's own `.praps/workspace` in it, it writes
+nothing and names that working copy, whatever the directory holds. A
+`.praps/workspace` there that cannot be read is refused too, naming the
+file: it may be a lane's.
+
+`praps lane DIR` makes lane NAME, DIR's last name, at DIR, from the working
+copy it runs in. DIR is read from where `praps` was started. It is refused
+when DIR lies inside any working copy, found by searching up from DIR's
+parent with the rule above, when its last name is no plain text (one that
+holds a control character, such as a line break, is none), when NAME
+is already a workspace, and when DIR is not free. DIR itself is judged only
+by whether it is free, so a lane made over an interrupted one finishes it.
+`praps lanes` records the working copy, then lists every workspace in name
+order: `*` for its own, the name, the change its working copy is on and how
+many paths that change changes, and the other changes of a pointer that
+holds several. `praps ops` names, on each line, the workspace that made the
+op and shows that workspace's change. An entry named `.praps` below the top that is a
 file, or a directory with no `store` in it, is tracked like any other entry.
 
-`praps verify DIR` checks the first of: the store of DIR, if DIR is a top;
+`praps verify DIR` checks the first of: the store of DIR, if DIR is a top
+(for a lane, the store its `.praps/workspace` names);
 DIR itself, if it holds `objects` and `ops`; the store of the nearest top
 above DIR; DIR itself, which then fails as not a store. If whether DIR holds
 them cannot be read, `verify` stops there and checks no other store.
@@ -70,8 +95,9 @@ next ([INT-0037](../intents/INT-0037-command-set.md) AC-4).
 
 ## The working-copy change
 
-The view names the working-copy change of workspace `default`. A
-changeset's `changes` are relative to its first parent's tree; a root's are
+Each workspace's entry in the view names its working-copy change, and a
+working copy reads and writes only its own workspace's entry, `default`
+for the repository `init` makes. A changeset's `changes` are relative to its first parent's tree; a root's are
 relative to the empty tree. A tree is derived by applying the changes along
 the chain of first parents, and it is never stored
 ([INT-0013](../intents/INT-0013-derived-data.md)). A changeset with several
@@ -81,8 +107,9 @@ parents is refused with an error until merges exist
 ## Reading the op log
 
 A command reads the op log once, at its start: one listing of `ops/` and one
-read of each op file. From that it knows every valid op, the single head, the
-view and the working-copy change, and it keeps them for as long as it runs. A
+read of each op file. From that it knows every valid op, the op heads, the
+view they leave together ([Merging op heads](#merging-op-heads)) and the
+working-copy change, and it keeps them for as long as it runs. A
 step that commits an op adds that op to what the command holds, so a later
 step of the same command reads nothing again.
 
@@ -91,7 +118,7 @@ first command on a workspace that was just opened uses the reading that
 opening made, so a `praps` process, which opens the repository and runs one
 command, reads the log once. An op another process writes between the opening
 and that command is treated like any op written while a command runs: both
-stand, the log has two heads, and the next command stops and names them.
+stand, the log has two heads, and the next command merges them.
 
 `Workspace::working_copy` and `Workspace::parent_tree` read the store every
 time they are called. They exist for tests that compare what is stored with a
@@ -101,6 +128,98 @@ Two costs that grow with the history remain. Opening a store lists `objects/`
 and `ops/` once each, to see that they exist. And every command reads the
 whole chain of changes to build a tree. Both wait for the storage form
 ([INT-0008](../intents/INT-0008-compact-history-storage.md)).
+
+## Merging op heads
+
+Commands that run at the same time each commit an op over the heads they
+read, so the log can have several heads. A command that finds several works
+from the view they leave together, their canonical merge
+([INT-0010](../intents/INT-0010-lock-free-concurrency.md)). The merge is
+computed in memory and never committed: it is a function of the set of heads,
+so every process that holds the same ops computes the same view, whatever
+order it found them in, and a command that changes nothing writes nothing.
+
+An entry is written only by ops made in its workspace
+([INT-0016](../intents/INT-0016-actors-and-agent-lifecycle.md)): an op names
+the workspace that made it, and its copies of the other entries are only what
+it saw. The merge takes each entry from its own workspace's ops:
+- Its **writers** are the ops made in that workspace, among the heads and
+  every op they follow, that no other op made there follows.
+- With no writer the entry is absent. With one, it is that op's entry.
+- With several, their entries are merged against a **base**: the entry at
+  their latest common op made in that workspace; or, when there are several
+  such ops (a criss-cross), their entries merged the same way; or no entry
+  when they have none in common.
+- Against the base, the working-copy pointer keeps the base's value when no
+  writer changed it, and otherwise holds every value the writers that
+  changed it hold: one changeset, or several. A changeset is among the heads
+  when it is in the base and every writer kept it, or is not in the base and
+  some writer has it.
+
+With one head the merge is that head's view. A command that changes
+something commits one op, made in its own workspace, whose parents are every
+head it merged and whose view is the merge with only its own entry changed;
+that entry's pointer holds one changeset. INT-0010 records the merge's known
+limit: a value set back to an earlier one reads as no change against an older
+base.
+
+**The race rule.** When two commands of one workspace move its pointer at
+the same time, the merged pointer holds both changes. The next command there
+continues from the one with the smallest id, keeps the others among the
+workspace's heads, and prints one note naming every one of them. Once it
+commits, the pointer holds one change again
+([INT-0014](../intents/INT-0014-working-copy-and-workspaces.md)).
+
+## Lanes
+
+A lane is a working copy over the store of the working copy it was made
+from ([INT-0014](../intents/INT-0014-working-copy-and-workspaces.md)). Its
+`.praps` holds no store, only `.praps/workspace`: two lines, `name NAME` and
+`store PATH`, where PATH is the store's directory (`praps` writes its full
+path, as a linked Git worktree names its repository). Every op and object a
+lane makes goes into that one store, so a lane is no clone.
+
+**Opening a lane.** A directory with no `.praps/store` but a
+`.praps/workspace` is opened as workspace NAME over the store the file
+names. A file that cannot be read or does not parse is an error naming it,
+and a store that does not open is an error of its own. `.praps/store` is
+probed first, so opening a repository's own working copy makes no syscall
+it did not make before.
+
+**Making a lane** NAME at DIR from workspace W:
+1. W snapshots.
+2. NAME must not be a workspace yet, and DIR must be free: absent, empty, or
+   holding nothing but a `.praps` an interrupted making left. Such a `.praps`
+   holds no `workspace` file, or one naming a workspace no op made; beside
+   it there may be at most `workspace.new`, the record and `working-copy.new`.
+   Otherwise nothing more is written.
+3. The lane's first change has no changes, and as its only parent the parent
+   of W's working-copy change, or no parent when that change has none. W
+   rewrites its working-copy change at every snapshot and `describe`, so a
+   lane made on it would sit on a version W has already replaced. W's edits
+   in progress are therefore not in the lane.
+4. DIR and `DIR/.praps` are made durable. If writing the change's files
+   would meet a hazard or a path that blocks ([Classifying
+   paths](#classifying-paths)), making the lane is refused here, as `restore`
+   refuses such a write: DIR stays free, and nothing else is written.
+   Otherwise `.praps/workspace` is written as `workspace.new`, synced,
+   renamed, and `.praps` synced.
+5. The record is written in `DIR/.praps`: `from empty`, and the lane's op as
+   its target ([The record](#the-record)).
+6. The op is committed: made in NAME, over every head, its view the merge
+   with NAME's entry added, the new change as its working copy and its head.
+7. The change's files are written into DIR ([Materialise](#materialise)).
+8. The record is dropped.
+
+**An interrupted making.** Before `.praps/workspace` is in place, DIR is no
+repository. Once it is, but before the op lands, a command at DIR drops the
+record if one is left, as resume drops one whose target is absent, and
+refuses, naming the lane; nothing else is written. In both cases DIR is
+free, and making the lane again there finishes it. Once the op has landed,
+the next command at DIR resumes the write and finishes the lane's files.
+
+A lane is a checkout: making one writes every file. The cheap workspace,
+one view entry and no file (INT-0014 AC-4), is still to come.
 
 ## Snapshot
 
@@ -115,10 +234,9 @@ A snapshot does the following:
    ([Reading the op log](#reading-the-op-log)). If `ops/` holds an op file
    that does not hash to its name or does not decode, it stops and says how
    many are not whole; `praps` then ends its refusal with a hint that names
-   `praps verify`. It finds the single op head. With no op it reports
-   that the repository is not initialised. With several op heads it stops,
-   names every head, and writes nothing. Concurrent ops are not merged
-   until [INT-0010](../intents/INT-0010-lock-free-concurrency.md).
+   `praps verify`. With no op it reports that the repository is not
+   initialised. With several op heads it works from their merge
+   ([Merging op heads](#merging-op-heads)).
 2. **Scans** the working copy, from the top down, following the ignore rules
    below. Each regular file's bytes are read exactly as found, with no
    normalisation ([INT-0034](../intents/INT-0034-any-content.md)). A file
@@ -132,9 +250,10 @@ A snapshot does the following:
    - a changeset with the same change ID, parents and description, whose
      changes are the new tree against the parent's tree (a `put` for each
      added or changed path, a `delete` for each removed one);
-   - a view in which that changeset replaces the old one, both as a head and
-     as the `default` workspace's change;
-   - an op whose single parent is the head.
+   - a view, the merge with only this workspace's entry changed, in which
+     that changeset replaces the old one, both as a head and as the
+     working copy;
+   - an op made in this workspace whose parents are every op head.
 
    The store refuses an object whose references are missing, and makes the
    op the acknowledgement.
@@ -247,11 +366,13 @@ This is called *materialising* F → T.
 
 ### History commands
 
-- **`ops`** snapshots, then lists every op, newest first: its id, the change
-  ID of its working-copy change, and the number of paths that change
-  changes. "Newest first" means a topological order, children before
-  parents, ties broken by id. It reads two objects for each op, the view and
-  the working-copy changeset, however long the history is. (Until Sprint 6
+- **`ops`** snapshots, then lists every op, newest first: its id, the
+  workspace that made it, the change ID of that workspace's working-copy
+  change in the op's view (the smallest, when its pointer holds several),
+  and the number of paths that change changes. "Newest first" means a
+  topological order, children before parents, ties broken by id. It reads
+  two objects for each op, the view and the working-copy changeset, however
+  long the history is. (Until Sprint 6
   this command was `log`, and it counted the files of each op's whole tree,
   which read the chain of changes again for every line.)
 - **`log`** snapshots, then lists the working-copy change and the changes
@@ -259,23 +380,39 @@ This is called *materialising* F → T.
   paths the change changes, and the first line of its description, or
   `(no description)`. The line is escaped as names are, so it stays one line
   whatever bytes the description holds. It reads one object for each change.
-- **`undo`** takes H, the single op head when the command starts, before its
-  snapshot. It then snapshots. If H has no parent, it fails with "nothing to
-  undo", having written only that snapshot. Otherwise the target view is the
-  view object of H's parent. A second `undo` restores the view before the
-  first, so `undo` toggles. The edits a snapshot captured stay reachable by
-  `restore`.
-- **`restore OP`** snapshots, then takes OP's view as the target. OP is an op
-  id in text form or a unique prefix of its hex digest (with or without the
-  `blake3:` part). A prefix that matches no op, or several, is an error
-  listing the candidates, written after the snapshot only.
+- **`undo`** takes this workspace's last op: its writers when the command
+  starts, before its snapshot ([Merging op heads](#merging-op-heads)); with
+  one head, that head. It then snapshots. The target entry is this
+  workspace's entry in the view the writers' parents leave together. If
+  they have no parent, or that view has no entry for this workspace (the
+  writer is the op that made it), `undo` fails with "nothing to undo",
+  having written only that snapshot. A second `undo` returns the entry to
+  its value before the first, so `undo` toggles. The edits a snapshot
+  captured stay reachable by `restore`. It prints the ops it went back to:
+  `back to op X`, or with several parents `back to ops X, Y`, in id order.
+- **`restore OP`** snapshots, then takes this workspace's entry in OP's view
+  as the target entry. OP is an op id in text form or a unique prefix of its
+  hex digest (with or without the `blake3:` part). A prefix that matches no
+  op, or several, is an error listing the candidates, and an OP whose view
+  has no entry for this workspace (one made before it) is an error too;
+  each is written after the snapshot only.
+
+Both are scoped to the workspace that runs them
+([INT-0009](../intents/INT-0009-reversible-by-default.md)): the target view
+is the view the command loaded, with only this workspace's entry set to the
+target entry. No other workspace's entry changes. When the target entry's
+pointer holds several changesets, the smallest is kept as the pointer, the
+others stay among the heads, and the race note is printed, as the race rule
+says. When the target view is exactly one op's own view, as it always is
+with one workspace and one parent, that view object is named again rather
+than written.
 
 Both `undo` and `restore` then:
 1. check hazards and blocking entries (below), failing with nothing more
    written;
 2. write the record;
-3. commit an op whose single parent is the head after the snapshot and whose
-   view is the target view, the exact view object, unchanged;
+3. commit an op made in this workspace, whose parents are every op head
+   after the snapshot and whose view is the target view;
 4. materialise F → T.
 
 Each of them scans the working copy once: the snapshot named above is the
@@ -288,11 +425,14 @@ No command removes an op (INT-0009 AC-1).
 
 ### The record
 
-`.praps/working-copy` holds two lines, `from <op>` and `target <op>`, each
-op id in its text form. `from` is the head after the snapshot, whose
-working-copy tree is F. `target` is the op step 3 commits, whose view's
-working-copy tree is T. The target op's id is computed from its envelope
-before it is committed.
+`.praps/working-copy` holds two lines, `from <changeset>` or `from empty`,
+and `target <op>`, each id in its text form. `from` is the working-copy
+changeset after the snapshot, whose tree is F; a merged state has no single
+op, so the record names the change. `empty` names the empty tree, which a
+lane's first write starts from. `target` is the op step 3 commits, whose
+view's working-copy tree is T. The target op's id is computed from its
+envelope before it is committed. A `from` that names no changeset in the
+store is a `Corrupt` error.
 
 The record is written as `.praps/working-copy.new` (replacing any left
 over), synced, renamed to `.praps/working-copy`, and then `.praps` is synced,
@@ -408,15 +548,18 @@ mode is kept as described in [The executable bit](#the-executable-bit).
 ### Resume
 
 Every command that opens the working copy (every one but `init`) first
-checks that every file in `ops/` is a whole op, and stops if one is not,
-leaving the record and every file as they are. Resume looks for the record's
+checks that every file in `ops/` is a whole op, and that every parent an op
+names is among them, and stops if not, leaving the record and every file as
+they are; the merge walks every op the heads follow. Resume looks for the record's
 target among the valid ops, so without that check a target whose file was
 damaged would look like a write that never began: the record would be
 dropped, though files might already have been written, and the half-written
 working copy would be snapshotted as edits once the op file was repaired.
 
 It then looks for a record:
-- **The target op is the current single head.** Resume removes the files
+- **The target op is its workspace's only writer**: no other op made in
+  that workspace follows it or stands beside it, whatever ops of other
+  workspaces do. Resume removes the files
   at the diff's temporary names (never an F or T path, and never anything
   but a file), then materialises F → T again with the same rules. A
   temporary name still taken leaves its path as it is, with a note. A path that still blocks, or has since become a hazard (a case
@@ -425,9 +568,9 @@ It then looks for a record:
   paths it left as they are.
 - **The target op is absent.** The files were never touched. Resume drops
   the record and touches no file.
-- **The target op is present but not the head.** Resume removes the diff's
-  temporary names that exist, drops the record, touches no other file, and
-  adds a note.
+- **The target op is present, but another op of its workspace followed it
+  or stands beside it.** Resume removes the diff's temporary names that
+  exist, drops the record, touches no other file, and adds a note.
 
 Dropping the record means removing it and syncing `.praps`. While a record
 exists, its diff's temporary names belong to `praps`. Notes are returned by

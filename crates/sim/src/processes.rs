@@ -15,6 +15,7 @@ use std::any::Any;
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::panic::{self, AssertUnwindSafe};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
 
@@ -87,6 +88,9 @@ pub struct Processes {
     seed: u64,
     orderings: Vec<(After, usize, &'static str, u32)>,
     kills: BTreeMap<usize, KillAt>,
+    /// Wakes of a waiting process that found it was not its turn, over this
+    /// setup's runs (see [`Processes::needless_wakes`]).
+    needless: Arc<AtomicU64>,
 }
 
 /// The marker a killed or stopped process unwinds with.
@@ -122,7 +126,11 @@ struct Sched {
 
 struct Shared {
     sched: Mutex<Sched>,
-    turn: Condvar,
+    /// One for each process, which waits on its own: a boundary wakes only
+    /// the process drawn to run next, or every process once the run is
+    /// ending (Sprint 7 T-008). Waking every thread at every boundary cost
+    /// about 3 ms a boundary at 1,000 processes.
+    turns: Vec<Condvar>,
     setup: Processes,
     fs: Arc<SimFs>,
 }
@@ -177,7 +185,19 @@ impl Shared {
             let pick = sched.rng.below(able.len() as u64) as usize;
             sched.running = Some(able[pick]);
         }
-        self.turn.notify_all();
+        self.wake(sched);
+    }
+
+    /// Wakes the process that runs next, or, when the run is ending, every
+    /// process, so that each unwinds.
+    fn wake(&self, sched: &Sched) {
+        if sched.abort {
+            for turn in &self.turns {
+                turn.notify_all();
+            }
+        } else if let Some(next) = sched.running {
+            self.turns[next].notify_all();
+        }
     }
 
     /// Blocks until `me` holds the baton, or the run is ending (then the
@@ -188,10 +208,12 @@ impl Shared {
         me: usize,
     ) -> MutexGuard<'a, Sched> {
         while sched.running != Some(me) && !sched.abort {
-            sched = self
-                .turn
+            sched = self.turns[me]
                 .wait(sched)
                 .unwrap_or_else(PoisonError::into_inner);
+            if sched.running != Some(me) && !sched.abort {
+                self.setup.needless.fetch_add(1, Ordering::Relaxed);
+            }
         }
         sched
     }
@@ -204,7 +226,7 @@ impl Shared {
         if sched.running == Some(me) || sched.running.is_none() {
             self.draw(&mut sched);
         } else {
-            self.turn.notify_all();
+            self.wake(&sched);
         }
     }
 
@@ -277,6 +299,14 @@ impl Processes {
         self
     }
 
+    /// How many times, over this setup's runs so far, a waiting process woke
+    /// although it was not its turn and the run was not ending. A boundary
+    /// wakes only the process drawn next, so this is zero but for the
+    /// system's own spurious wakeups (Sprint 7 T-008; test critique C-011).
+    pub fn needless_wakes(&self) -> u64 {
+        self.needless.load(Ordering::Relaxed)
+    }
+
     /// Kills process `process` at `at`. A process has at most one kill.
     pub fn kill(mut self, process: usize, at: KillAt) -> Self {
         let previous = self.kills.insert(process, at);
@@ -347,7 +377,7 @@ impl Processes {
                 panic: None,
                 deadlock: None,
             }),
-            turn: Condvar::new(),
+            turns: (0..n).map(|_| Condvar::new()).collect(),
             setup: self.clone(),
             fs: Arc::clone(fs),
         });

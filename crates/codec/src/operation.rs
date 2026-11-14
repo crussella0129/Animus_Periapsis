@@ -1,7 +1,7 @@
 //! The `operation` object (kind `0x03`), *provisional* until the Phase 1 exit
 //! gate (`docs/spec/format-v1.md`, INT-0006).
 //!
-//! Body: `parents: set<hashref> ‖ view: hashref`.
+//! Body: `parents: set<hashref> ‖ workspace: string ‖ view: hashref`.
 
 use std::collections::BTreeSet;
 
@@ -16,6 +16,9 @@ use crate::wire::{Decode, Decoder, Encode, Encoder, to_vec};
 pub struct Operation {
     /// The operations this one follows; empty for a root operation.
     pub parents: BTreeSet<HashRef>,
+    /// The workspace that made it: the only view entry it writes
+    /// (INT-0016). Never empty.
+    pub workspace: String,
     /// The id of the view this operation leaves.
     pub view: HashRef,
 }
@@ -35,14 +38,22 @@ impl Operation {
 impl Encode for Operation {
     fn encode(&self, enc: &mut Encoder) {
         self.parents.encode(enc);
+        self.workspace.encode(enc);
         self.view.encode(enc);
     }
 }
 
 impl Decode for Operation {
     fn decode(dec: &mut Decoder<'_>) -> Result<Self, DecodeError> {
+        let parents = BTreeSet::decode(dec)?;
+        let at = dec.position();
+        let workspace = String::decode(dec)?;
+        if workspace.is_empty() {
+            return Err(DecodeError::EmptyWorkspaceName { at });
+        }
         Ok(Operation {
-            parents: BTreeSet::decode(dec)?,
+            parents,
+            workspace,
             view: HashRef::decode(dec)?,
         })
     }

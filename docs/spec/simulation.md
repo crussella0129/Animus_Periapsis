@@ -79,7 +79,9 @@ could be shown to reach it (INT-0005 Consequences).
 `SimFs`.
 
 **The baton.** Each process is an OS thread, but a baton lets exactly one run
-at a time. A thread starts only once it holds the baton.
+at a time. A thread starts only once it holds the baton. Each process waits on
+a condition variable of its own, so a boundary wakes only the process drawn to
+run next, or every process once the run is ending (Sprint 7).
 
 **Draws.** The next runner is drawn from the run's seed, among the processes
 able to run, at each of these:
@@ -156,6 +158,90 @@ When a sprint adds a point, the expected response is:
 The forced race itself depends on named points, not on the order of draws,
 so it survives new points.
 
+Sprint 7's two points are marked only where a load finds several op heads and
+where a lane is made. No earlier matrix does either, so none of their digests
+moved.
+
+## The Concurrency scenario
+
+Sprint 7 adds the first scenario in which several workspaces write at once:
+[INT-0014](../intents/INT-0014-working-copy-and-workspaces.md) AC-3 and
+[INT-0010](../intents/INT-0010-lock-free-concurrency.md) AC-5 and AC-7. It
+lives in `crates/workspace/tests/concurrency.rs`.
+
+**Setup,** uncrashed. A repository records a file, starts a change on top,
+and makes eight lanes. The two-store run then makes a second store from the
+first with the exchange (below), and lanes 4 to 7 name it. Two stores in one
+simulated filesystem stand in for two replicas.
+
+**The script.** Eight processes, one in each lane, run at once:
+1. an edit, recorded by `status`;
+2. `describe`;
+3. `new`;
+4. a second edit, then `undo`, which records the edit and takes back `new`;
+5. `status` and `changes`, which have nothing to record.
+
+**Cells.** Each directory mode and each of 40 seeds runs three times:
+1. with no kill and no crash, counting each process's steps;
+2. with a kill: a process and a step drawn from the seed;
+3. with that kill and a system crash at a syscall drawn from those the
+   processes made in run 2.
+
+Runs 2 and 3 are recovered and checked, run 2 as a crash after its last
+syscall: 160 cells on one store, and 160 on two. A command that fails after
+the crash is not counted.
+
+**The exchange.** After recovery, each store copies what it lacks from the
+other through its own `put_object` and `commit_op`, references and parents
+first. Every op is exchanged, since ops carry no scope yet.
+
+**Acknowledged.** The log lives outside the process threads. An op is
+acknowledged once the command that committed it returns;
+`Workspace::last_op` names the op a handle committed last. A lane whose
+script did not end has a command in flight.
+
+**Oracles**, on every store:
+- no command failed before the crash, other than in the killed process;
+- a command that changes nothing committed nothing;
+- every acknowledged op is present, the store checks clean, and no lane
+  holds a store of its own;
+- each lane's writer is its last acknowledged op, or an op of its command in
+  flight that follows it;
+- where the writer is the last acknowledged op, the merged view holds that
+  op's entry for the lane, and every changeset the entry names is present,
+  with every changeset it follows;
+- where the writer is an op in flight, the last acknowledged op's entry is
+  still in the store, with every changeset it names, so `restore` can return
+  to it;
+- every lane computes the view its store's heads leave together, both stores
+  compute the same one, and each lane then runs one more command.
+
+**Coverage.** Each run also asserts that some process was killed, some
+command was stopped by the crash, and some op in flight landed.
+
+**Negative controls.** Each runs the one-store run's cells and then the
+two-store run's, in order, until one breaks the oracle the control is meant
+to break; one such cell is the test's pass:
+
+| Variant | What it does | Caught by |
+|---|---|---|
+| `FirstHeadOnly` | a load takes only the first op head | the writer oracle |
+| `MergeOnRead` | a load that finds several heads commits their merge | a command that changes nothing commits |
+| the store's `UnsyncedObjects` | object data is never synced | the store does not check clean |
+
+**Readers** (INT-0010 AC-7). 2, 8 and 1,000 processes, over a store with
+three op heads, each compute the view and run `status` and `changes`, which
+change nothing. The op files stay exactly as they were, and every reader
+computes the merge of the heads. `MergeOnRead` fails this.
+
+**Reproducibility.** Each run is repeated: every cell's trace, state,
+violations and reach must be equal. Each run's cell count and digest are
+literals.
+
+**Points.** Sprint 7 registers `workspace.merge.computed`, marked when a load
+finds several op heads, and `workspace.lane.made`, marked once a lane's op is
+committed. The scenario reaches both.
+
 ## The reach table
 
 `docs/reach.md` is generated, never edited.
@@ -169,7 +255,8 @@ a temporary file and a rename.
 - the scenario's own run;
 - the next command it models on the recovered filesystem (`init` and `snapshot` for Snapshot; the resuming `open` for Materialise; `init`, one more edit and `snapshot` for Describe), read before the oracle checks anything.
 
-The oracle's own checks never count.
+The oracle's own checks never count. Concurrency counts its setup and its
+processes; the commands its lanes run after recovery are part of its oracle.
 
 | Scenario | Designated test | Added in |
 |---|---|---|
@@ -179,6 +266,7 @@ The oracle's own checks never count.
 | Materialise | `materialise_matrix_finds_no_violations` (Unix rules) | Sprint 3 |
 | four writers | `writers_matrix_finds_no_violations` | Sprint 4 |
 | Describe | `describe_matrix_finds_no_violations` | Sprint 6 |
+| Concurrency | `concurrency_finds_no_violations` | Sprint 7 |
 
 **Generating.** `cargo reach` takes no flags. It reads the files and the
 registries and writes the table:

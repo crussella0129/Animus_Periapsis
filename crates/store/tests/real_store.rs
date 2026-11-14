@@ -6,7 +6,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
 
-use codec::{Operation, View, blob};
+use codec::{Operation, View, WorkspaceEntry, blob};
 use hash::{HashAlg, HashRef};
 use sim::{RealFs, Rng};
 use store::Store;
@@ -53,11 +53,23 @@ fn real_store_reopens_clean() {
             .to_envelope();
             let changeset = store.put_object(&holder).unwrap();
             let view = View {
-                heads: [changeset].into(),
-                workspaces: Default::default(),
+                workspaces: [(
+                    "default".to_owned(),
+                    WorkspaceEntry {
+                        working_copy: [changeset].into(),
+                        heads: Default::default(),
+                    },
+                )]
+                .into(),
             };
             let view = store.put_object(&view.to_envelope()).unwrap();
-            store.commit_op(&Operation { parents, view }).unwrap()
+            store
+                .commit_op(&Operation {
+                    parents,
+                    workspace: "default".to_owned(),
+                    view,
+                })
+                .unwrap()
         };
         let base = commit(BTreeSet::new(), [a].into());
         let left = commit([base].into(), [b].into());
