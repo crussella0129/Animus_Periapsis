@@ -33,6 +33,8 @@ list:
 | `praps new [DIR]` | Start the next change |
 | `praps log [DIR]` | List the changes that lead to the working copy, newest first |
 | `praps undo [DIR]` | Take back the last operation |
+| `praps lane DIR` | Make a working copy of your own over this repository |
+| `praps lanes [DIR]` | List the working copies over this repository |
 | `praps ops [DIR]` | List every operation, newest first |
 | `praps restore OP [DIR]` | Return to the state an operation left |
 | `praps init [DIR]` | Make a directory a repository |

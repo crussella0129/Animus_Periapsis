@@ -36,11 +36,13 @@ again therefore completes an interrupted `init`. Opening a repository makes
 ## Finding the working copy
 
 A directory is the **top** of a working copy when listing its `.praps/store`
-succeeds. A command that opens a working copy (`status`, `describe`, `new`,
-`log`, `ops`, `undo`, `restore`) acts on the nearest top among the directory
-it is given, or the current directory when it is given none, and the
-directories above that one. So a command does the same thing wherever inside
-the working copy it is run.
+succeeds, or, for a lane ([Lanes](#lanes)), when reading its
+`.praps/workspace` does. A command that opens a working copy (`status`,
+`describe`, `new`, `log`, `ops`, `undo`, `restore`, `lane`, `lanes`) acts on
+the nearest top among the directory it is given, or the current directory
+when it is given none, and the directories above that one. So a command does
+the same thing wherever inside the working copy it is run, and in a lane it
+acts on that lane.
 
 - **Above the starting directory.** `praps` then makes the top its current
   directory and runs as if started there, so what it writes and syncs is what
@@ -48,19 +50,34 @@ the working copy it is run.
 - **A directory that is not there**, or is not a directory, is refused by the
   name given. Nothing above it is acted on.
 - **No top there or above** is a refusal that says so.
-- **A `.praps/store` that cannot be listed** for a reason other than absence
-  stops the search. A repository further up is never used in its place.
+- **A `.praps/store` that cannot be listed**, or a `.praps/workspace` that
+  cannot be read, for a reason other than absence, stops the search. A
+  repository further up is never used in its place. A `.praps/workspace`
+  that reads but does not parse is a top too: opening it says what is wrong.
 - **Names.** A refusal names the working copy by the directory given, when
   one was given and it is the top, and by the top's full path otherwise.
 - **Links.** The directories above are taken from the starting directory's
   full path as written. A symbolic link in it is not resolved first.
 
 `praps init` never makes a repository inside another: with a top above the
-directory it is given, it writes nothing and names that working copy,
-whatever the directory holds. An entry named `.praps` below the top that is a
+directory it is given, or a lane's own `.praps/workspace` in it, it writes
+nothing and names that working copy, whatever the directory holds.
+
+`praps lane DIR` makes lane NAME, DIR's last name, at DIR, from the working
+copy it runs in. DIR is read from where `praps` was started. It is refused
+when DIR lies inside any working copy, found by searching up from DIR's
+parent with the rule above, when its last name is no plain text, when NAME
+is already a workspace, and when DIR is not free. DIR itself is judged only
+by whether it is free, so a lane made over an interrupted one finishes it.
+`praps lanes` records the working copy, then lists every workspace in name
+order: `*` for its own, the name, the change its working copy is on and how
+many paths that change changes, and the other changes of a pointer that
+holds several. `praps ops` names, on each line, the workspace that made the
+op and shows that workspace's change. An entry named `.praps` below the top that is a
 file, or a directory with no `store` in it, is tracked like any other entry.
 
-`praps verify DIR` checks the first of: the store of DIR, if DIR is a top;
+`praps verify DIR` checks the first of: the store of DIR, if DIR is a top
+(for a lane, the store its `.praps/workspace` names);
 DIR itself, if it holds `objects` and `ops`; the store of the nearest top
 above DIR; DIR itself, which then fails as not a store. If whether DIR holds
 them cannot be read, `verify` stops there and checks no other store.

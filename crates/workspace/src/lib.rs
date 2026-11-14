@@ -1334,19 +1334,52 @@ impl<F: Fs> Workspace<F> {
             let view = self.view_of(op)?;
             let working_copy = *view
                 .workspaces
-                .get(DEFAULT_WORKSPACE)
+                .get(&op.workspace)
                 .and_then(|entry| entry.working_copy.first())
-                .ok_or_else(|| corrupt(format!("view {}: no default workspace", op.view)))?;
+                .ok_or_else(|| {
+                    corrupt(format!("view {}: no entry for {}", op.view, op.workspace))
+                })?;
             let changeset = self.changeset(&working_copy)?;
             entries.push(OpEntry {
                 id: *id,
                 parents: op.parents.clone(),
+                workspace: op.workspace.clone(),
                 working_copy,
                 change_id: changeset.change_id,
                 paths: changeset.changes.len(),
             });
         }
         Ok(entries)
+    }
+
+    /// Snapshots, then lists every workspace the heads hold, in name order:
+    /// its working-copy change (the smallest, when its pointer holds
+    /// several), what that change changes, and the other changes of a
+    /// pointer that holds several. With no edit it writes nothing.
+    pub fn lanes(&mut self) -> Result<Vec<LaneEntry>, Error> {
+        let mut state = self.begin()?;
+        self.snapshot_in(&mut state)?;
+        let mut lanes = Vec::new();
+        for (name, entry) in &state.at.view.workspaces {
+            let mut changes = Vec::new();
+            for id in &entry.working_copy {
+                changes.push(self.changeset(id)?);
+            }
+            let first = changes.remove(0);
+            lanes.push(LaneEntry {
+                name: name.clone(),
+                this: *name == self.name,
+                change_id: first.change_id,
+                paths: first.changes.len(),
+                others: changes.iter().map(|change| change.change_id).collect(),
+            });
+        }
+        Ok(lanes)
+    }
+
+    /// The workspace this working copy is.
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// Snapshots, then lists the working-copy change and the changes before
@@ -1516,7 +1549,10 @@ pub struct OpEntry {
     pub id: HashRef,
     /// Its parent ops.
     pub parents: BTreeSet<HashRef>,
-    /// The working-copy changeset of its view.
+    /// The workspace that made it.
+    pub workspace: String,
+    /// That workspace's working-copy changeset in the op's view: the
+    /// smallest, when the pointer holds several.
     pub working_copy: HashRef,
     /// That changeset's change ID.
     pub change_id: [u8; CHANGE_ID_LEN],
@@ -1524,6 +1560,22 @@ pub struct OpEntry {
     /// the files of its whole tree would need the chain of changes behind
     /// it, for every op listed.
     pub paths: usize,
+}
+
+/// One workspace, as `lanes` lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LaneEntry {
+    /// The workspace's name.
+    pub name: String,
+    /// Whether it is the workspace the command ran in.
+    pub this: bool,
+    /// Its working-copy change's change ID.
+    pub change_id: [u8; CHANGE_ID_LEN],
+    /// How many paths that change changes against its parent.
+    pub paths: usize,
+    /// The change IDs of the pointer's other changes, when commands moved it
+    /// at the same time.
+    pub others: Vec<[u8; CHANGE_ID_LEN]>,
 }
 
 /// One change, as `log` lists it.

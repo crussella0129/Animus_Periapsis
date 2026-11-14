@@ -86,8 +86,9 @@ pub fn for_error(error: &workspace::Error) -> Hint {
             Hint::Fix("give the lane a directory whose last name no workspace has")
         }
         Error::NotFree(_) => Hint::Fix("give a directory that does not exist yet, or an empty one"),
-        Error::UnfinishedLane(..) => Hint::Fix(
-            "make the lane again at this directory, from the working copy it was made from",
+        Error::UnfinishedLane(_, dir) => Hint::Run(
+            format!("praps lane {}", dir.display()),
+            "from the working copy it was made from, to finish the lane",
         ),
         Error::StoreGone(..) => Hint::Fix(
             "put the store back where this lane names it; a lane holds no store of its own",
@@ -194,6 +195,16 @@ pub fn inside_a_working_copy() -> Hint {
         "praps status",
         "to work in that working copy, or give `praps init` a directory outside it",
     )
+}
+
+/// A lane's directory whose last name is no plain name.
+pub fn lane_name() -> Hint {
+    Hint::Fix("give a directory whose last name is plain text, which names the lane")
+}
+
+/// A lane's directory inside a working copy.
+pub fn lane_outside() -> Hint {
+    Hint::Fix("give a directory outside every working copy, beside this one for example")
 }
 
 /// `init` stopped by the filesystem.
@@ -462,6 +473,16 @@ mod tests {
                 "3 problems".to_owned(),
                 damaged_store(),
             ),
+            (
+                "lane: a directory whose last name is no plain text",
+                "praps lane: /: a lane is named after its directory's last name".to_owned(),
+                lane_name(),
+            ),
+            (
+                "lane: a directory inside a working copy",
+                "praps lane: ../repo/sub: it lies inside the working copy at ../repo".to_owned(),
+                lane_outside(),
+            ),
         ];
         rows.extend(
             own.into_iter()
@@ -535,7 +556,7 @@ mod tests {
             forms[2]
         );
         assert!(forms.iter().all(|count| *count > 0), "{forms:?}");
-        assert_eq!(table.len(), VARIANTS.len() + 22);
+        assert_eq!(table.len(), VARIANTS.len() + 24);
     }
 
     /// Every command a hint names, wherever in the line, is one the

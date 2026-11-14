@@ -489,12 +489,15 @@ fn praps_ops_lists_operations_newest_first() {
     let lines = lines(&output);
     // init, the snapshot `new` took, `new` itself.
     assert_eq!(lines.len(), 3, "{lines:?}");
+    // Each line: the op, the workspace that made it (Sprint 7), and that
+    // workspace's change.
     for line in &lines {
         let parts: Vec<&str> = line.split(' ').collect();
-        assert_eq!(parts.len(), 5, "{line}");
+        assert_eq!(parts.len(), 6, "{line}");
         assert!(parts[0].len() == 12 && parts[0].bytes().all(|b| b.is_ascii_hexdigit()));
-        assert_eq!(parts[1], "change");
-        assert_eq!(parts[2].len(), 12);
+        assert_eq!(parts[1], "default");
+        assert_eq!(parts[2], "change");
+        assert_eq!(parts[3].len(), 12);
     }
     // Each line counts the paths its working-copy change changes: the
     // change `new` started is empty, the snapshot before it added `a` and
@@ -1182,6 +1185,7 @@ fn commands_act_the_same_from_below() {
         ("undo", vec!["undo".into()], |top| write(top, "a", b"3")),
         ("restore", vec!["restore".into(), first_op.clone()], |_| {}),
         ("verify", vec!["verify".into()], |_| {}),
+        ("lanes", vec!["lanes".into()], |top| write(top, "a", b"3")),
         ("a refusal", vec!["restore".into(), "0000".into()], |_| {}),
         (
             "a usage error",
@@ -1265,6 +1269,52 @@ fn commands_act_the_same_from_below() {
         ));
     }
     assert_eq!(results[0], results[1], "new: from the top and from below");
+
+    // `lane DIR`, with DIR given relative to each place, compared as `new`
+    // is: the line with DIR and the drawn change ID masked, the exit code,
+    // the ops, the files outside `.praps`, the lane's files, and what
+    // `praps lanes` prints next with the change IDs masked.
+    let masked = |text: &str| -> String {
+        text.split(' ')
+            .map(|word| {
+                let bare = word.trim_end_matches([',', '\n']);
+                if bare.len() == 12 && bare.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    "<id>"
+                } else {
+                    word
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let mut results = Vec::new();
+    for (n, sub) in ["", "d1/d2"].into_iter().enumerate() {
+        let top = dir.join(format!("copy-lane-{n}"));
+        copy_tree(&template, &top);
+        fs::create_dir(dir.join(format!("lanes-{n}"))).unwrap();
+        let depth = sub.split('/').filter(|part| !part.is_empty()).count();
+        let target = format!("{}lanes-{n}/agent", "../".repeat(depth + 1));
+        let output = praps(&["lane", &target], &top.join(sub));
+        let line = masked(&stdout(&output).replace(&target, "<dir>"));
+        let outside: Vec<_> = files_under(&top)
+            .into_iter()
+            .filter(|(path, _)| !path.starts_with(".praps"))
+            .collect();
+        let lane: Vec<_> = files_under(&dir.join(format!("lanes-{n}/agent")))
+            .into_iter()
+            .filter(|(path, _)| !path.starts_with(".praps"))
+            .collect();
+        let listed = masked(&stdout(&praps(&["lanes"], &top)));
+        results.push((
+            code(&output),
+            line,
+            logged_ops(&top).len(),
+            outside,
+            lane,
+            listed,
+        ));
+    }
+    assert_eq!(results[0], results[1], "lane: from the top and from below");
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -2251,10 +2301,102 @@ fn every_refusal_prints_one_hint() {
         1,
         "`praps init` there if its `init` was interrupted",
     );
-    // 24 everywhere; four more on Unix by file modes and one by a removed
+    // Sprint 7: the lane's refusals, a lane's own failures, `restore` in a
+    // lane of an op from before it was made, and `init` in a lane.
+    let lanes = dir.join("lanes");
+    fs::create_dir(&lanes).unwrap();
+    let made = lanes.join("l1");
+    assert_eq!(code(&praps(&["lane", made.to_str().unwrap()], &top)), 0);
+    let lane_cases = [
+        (
+            "lane: a directory inside this working copy",
+            "inside".to_owned(),
+            "outside every working copy",
+        ),
+        (
+            "lane: a directory inside another lane",
+            made.join("inner").to_str().unwrap().to_owned(),
+            "outside every working copy",
+        ),
+        (
+            "lane: a directory with no plain last name",
+            std::path::MAIN_SEPARATOR_STR.to_owned(),
+            "plain text",
+        ),
+        (
+            "lane: a name in use",
+            lanes.join("other").join("l1").to_str().unwrap().to_owned(),
+            "no workspace has",
+        ),
+        (
+            "lane: a directory that is not free",
+            lanes.join("full").to_str().unwrap().to_owned(),
+            "an empty one",
+        ),
+    ];
+    fs::create_dir(lanes.join("other")).unwrap();
+    fs::create_dir(lanes.join("full")).unwrap();
+    fs::write(lanes.join("full").join("x"), b"x").unwrap();
+    for (what, target, holds) in lane_cases {
+        refused(what, praps(&["lane", &target], &top), 1, holds);
+    }
+    let root_op = logged_ops(&top).last().unwrap().clone();
+    refused(
+        "restore in a lane of an op from before it",
+        praps(&["restore", &root_op], &made),
+        1,
+        "`praps ops`",
+    );
+    refused(
+        "init in a lane",
+        praps(&["init"], &made),
+        1,
+        "`praps status`",
+    );
+    let store = fs::canonicalize(top.join(".praps").join("store")).unwrap();
+    let store = store
+        .display()
+        .to_string()
+        .trim_start_matches(r"\?\")
+        .to_owned();
+    for (what, name, file, holds) in [
+        (
+            "an interrupted lane",
+            "ghost",
+            format!(
+                "name ghost
+store {store}
+"
+            ),
+            "`praps lane ",
+        ),
+        (
+            "a lane whose store is gone",
+            "gone",
+            "name gone
+store /no/such/.praps/store
+"
+            .to_owned(),
+            "put the store back",
+        ),
+        (
+            "a .praps/workspace that does not parse",
+            "damaged",
+            "not a lane file
+"
+            .to_owned(),
+            "put that file right",
+        ),
+    ] {
+        let lane = lanes.join(name);
+        fs::create_dir_all(lane.join(".praps")).unwrap();
+        fs::write(lane.join(".praps").join("workspace"), file).unwrap();
+        refused(what, praps(&["status"], &lane), 1, holds);
+    }
+    // 34 everywhere; four more on Unix by file modes and one by a removed
     // current directory; two more on Windows (a hazard, text that is not
     // Unicode).
-    let expected = if cfg!(unix) { 29 } else { 26 };
+    let expected = if cfg!(unix) { 39 } else { 36 };
     assert_eq!(kinds, expected, "kinds of refusal checked");
     let _ = fs::remove_dir_all(&dir);
 }
@@ -2525,6 +2667,282 @@ fn praps_undo_reports_every_op_it_went_back_to() {
             short(&raced[0]),
             short(&raced[1])
         )
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+// ------------------------------------------------------ lanes (Sprint 7 T-007)
+
+/// A repository at `dir/repo` with `a` recorded and a change on top, and a
+/// lane made from it at `dir/<name>` with `praps lane`. Returns the
+/// repository and the lane.
+fn with_lane(dir: &Path, name: &str) -> (PathBuf, PathBuf) {
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], dir)), 0);
+    write(&root, "a", b"1");
+    assert_eq!(code(&praps(&["new"], &root)), 0);
+    let lane = dir.join(name);
+    let output = praps(&["lane", lane.to_str().unwrap()], &root);
+    assert_eq!(code(&output), 0, "{output:?}");
+    (root, lane)
+}
+
+#[test]
+fn praps_lane_makes_a_workspace() {
+    let dir = claim("lane");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    write(&root, "a", b"1");
+    assert_eq!(code(&praps(&["new"], &root)), 0);
+    write(&root, "b", b"in progress");
+    let output = praps(&["lane", "../agent-17"], &root);
+    assert_eq!(code(&output), 0, "{output:?}");
+    let line = stdout(&output);
+    assert!(
+        line.starts_with("made lane agent-17 at ../agent-17, on change "),
+        "{line}"
+    );
+    assert_eq!(line.lines().count(), 1, "{line}");
+    let lane = dir.join("agent-17");
+    // The lane's files are the change before the current one: `a`, not `b`.
+    assert_eq!(fs::read(lane.join("a")).unwrap(), b"1");
+    assert!(!lane.join("b").exists());
+    // Its `.praps` names the store by its full path, and holds no store.
+    let file = fs::read_to_string(lane.join(".praps/workspace")).unwrap();
+    let store = file.lines().nth(1).unwrap().strip_prefix("store ").unwrap();
+    assert!(Path::new(store).is_absolute(), "{file}");
+    assert_eq!(
+        fs::canonicalize(store).unwrap(),
+        fs::canonicalize(root.join(".praps/store")).unwrap()
+    );
+    assert!(!lane.join(".praps/store").exists());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn praps_lane_refusals() {
+    let dir = claim("lane-refusals");
+    let (root, lane) = with_lane(&dir, "l1");
+    fs::create_dir(dir.join("full")).unwrap();
+    fs::write(dir.join("full/x"), b"x").unwrap();
+    fs::create_dir(dir.join("other")).unwrap();
+    let cases: [(&str, String, &str); 5] = [
+        (
+            "a directory inside this working copy",
+            "sub".into(),
+            "outside every working copy",
+        ),
+        (
+            "a directory inside another lane",
+            lane.join("inner").to_str().unwrap().into(),
+            "outside every working copy",
+        ),
+        (
+            "a directory with no plain last name",
+            std::path::MAIN_SEPARATOR_STR.into(),
+            "plain text",
+        ),
+        ("a name in use", "../other/l1".into(), "no workspace has"),
+        (
+            "a directory that is not free",
+            "../full".into(),
+            "an empty one",
+        ),
+    ];
+    for (what, target, holds) in cases {
+        let ops = logged_ops(&root).len();
+        let output = praps(&["lane", &target], &root);
+        assert_eq!(code(&output), 1, "{what}: {output:?}");
+        let err = stderr(&output);
+        assert_eq!(
+            err.lines().filter(|l| l.starts_with("hint: ")).count(),
+            1,
+            "{what}: {err}"
+        );
+        assert!(err.contains(holds), "{what}: {err}");
+        // Nothing but the snapshot: no op is added, the working copy being
+        // as it was.
+        assert_eq!(logged_ops(&root).len(), ops, "{what}");
+    }
+    assert!(!dir.join("other/l1").exists());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn praps_lane_finishes_an_interrupted_lane() {
+    let dir = claim("lane-again");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    let store = fs::canonicalize(root.join(".praps/store")).unwrap();
+    let store = store
+        .to_str()
+        .unwrap()
+        .trim_start_matches(r"\\?\")
+        .to_owned();
+    let ghost = dir.join("ghost");
+    fs::create_dir_all(ghost.join(".praps")).unwrap();
+    fs::write(
+        ghost.join(".praps/workspace"),
+        format!("name ghost\nstore {store}\n"),
+    )
+    .unwrap();
+    let output = praps(&["status"], &ghost);
+    assert_eq!(code(&output), 1, "{output:?}");
+    let err = stderr(&output);
+    assert!(err.contains("never finished"), "{err}");
+    assert!(err.contains("hint: run `praps lane "), "{err}");
+    let output = praps(&["lane", ghost.to_str().unwrap()], &root);
+    assert_eq!(code(&output), 0, "{output:?}");
+    assert_eq!(code(&praps(&["status"], &ghost)), 0);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn praps_lanes_lists_every_workspace() {
+    let dir = claim("lanes");
+    let (root, a) = with_lane(&dir, "a-lane");
+    let b = dir.join("b-lane");
+    assert_eq!(code(&praps(&["lane", b.to_str().unwrap()], &root)), 0);
+    // Two `new` at once in lane b, written through the store: its pointer
+    // holds two changes.
+    let mut store = Store::open(RealFs, &root.join(".praps/store"), HashAlg::DEFAULT, 5).unwrap();
+    let head = *store.heads().unwrap().first().unwrap();
+    let view = store.ops().unwrap()[&head].view;
+    let view = View::from_envelope(&store.get_object(&view).unwrap()).unwrap();
+    let wc = *view.workspaces["b-lane"].working_copy.first().unwrap();
+    let mut raced = Vec::new();
+    for change_id in [[5_u8; 16], [6; 16]] {
+        let changeset = codec::Changeset {
+            parents: vec![wc],
+            change_id,
+            changes: Default::default(),
+            description: Vec::new(),
+        };
+        let changeset = store.put_object(&changeset.to_envelope()).unwrap();
+        let mut next = view.clone();
+        let entry = next.workspaces.get_mut("b-lane").unwrap();
+        entry.working_copy = [changeset].into();
+        entry.heads.insert(changeset);
+        let next = store.put_object(&next.to_envelope()).unwrap();
+        store
+            .commit_op(&Operation {
+                parents: [head].into(),
+                workspace: "b-lane".to_owned(),
+                view: next,
+            })
+            .unwrap();
+        raced.push(hash::hex(&change_id)[..12].to_owned());
+    }
+    let first = praps(&["lanes"], &a);
+    assert_eq!(code(&first), 0, "{first:?}");
+    let lines: Vec<String> = stdout(&first).lines().map(str::to_owned).collect();
+    // After the two-character mark, `* ` or two spaces, the name.
+    let names: Vec<&str> = lines
+        .iter()
+        .map(|l| l[2..].split(' ').next().unwrap())
+        .collect();
+    assert_eq!(names, ["a-lane", "b-lane", "default"], "{lines:?}");
+    assert!(lines[0].starts_with("* a-lane change "), "{lines:?}");
+    assert!(lines[1].starts_with("  b-lane change "), "{lines:?}");
+    assert!(
+        lines[2].ends_with(" 0 paths") || lines[2].ends_with(" 1 path"),
+        "{lines:?}"
+    );
+    // b-lane's pointer: one change shown, the other named after it.
+    assert!(
+        raced.iter().all(|id| lines[1].contains(id.as_str())),
+        "{lines:?}"
+    );
+    assert!(lines[1].contains(", also changes "), "{lines:?}");
+    // With no edit it repeats exactly and writes nothing.
+    let ops = logged_ops(&root).len();
+    let second = praps(&["lanes"], &a);
+    assert_eq!(second.stdout, first.stdout);
+    assert_eq!(logged_ops(&root).len(), ops);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn commands_act_on_the_lane_they_run_in() {
+    let dir = claim("in-lane");
+    let (root, lane) = with_lane(&dir, "worker");
+    fs::create_dir_all(lane.join("d1/d2")).unwrap();
+    for (n, cwd) in [lane.clone(), lane.join("d1/d2")].iter().enumerate() {
+        fs::write(lane.join(format!("own-{n}")), b"mine").unwrap();
+        assert_eq!(code(&praps(&["status"], cwd)), 0);
+        assert_eq!(code(&praps(&["describe", "lane work"], cwd)), 0);
+        let ops = stdout(&praps(&["ops"], cwd));
+        assert!(
+            ops.lines().next().unwrap().contains(" worker change "),
+            "{ops}"
+        );
+        let log = stdout(&praps(&["log"], cwd));
+        assert!(log.lines().next().unwrap().contains("lane work"), "{log}");
+        assert_eq!(code(&praps(&["new"], cwd)), 0);
+        assert_eq!(code(&praps(&["undo"], cwd)), 0);
+        let restored = ops
+            .lines()
+            .next()
+            .unwrap()
+            .split(' ')
+            .next()
+            .unwrap()
+            .to_owned();
+        assert_eq!(code(&praps(&["restore", &restored], cwd)), 0);
+        assert!(stdout(&praps(&["verify"], cwd)).contains("clean"));
+    }
+    // The repository's own working copy is as it was: no lane file in it.
+    assert!(!root.join("own-0").exists() && !root.join("own-1").exists());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn init_in_a_lane_is_refused() {
+    let dir = claim("init-lane");
+    let (_, lane) = with_lane(&dir, "l");
+    fs::create_dir_all(lane.join("below")).unwrap();
+    for cwd in [lane.clone(), lane.join("below")] {
+        let output = praps(&["init"], &cwd);
+        assert_eq!(code(&output), 1, "{output:?}");
+        assert!(!cwd.join(".praps/store").exists());
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_damaged_workspace_file_stops_the_search() {
+    let dir = claim("damaged-lane");
+    let (_, lane) = with_lane(&dir, "l");
+    fs::write(lane.join(".praps/workspace"), b"not a lane file\n").unwrap();
+    fs::create_dir_all(lane.join("below")).unwrap();
+    for cwd in [lane.clone(), lane.join("below")] {
+        let output = praps(&["status"], &cwd);
+        assert_eq!(code(&output), 1, "{output:?}");
+        assert!(stderr(&output).contains("cannot be read"), "{output:?}");
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn praps_ops_names_each_workspace() {
+    let dir = claim("ops-lanes");
+    let (root, lane) = with_lane(&dir, "worker");
+    fs::write(lane.join("w"), b"w").unwrap();
+    assert_eq!(code(&praps(&["status"], &lane)), 0);
+    let lines: Vec<String> = stdout(&praps(&["ops"], &root))
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    // Newest first: the lane's snapshot, the op that made the lane, then
+    // the repository's own.
+    assert_eq!(lines[0].split(' ').nth(1), Some("worker"), "{lines:?}");
+    assert!(lines[0].ends_with(" 1 path"), "{lines:?}");
+    assert_eq!(lines[1].split(' ').nth(1), Some("worker"), "{lines:?}");
+    assert!(
+        lines[2..]
+            .iter()
+            .all(|l| l.split(' ').nth(1) == Some("default")),
+        "{lines:?}"
     );
     let _ = fs::remove_dir_all(&dir);
 }

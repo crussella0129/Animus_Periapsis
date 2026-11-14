@@ -1,8 +1,9 @@
 //! Finding the working copy a command acts on (INT-0037 AC-3).
 //!
 //! A directory is the **top** of a working copy when listing its
-//! `.praps/store` succeeds. A command that opens a working copy acts on the
-//! nearest top among the directory it is given and those above it.
+//! `.praps/store` succeeds, or, for a lane, reading its `.praps/workspace`
+//! does (Sprint 7). A command that opens a working copy acts on the nearest
+//! top among the directory it is given and those above it.
 //!
 //! The search itself is here, over [`sim::Fs`], so it runs on the simulator.
 //! Turning a directory into a full path needs the process's current
@@ -12,6 +13,7 @@ use std::io::{self, ErrorKind};
 use std::path::{Component, Path, PathBuf};
 
 use sim::Fs;
+use workspace::lane::WORKSPACE_FILE;
 use workspace::{PRAPS_DIR, STORE_DIR};
 
 /// Whether `dir` is the top of a working copy. Listing `dir/.praps/store`
@@ -23,11 +25,18 @@ use workspace::{PRAPS_DIR, STORE_DIR};
 /// so that a `.praps` which cannot be read is never passed over for a
 /// repository further up.
 pub fn is_top(fs: &impl Fs, dir: &Path) -> io::Result<bool> {
+    let absent =
+        |error: &io::Error| matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory);
     match fs.list(&dir.join(PRAPS_DIR).join(STORE_DIR)) {
+        Ok(_) => return Ok(true),
+        Err(error) if absent(&error) => {}
+        Err(error) => return Err(error),
+    }
+    // A lane's top. A file that reads but does not parse is still a top:
+    // opening it says what is wrong, and the search stops there.
+    match fs.read(&dir.join(PRAPS_DIR).join(WORKSPACE_FILE)) {
         Ok(_) => Ok(true),
-        Err(error) if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
-            Ok(false)
-        }
+        Err(error) if absent(&error) => Ok(false),
         Err(error) => Err(error),
     }
 }
