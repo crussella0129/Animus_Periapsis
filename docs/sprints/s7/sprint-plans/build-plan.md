@@ -1,3 +1,5 @@
+Finalized - DO NOT EDIT
+
 # Sprint 7 Build Plan
 
 The owner approved this plan's outline on 2026-11-14. Four decisions were made with it, and the [research report](../sprint-research/research-report.md) gives the reasons for the sprint:

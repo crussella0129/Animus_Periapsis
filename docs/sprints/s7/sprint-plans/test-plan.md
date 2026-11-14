@@ -1,3 +1,5 @@
+Finalized - DO NOT EDIT
+
 # Sprint 7 Test Plan
 
 How to read the names:
