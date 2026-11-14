@@ -7,8 +7,12 @@ AC-7, on the provisional `changeset` and `view` kinds of
 [format v1](format-v1.md). The `workspace` crate implements it, through
 `sim::Fs`. Sprint 3 adds writing the working copy for `undo` and
 `restore` ([Writing the working copy](#writing-the-working-copy)) and INT-0004
-AC-3 and AC-4. Checkout of another change, conflicts, several workspaces and
-the stat cache come later.
+AC-3 and AC-4. Sprint 7 adds the merge of op heads
+([INT-0010](../intents/INT-0010-lock-free-concurrency.md)), several
+workspaces over one store, which `praps lane` makes (INT-0014 AC-3), and
+`undo` and `restore` scoped to the workspace that runs them
+([INT-0009](../intents/INT-0009-reversible-by-default.md)). Checkout of
+another change, conflicts and the stat cache come later.
 
 ## Layout
 
@@ -26,7 +30,8 @@ A repository is a directory, the working copy. Its store is
 
 The root op is three objects:
 - an empty changeset with no parents and a fresh change ID;
-- a view whose single head, and whose `default` workspace, is that changeset;
+- a view with one entry, `default`, whose working copy and heads are that
+  changeset;
 - an op naming that view, with no parents.
 
 On a repository that already has an op, `init` writes nothing. Running it
@@ -354,11 +359,13 @@ This is called *materialising* F → T.
 
 ### History commands
 
-- **`ops`** snapshots, then lists every op, newest first: its id, the change
-  ID of its working-copy change, and the number of paths that change
-  changes. "Newest first" means a topological order, children before
-  parents, ties broken by id. It reads two objects for each op, the view and
-  the working-copy changeset, however long the history is. (Until Sprint 6
+- **`ops`** snapshots, then lists every op, newest first: its id, the
+  workspace that made it, the change ID of that workspace's working-copy
+  change in the op's view (the smallest, when its pointer holds several),
+  and the number of paths that change changes. "Newest first" means a
+  topological order, children before parents, ties broken by id. It reads
+  two objects for each op, the view and the working-copy changeset, however
+  long the history is. (Until Sprint 6
   this command was `log`, and it counted the files of each op's whole tree,
   which read the chain of changes again for every line.)
 - **`log`** snapshots, then lists the working-copy change and the changes

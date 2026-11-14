@@ -1,6 +1,7 @@
 //! End to end through the built `praps` binary on the real filesystem (NTFS
 //! on Windows, ext4 on Linux): a repository's first life, and a name with no
-//! UTF-8 form (Sprint 2 test plan, E2E; INT-0014 AC-1, AC-2; INT-0004 AC-7).
+//! UTF-8 form (Sprint 2 test plan, E2E; INT-0014 AC-1, AC-2; INT-0004 AC-7);
+//! lanes at once, and a first lane session (Sprint 7; INT-0014 AC-3).
 #![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 
 use std::fs;
@@ -684,5 +685,186 @@ fn undo_from_a_directory_another_process_stands_in() {
     ok(&["undo"], &root);
     assert_eq!(fs::read(work.join("file")).unwrap(), b"w");
     assert_eq!(fs::read(work.join("deep/other")).unwrap(), b"o");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Eight lanes at once through the binary (Sprint 7 T-010; INT-0014 AC-3):
+/// eight lanes made with `praps lane`, one at a time, then eight real
+/// processes, started together, each running in its lane `status` after an
+/// edit, `describe` with its own text, and `new`. The interleaving is the
+/// system's; what is asserted holds under any.
+#[test]
+fn lanes_at_once_end_to_end() {
+    let dir = claim("lanes-at-once");
+    ok(&["init", "repo"], &dir);
+    let root = dir.join("repo");
+    write(&root, "base.txt", b"base\n");
+    ok(&["new"], &root);
+    let names: Vec<String> = (0..8).map(|i| format!("agent-{i}")).collect();
+    for name in &names {
+        let made = ok(&["lane", &format!("../{name}")], &root);
+        assert_eq!(made.len(), 1, "{made:?}");
+        assert!(
+            made[0].starts_with(&format!("made lane {name} at ../{name}, on change ")),
+            "{made:?}"
+        );
+    }
+    let start = std::sync::Barrier::new(names.len());
+    let ran: Vec<Vec<(String, Output)>> = std::thread::scope(|scope| {
+        let workers: Vec<_> = names
+            .iter()
+            .map(|name| {
+                let (lane, start) = (dir.join(name), &start);
+                scope.spawn(move || {
+                    write(
+                        &lane,
+                        &format!("{name}.txt"),
+                        format!("{name}\n").as_bytes(),
+                    );
+                    let text = format!("work of {name}");
+                    let steps: [&[&str]; 3] = [&["status"], &["describe", &text], &["new"]];
+                    start.wait();
+                    steps
+                        .iter()
+                        .map(|args| (args.join(" "), praps(args, &lane)))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect()
+    });
+    for (name, outputs) in names.iter().zip(&ran) {
+        for (args, output) in outputs {
+            assert_eq!(output.status.code(), Some(0), "{name}: {args}: {output:?}");
+        }
+    }
+    // `praps lanes` prints the same lines in every working copy, apart from
+    // the `*`, which marks each one's own line.
+    let mut shown = Vec::new();
+    for (name, cwd) in names
+        .iter()
+        .map(|name| (name.as_str(), dir.join(name)))
+        .chain([("default", root.clone())])
+    {
+        let lines = ok(&["lanes"], &cwd);
+        let own: Vec<&String> = lines.iter().filter(|line| line.starts_with("* ")).collect();
+        assert_eq!(own.len(), 1, "{name}: {lines:?}");
+        assert_eq!(own[0].split(' ').nth(1), Some(name), "{lines:?}");
+        let unmarked: Vec<String> = lines
+            .iter()
+            .map(|line| line.replacen("* ", "  ", 1))
+            .collect();
+        shown.push(unmarked);
+    }
+    assert_eq!(shown[0].len(), names.len() + 1, "{:?}", shown[0]);
+    assert!(shown.iter().all(|lines| *lines == shown[0]), "{shown:?}");
+    // Each lane's change before the current one carries its own text.
+    for name in &names {
+        let log = ok(&["log"], &dir.join(name));
+        assert!(
+            log[1].ends_with(&format!(" work of {name}")),
+            "{name}: {log:?}"
+        );
+    }
+    assert_eq!(ok(&["verify"], &root), ["clean"]);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A first lane session through the binary, using only words `praps`
+/// printed (Sprint 7 T-010; INT-0037 AC-2, AC-3; INT-0009): every command
+/// exits 0 and prints what its step names, and `undo` in one lane leaves the
+/// other's files and entry as they were.
+#[test]
+fn a_lane_session_end_to_end() {
+    let dir = claim("lane-session");
+    let list = ok(&[], &dir);
+    let listed: Vec<&str> = list
+        .iter()
+        .filter_map(|line| line.strip_prefix("  "))
+        .map(|line| line.split(' ').next().unwrap())
+        .collect();
+    let word = |name: &'static str| {
+        assert!(listed.contains(&name), "`{name}` is not in {listed:?}");
+        name
+    };
+    ok(&[word("init"), "repo"], &dir);
+    let root = dir.join("repo");
+    write(&root, "README.md", b"# repo\n");
+    ok(&[word("new")], &root);
+
+    // `praps help lane` gives an example, which is run as printed.
+    let help = ok(&[word("help"), word("lane")], &root);
+    assert!(help[0].starts_with("usage: praps lane"), "{help:?}");
+    let example = help
+        .iter()
+        .map(|line| line.trim())
+        .find(|line| line.starts_with("praps lane "))
+        .expect("an example of `lane`");
+    let words: Vec<&str> = example.split(' ').skip(1).collect();
+    let made = ok(&words, &root);
+    assert!(
+        made[0].starts_with("made lane agent-17 at ../agent-17, on change "),
+        "{made:?}"
+    );
+    let a = dir.join("agent-17");
+    ok(&["lane", "../agent-18"], &root);
+    let b = dir.join("agent-18");
+    assert_eq!(fs::read(a.join("README.md")).unwrap(), b"# repo\n");
+
+    // In lane A: `status`, `describe`, `new`, `log`, `ops`.
+    write(&a, "notes.txt", b"from a\n");
+    assert_eq!(ok(&[word("status")], &a), ["A notes.txt"]);
+    let described = ok(&[word("describe"), "Notes from a"], &a);
+    assert!(
+        described[0].starts_with("described change "),
+        "{described:?}"
+    );
+    assert!(described[0].ends_with(": Notes from a"), "{described:?}");
+    let new = ok(&[word("new")], &a);
+    assert!(new[0].starts_with("new change "), "{new:?}");
+    let log = ok(&[word("log")], &a);
+    assert!(log[1].ends_with(" 1 path Notes from a"), "{log:?}");
+    let ops = ok(&[word("ops")], &a);
+    assert!(ops[0].split(' ').nth(1) == Some("agent-17"), "{ops:?}");
+
+    // In lane B: an edit and `status`.
+    write(&b, "draft.txt", b"from b\n");
+    assert_eq!(ok(&["status"], &b), ["A draft.txt"]);
+    let entry_of_b = |lines: Vec<String>| {
+        lines
+            .into_iter()
+            .find(|line| line[2..].split(' ').next() == Some("agent-18"))
+            .expect("agent-18's line")
+    };
+    let before = entry_of_b(ok(&[word("lanes")], &a));
+
+    // `undo` in A takes back its `new`; B's files and entry are as they were.
+    let undone = ok(&[word("undo")], &a);
+    assert!(
+        undone[0].starts_with("undid the last op: the working copy is back to op "),
+        "{undone:?}"
+    );
+    assert_eq!(fs::read(b.join("draft.txt")).unwrap(), b"from b\n");
+    assert_eq!(fs::read(b.join("README.md")).unwrap(), b"# repo\n");
+    assert_eq!(entry_of_b(ok(&["lanes"], &a)), before);
+    assert_eq!(
+        ok(&["log"], &a)[0],
+        log[1],
+        "A is back on its described change"
+    );
+
+    // `restore` in A of the op `ops` printed first: A is on its new change
+    // again.
+    let op = ops[0].split(' ').next().unwrap();
+    assert_eq!(
+        ok(&[word("restore"), op], &a),
+        [format!("restored the working copy to op {op}")]
+    );
+    assert_eq!(ok(&["log"], &a), log);
+    assert_eq!(entry_of_b(ok(&["lanes"], &a)), before);
+    assert_eq!(ok(&[word("verify")], &a), ["clean"]);
     let _ = fs::remove_dir_all(&dir);
 }
