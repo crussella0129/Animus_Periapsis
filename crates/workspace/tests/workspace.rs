@@ -1251,7 +1251,7 @@ fn messages_say_only_what_is_wrong() {
         ),
         (
             Error::NothingToUndo,
-            "nothing to undo: the last op is the root op".to_owned(),
+            "nothing to undo: this workspace's last op is the one that made it".to_owned(),
         ),
         (
             Error::UnknownOp("3f".to_owned()),
@@ -1278,6 +1278,10 @@ fn messages_say_only_what_is_wrong() {
             "the store this lane names, repo/.praps/store, does not open: gone".to_owned(),
         ),
         (
+            Error::NotInWorkspace(one, "a".to_owned()),
+            format!("op {one} holds nothing of workspace a"),
+        ),
+        (
             Error::BadWorkspaceFile("lanes/a/.praps/workspace".into(), "it is not UTF-8".to_owned()),
             "lanes/a/.praps/workspace cannot be read: it is not UTF-8".to_owned(),
         ),
@@ -1299,11 +1303,12 @@ fn messages_say_only_what_is_wrong() {
         Error::UnfinishedLane(..) => "UnfinishedLane",
         Error::StoreGone(..) => "StoreGone",
         Error::BadWorkspaceFile(..) => "BadWorkspaceFile",
+        Error::NotInWorkspace(..) => "NotInWorkspace",
     };
     let names: std::collections::BTreeSet<&str> =
         cases.iter().map(|(error, _)| name(error)).collect();
-    assert_eq!(names.len(), 14, "{names:?}");
-    assert_eq!(cases.len(), 14);
+    assert_eq!(names.len(), 15, "{names:?}");
+    assert_eq!(cases.len(), 15);
     for (error, text) in &cases {
         let shown = error.to_string();
         assert_eq!(&shown, text, "{}", name(error));

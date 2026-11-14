@@ -349,26 +349,39 @@ This is called *materialising* F → T.
   paths the change changes, and the first line of its description, or
   `(no description)`. The line is escaped as names are, so it stays one line
   whatever bytes the description holds. It reads one object for each change.
-- **`undo`** takes this workspace's writers when the command starts, before
-  its snapshot ([Merging op heads](#merging-op-heads)); with one head, that
-  head. It then snapshots. If they have no parent, it fails with "nothing to
-  undo", having written only that snapshot. Otherwise the target view is the
-  view their parents leave together: with one parent, that op's view object;
-  with several, their merge, written as a new view. A second `undo` restores
-  the view before the first, so `undo` toggles. The edits a snapshot
-  captured stay reachable by `restore`.
-- **`restore OP`** snapshots, then takes OP's view as the target. OP is an op
-  id in text form or a unique prefix of its hex digest (with or without the
-  `blake3:` part). A prefix that matches no op, or several, is an error
-  listing the candidates, written after the snapshot only.
+- **`undo`** takes this workspace's last op: its writers when the command
+  starts, before its snapshot ([Merging op heads](#merging-op-heads)); with
+  one head, that head. It then snapshots. The target entry is this
+  workspace's entry in the view the writers' parents leave together. If
+  they have no parent, or that view has no entry for this workspace (the
+  writer is the op that made it), `undo` fails with "nothing to undo",
+  having written only that snapshot. A second `undo` returns the entry to
+  its value before the first, so `undo` toggles. The edits a snapshot
+  captured stay reachable by `restore`. It prints the ops it went back to:
+  `back to op X`, or with several parents `back to ops X, Y`, in id order.
+- **`restore OP`** snapshots, then takes this workspace's entry in OP's view
+  as the target entry. OP is an op id in text form or a unique prefix of its
+  hex digest (with or without the `blake3:` part). A prefix that matches no
+  op, or several, is an error listing the candidates, and an OP whose view
+  has no entry for this workspace (one made before it) is an error too;
+  each is written after the snapshot only.
+
+Both are scoped to the workspace that runs them
+([INT-0009](../intents/INT-0009-reversible-by-default.md)): the target view
+is the view the command loaded, with only this workspace's entry set to the
+target entry. No other workspace's entry changes. When the target entry's
+pointer holds several changesets, the smallest is kept as the pointer, the
+others stay among the heads, and the race note is printed, as the race rule
+says. When the target view is exactly one op's own view, as it always is
+with one workspace and one parent, that view object is named again rather
+than written.
 
 Both `undo` and `restore` then:
 1. check hazards and blocking entries (below), failing with nothing more
    written;
 2. write the record;
 3. commit an op made in this workspace, whose parents are every op head
-   after the snapshot and whose view is the target view, the exact view
-   object, unchanged;
+   after the snapshot and whose view is the target view;
 4. materialise F → T.
 
 Each of them scans the working copy once: the snapshot named above is the

@@ -91,6 +91,10 @@ pub enum Error {
     StoreGone(PathBuf, String),
     /// A lane's `.praps/workspace` cannot be read or does not parse.
     BadWorkspaceFile(PathBuf, String),
+    /// `restore` was given an op whose view holds no entry for this
+    /// workspace: one made before the workspace was. Nothing but the
+    /// opening snapshot was written.
+    NotInWorkspace(HashRef, String),
 }
 
 /// Each message says only what is wrong. What to do about it is said once,
@@ -130,7 +134,9 @@ impl fmt::Display for Error {
                 }
                 Ok(())
             }
-            Error::NothingToUndo => f.write_str("nothing to undo: the last op is the root op"),
+            Error::NothingToUndo => {
+                f.write_str("nothing to undo: this workspace's last op is the one that made it")
+            }
             Error::UnknownOp(spec) => write!(f, "no op matches `{spec}`"),
             Error::AmbiguousOp(spec, candidates) => {
                 write!(f, "`{spec}` matches {} ops:", candidates.len())?;
@@ -159,6 +165,9 @@ impl fmt::Display for Error {
             }
             Error::BadWorkspaceFile(path, why) => {
                 write!(f, "{} cannot be read: {why}", path.display())
+            }
+            Error::NotInWorkspace(op, name) => {
+                write!(f, "op {op} holds nothing of workspace {name}")
             }
         }
     }
@@ -751,7 +760,9 @@ impl<F: Fs> Workspace<F> {
     pub fn restore_view(&mut self, view_id: &HashRef) -> Result<HashRef, Error> {
         let mut state = self.begin()?;
         self.snapshot_in(&mut state)?;
-        self.restore_view_in(state, view_id)
+        let view = View::from_envelope(&self.store.get_object(view_id)?)
+            .map_err(|error| corrupt(format!("view {view_id}: {error}")))?;
+        self.restore_view_in(state, view_id, &view)
     }
 
     /// Moves the working copy to the view `view_id` names, from the state a
@@ -760,11 +771,15 @@ impl<F: Fs> Workspace<F> {
     /// reads each path again before it removes or replaces it. It takes
     /// the state for good: the op it commits joins the heads, and nothing
     /// follows it in a command.
-    fn restore_view_in(&mut self, state: State, view_id: &HashRef) -> Result<HashRef, Error> {
+    /// `view` is the view `view_id` names, which the caller has read.
+    fn restore_view_in(
+        &mut self,
+        state: State,
+        view_id: &HashRef,
+        view: &View,
+    ) -> Result<HashRef, Error> {
         let loaded = &state.at;
-        let view = View::from_envelope(&self.store.get_object(view_id)?)
-            .map_err(|error| corrupt(format!("view {view_id}: {error}")))?;
-        let target = self.wc_tree_of(&view)?;
+        let target = self.wc_tree_of(view)?;
         let fs = self.store.fs();
         let plan = materialise::plan(
             fs,
@@ -1356,13 +1371,14 @@ impl<F: Fs> Workspace<F> {
         Ok(entries)
     }
 
-    /// Undoes the last op: takes this workspace's writers as they are
-    /// before its snapshot (with one head, that head), snapshots once, and
-    /// moves to the view their parents leave together, as
-    /// [`Workspace::restore_view`] does. Returns the smallest of those
-    /// parents and the new op. With no parent it fails with
+    /// Undoes this workspace's last op (INT-0009, "Undo is scoped"): takes
+    /// its writers as they are before the snapshot (with one head, that
+    /// head), snapshots once, and returns this workspace's entry to its value
+    /// just before them, in the view their parents leave together. No other
+    /// entry changes. Returns those parents and the new op. With no parent,
+    /// or none that holds this workspace (its writer made it), it fails with
     /// [`Error::NothingToUndo`], having written only the snapshot.
-    pub fn undo(&mut self) -> Result<(HashRef, HashRef), Error> {
+    pub fn undo(&mut self) -> Result<(BTreeSet<HashRef>, HashRef), Error> {
         let mut state = self.begin()?;
         let writers = merge::writers(&state.ops, &state.at.heads)
             .remove(&self.name)
@@ -1376,33 +1392,70 @@ impl<F: Fs> Workspace<F> {
                 .ok_or_else(|| corrupt(format!("op {writer} disappeared")))?;
             parents.extend(op.parents.iter().copied());
         }
-        let Some(parent) = parents.first().copied() else {
+        if parents.is_empty() {
+            return Err(Error::NothingToUndo);
+        }
+        let before = self.merged(&state.ops, &parents)?;
+        let Some(entry) = before.workspaces.get(&self.name).cloned() else {
             return Err(Error::NothingToUndo);
         };
-        let view = if let [one] = parents.iter().collect::<Vec<_>>()[..] {
-            state
-                .ops
-                .get(one)
-                .ok_or_else(|| corrupt(format!("a missing parent {one}")))?
-                .view
-        } else {
-            let view = self.merged(&state.ops, &parents)?;
-            self.store.put_object(&view.to_envelope())?
+        let own_view = match parents.iter().collect::<Vec<_>>()[..] {
+            [one] => Some(state.ops[one].view),
+            _ => None,
         };
-        let new = self.restore_view_in(state, &view)?;
-        Ok((parent, new))
+        let (view_id, view) = self.scoped_view(&state, entry, own_view)?;
+        let new = self.restore_view_in(state, &view_id, &view)?;
+        Ok((parents, new))
     }
 
-    /// Snapshots, then moves to the view of the op `spec` names: an op id
-    /// in text form, or a unique prefix of its hex digest, with or without
-    /// the algorithm name. Returns that op and the new op.
+    /// Snapshots, then returns this workspace's entry to its value in the
+    /// view of the op `spec` names: an op id in text form, or a unique
+    /// prefix of its hex digest, with or without the algorithm name. No
+    /// other entry changes. Returns that op and the new op.
     pub fn restore(&mut self, spec: &str) -> Result<(HashRef, HashRef), Error> {
         let mut state = self.begin()?;
         self.snapshot_in(&mut state)?;
         let target = resolve(&state.ops, spec)?;
-        let view = state.ops[&target].view;
-        let new = self.restore_view_in(state, &view)?;
+        let own_view = state.ops[&target].view;
+        let view = self.view_of(&state.ops[&target])?;
+        let Some(entry) = view.workspaces.get(&self.name).cloned() else {
+            return Err(Error::NotInWorkspace(target, self.name.clone()));
+        };
+        let (view_id, view) = self.scoped_view(&state, entry, Some(own_view))?;
+        let new = self.restore_view_in(state, &view_id, &view)?;
         Ok((target, new))
+    }
+
+    /// The view `undo` or `restore` moves to: the state's view with only
+    /// this workspace's entry set to `entry`. A pointer of several
+    /// changesets keeps the smallest, the others staying among the heads,
+    /// with the race note (INT-0014). When that view is exactly the view
+    /// `own_view` names, that object is named; otherwise it is written.
+    /// Returns the view's id and the view.
+    fn scoped_view(
+        &mut self,
+        state: &State,
+        mut entry: WorkspaceEntry,
+        own_view: Option<HashRef>,
+    ) -> Result<(HashRef, View), Error> {
+        if entry.working_copy.len() > 1 {
+            let raced: Vec<String> = entry.working_copy.iter().map(ToString::to_string).collect();
+            let kept = *entry.working_copy.first().expect("several");
+            self.notes.push(format!(
+                "the state this command returns to had the working copy at {}; \
+                 this command continues from {kept}, and the others stay among the changes",
+                raced.join(", ")
+            ));
+            entry.heads.extend(entry.working_copy.iter().copied());
+            entry.working_copy = [kept].into();
+        }
+        let mut view = state.at.view.clone();
+        view.workspaces.insert(self.name.clone(), entry);
+        let bytes = view.to_envelope();
+        if let Some(id) = own_view.filter(|id| *id == object_id(ALG, &bytes)) {
+            return Ok((id, view));
+        }
+        Ok((self.store.put_object(&bytes)?, view))
     }
 }
 

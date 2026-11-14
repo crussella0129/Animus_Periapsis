@@ -86,8 +86,12 @@ fn undo_returns_to_the_parent_view() {
     let h = head(&ws);
     put(&fs, "a", b"2");
     put(&fs, "b", b"new");
-    let (parent, new) = ws.undo().unwrap();
-    assert_eq!(parent, before_new, "H is the head before undo's snapshot");
+    let (parents, new) = ws.undo().unwrap();
+    assert_eq!(
+        parents,
+        [before_new].into(),
+        "H is the head before undo's snapshot"
+    );
     assert_eq!(view_of(&ws, &new), view_of(&ws, &before_new));
     assert_eq!(content(&fs, "a").unwrap(), b"1");
     assert_eq!(content(&fs, "b"), None);
@@ -464,7 +468,7 @@ fn undo_after_every_op_type() {
         let h = head(&ws);
         let parent = *ws.store().ops().unwrap()[&h].parents.first().unwrap();
         let (restored, new) = ws.undo().unwrap();
-        assert_eq!(restored, parent);
+        assert_eq!(restored, [parent].into());
         let after = SCRIPT[n - 1];
         assert_eq!(view_of(&ws, &new), view_of(&ws, &parent), "after {after:?}");
         assert_eq!(disk_files(&fs), op_files(&ws, &parent), "after {after:?}");
@@ -568,6 +572,7 @@ fn snapshotting_commands_return_reports() {
     assert_eq!(ws.reported(), expected, "changes");
     let mut ws = reopen(3);
     let (undone, _) = ws.undo().unwrap();
+    let undone = *undone.first().unwrap();
     // `undo` snapshots once, so its report is one.
     assert_eq!(ws.reported(), expected, "undo");
     let mut ws = reopen(4);
@@ -1078,7 +1083,7 @@ fn describe_is_undone_and_restored() {
 
     let start = fs.trace().len();
     let (back_to, undo) = ws.undo().unwrap();
-    assert_eq!(back_to, first);
+    assert_eq!(back_to, [first].into());
     assert_eq!(stored_change(&ws).1.description, b"first");
     assert_eq!(view_of(&ws, &undo), view_of(&ws, &first));
     untouched(&fs, start, "undo");
@@ -1093,4 +1098,208 @@ fn describe_is_undone_and_restored() {
     // A second undo takes the restore back.
     ws.undo().unwrap();
     assert_eq!(stored_change(&ws).1.description, b"first");
+}
+
+// ------------------------------------------------- scoped history (T-005)
+
+/// The entry of workspace `name` in the view the store's heads leave
+/// together, and every file of the lane at `dir` but its `.praps`.
+fn entry_of(ws: &Ws, name: &str) -> codec::WorkspaceEntry {
+    let ops = ws.store().ops().unwrap();
+    let heads = store::heads_of(&ops);
+    let Ok(view) = workspace::merge::merge(&ops, &heads, |id| {
+        Ok::<_, std::convert::Infallible>(
+            codec::View::from_envelope(&ws.store().get_object(id).unwrap()).unwrap(),
+        )
+    });
+    view.workspaces[name].clone()
+}
+
+fn lane_files(fs: &SimFs, dir: &str) -> Vec<(String, Vec<u8>)> {
+    fs.snapshot()
+        .into_iter()
+        .filter(|(path, _)| {
+            path.starts_with(&format!("{dir}/")) && !path.starts_with(&format!("{dir}/.praps"))
+        })
+        .filter_map(|(path, node)| match node {
+            sim::Node::File(content) | sim::Node::Executable(content) => Some((path, content)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A repository with `a` = "1" recorded and two lanes, `la` and `lb`, made
+/// from it; each lane then records a file of its own.
+fn two_lanes(seed: u64) -> (Rc<SimFs>, Ws, Ws) {
+    let (mut ws, fs) = fresh(seed);
+    put(&fs, "a", b"1");
+    ws.new_change().unwrap();
+    ws.make_lane("la", Path::new("la")).unwrap();
+    ws.make_lane("lb", Path::new("lb")).unwrap();
+    drop(ws);
+    let mut a = Workspace::open(Rc::clone(&fs), Path::new("la"), seed + 1).unwrap();
+    let mut b = Workspace::open(Rc::clone(&fs), Path::new("lb"), seed + 2).unwrap();
+    for (lane, dir) in [(&mut a, "la"), (&mut b, "lb")] {
+        let file = Path::new(dir).join("own");
+        fs.create_new(&file).unwrap();
+        fs.write(&file, dir.as_bytes()).unwrap();
+        lane.snapshot().unwrap();
+    }
+    (fs, a, b)
+}
+
+/// `undo` in one lane takes back that lane's last op and leaves the other's
+/// entry; a second `undo` returns it (INT-0009, "Undo is scoped").
+#[test]
+fn undo_is_scoped_to_its_workspace() {
+    let (fs, mut a, b) = two_lanes(90);
+    let a_before = entry_of(&a, "la");
+    let b_before = entry_of(&b, "lb");
+    fs.create_new(Path::new("la/second")).unwrap();
+    fs.write(Path::new("la/second"), b"2").unwrap();
+    a.snapshot().unwrap();
+    let a_after = entry_of(&a, "la");
+    a.undo().unwrap();
+    assert_eq!(entry_of(&a, "la"), a_before, "A is back before its last op");
+    assert_eq!(entry_of(&a, "lb"), b_before, "B's entry is as it was");
+    assert!(!fs.snapshot().contains_key("la/second"));
+    a.undo().unwrap();
+    assert_eq!(entry_of(&a, "la"), a_after, "a second undo returns it");
+    assert_eq!(entry_of(&a, "lb"), b_before);
+}
+
+/// `restore` in one lane sets that lane's entry to its value at the op, and
+/// leaves the other's.
+#[test]
+fn restore_is_scoped_to_its_workspace() {
+    let (fs, mut a, mut b) = two_lanes(91);
+    let a_then = entry_of(&a, "la");
+    // An op made in B, whose copy of A's entry is `a_then`.
+    fs.create_new(Path::new("lb/more")).unwrap();
+    fs.write(Path::new("lb/more"), b"more").unwrap();
+    let b_op = b.snapshot().unwrap().op.unwrap();
+    // A moves on.
+    fs.create_new(Path::new("la/later")).unwrap();
+    fs.write(Path::new("la/later"), b"later").unwrap();
+    a.snapshot().unwrap();
+    let b_before = entry_of(&a, "lb");
+    a.restore(&b_op.to_string()).unwrap();
+    assert_eq!(entry_of(&a, "la"), a_then);
+    assert_eq!(entry_of(&a, "lb"), b_before);
+    assert!(!fs.snapshot().contains_key("la/later"));
+}
+
+/// Right after a lane is made, its last op is the one that made it: there
+/// is nothing to undo there.
+#[test]
+fn undo_of_a_workspaces_first_operation_has_nothing_to_undo() {
+    let (mut ws, fs) = fresh(92);
+    ws.make_lane("lb", Path::new("lb")).unwrap();
+    drop(ws);
+    let mut b = Workspace::open(Rc::clone(&fs), Path::new("lb"), 93).unwrap();
+    let before = fs.snapshot();
+    assert!(matches!(b.undo(), Err(Error::NothingToUndo)));
+    assert_eq!(fs.snapshot(), before, "nothing was written");
+}
+
+/// `restore` in a lane of an op from before the lane was made refuses, with
+/// nothing written but its snapshot.
+#[test]
+fn restore_to_before_the_workspace_refuses() {
+    let (mut ws, fs) = fresh(94);
+    let old = head(&ws);
+    ws.make_lane("lb", Path::new("lb")).unwrap();
+    drop(ws);
+    let mut b = Workspace::open(Rc::clone(&fs), Path::new("lb"), 95).unwrap();
+    let before = fs.snapshot();
+    match b.restore(&old.to_string()) {
+        Err(Error::NotInWorkspace(op, name)) => assert_eq!((op, name.as_str()), (old, "lb")),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(fs.snapshot(), before, "nothing was written");
+}
+
+/// Two `new` race, and a `describe` resolves the race; `undo` then returns
+/// to the raced pointer. It writes the smaller change, commits it alone as
+/// the pointer, keeps the other among the heads, prints the race note, and
+/// returns both parents; its target view is a new object, the merge of the
+/// two (INT-0009, INT-0014).
+#[test]
+fn undo_after_a_resolved_race_keeps_one_change() {
+    let (ws, fs) = fresh(96);
+    drop(ws);
+    let mut first = Workspace::open(Rc::clone(&fs), Path::new(ROOT), 97).unwrap();
+    let mut second = Workspace::open(Rc::clone(&fs), Path::new(ROOT), 98).unwrap();
+    first.new_change().unwrap();
+    second.new_change().unwrap();
+    drop((first, second));
+    let mut ws = Workspace::open(Rc::clone(&fs), Path::new(ROOT), 99).unwrap();
+    let raced = entry_of(&ws, "default").working_copy;
+    assert_eq!(raced.len(), 2);
+    let raced_heads = store::heads_of(&ws.store().ops().unwrap());
+    ws.describe(b"picked").unwrap();
+    let mut ws = Workspace::open(Rc::clone(&fs), Path::new(ROOT), 100).unwrap();
+    let (parents, new) = ws.undo().unwrap();
+    assert_eq!(parents, raced_heads, "both racing ops, in id order");
+    let entry = entry_of(&ws, "default");
+    assert_eq!(entry.working_copy, [*raced.first().unwrap()].into());
+    assert!(raced.iter().all(|id| entry.heads.contains(id)));
+    assert!(
+        ws.notes()
+            .iter()
+            .any(|note| note.contains(&raced.last().unwrap().to_string()))
+    );
+    let view = ws.store().ops().unwrap()[&new].view;
+    assert!(
+        parents
+            .iter()
+            .all(|p| ws.store().ops().unwrap()[p].view != view),
+        "a new view, not either parent's"
+    );
+}
+
+/// `restore` of an op of B whose copy of A's entry is a merge of two
+/// changes keeps one change, as `undo` does.
+#[test]
+fn restore_of_a_merged_copy_keeps_one_change() {
+    let (mut ws, fs) = fresh(101);
+    ws.make_lane("lb", Path::new("lb")).unwrap();
+    drop(ws);
+    let mut first = Workspace::open(Rc::clone(&fs), Path::new(ROOT), 102).unwrap();
+    let mut second = Workspace::open(Rc::clone(&fs), Path::new(ROOT), 103).unwrap();
+    first.new_change().unwrap();
+    second.new_change().unwrap();
+    drop((first, second));
+    // B's next op carries the race as its copy of default's entry.
+    let mut b = Workspace::open(Rc::clone(&fs), Path::new("lb"), 104).unwrap();
+    fs.create_new(Path::new("lb/x")).unwrap();
+    fs.write(Path::new("lb/x"), b"x").unwrap();
+    let b_op = b.snapshot().unwrap().op.unwrap();
+    let raced = entry_of(&b, "default").working_copy;
+    assert_eq!(raced.len(), 2);
+    let mut ws = Workspace::open(Rc::clone(&fs), Path::new(ROOT), 105).unwrap();
+    ws.describe(b"picked").unwrap();
+    ws.restore(&b_op.to_string()).unwrap();
+    let entry = entry_of(&ws, "default");
+    assert_eq!(entry.working_copy, [*raced.first().unwrap()].into());
+    assert!(raced.iter().all(|id| entry.heads.contains(id)));
+}
+
+/// After `undo` and `restore` in A, B's files and entry are byte for byte
+/// what they were.
+#[test]
+fn history_in_one_lane_leaves_the_other() {
+    let (fs, mut a, b) = two_lanes(106);
+    let b_entry = entry_of(&b, "lb");
+    let b_files = lane_files(&fs, "lb");
+    fs.create_new(Path::new("la/y")).unwrap();
+    fs.write(Path::new("la/y"), b"y").unwrap();
+    let first = a.snapshot().unwrap().op.unwrap();
+    fs.create_new(Path::new("la/z")).unwrap();
+    fs.write(Path::new("la/z"), b"z").unwrap();
+    a.snapshot().unwrap();
+    a.undo().unwrap();
+    a.restore(&first.to_string()).unwrap();
+    assert_eq!(entry_of(&a, "lb"), b_entry);
+    assert_eq!(lane_files(&fs, "lb"), b_files);
 }

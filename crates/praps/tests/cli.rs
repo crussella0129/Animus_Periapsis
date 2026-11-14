@@ -2474,3 +2474,57 @@ fn eight_new_at_once_all_succeed() {
     assert!(stdout(&verify).contains("clean"), "{verify:?}");
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// `undo` after a race that a `describe` resolved goes back to both racing
+/// ops, and says so: `back to ops X, Y`, in id order (INT-0009; Sprint 7
+/// T-005). With one op it prints the line it always printed.
+#[test]
+fn praps_undo_reports_every_op_it_went_back_to() {
+    let dir = claim("undo-ops");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    let mut store = Store::open(RealFs, &root.join(".praps/store"), HashAlg::DEFAULT, 5).unwrap();
+    let head = *store.heads().unwrap().first().unwrap();
+    let view = store.ops().unwrap()[&head].view;
+    let view = View::from_envelope(&store.get_object(&view).unwrap()).unwrap();
+    let wc = *view.workspaces["default"].working_copy.first().unwrap();
+    let mut raced = Vec::new();
+    for change_id in [[3_u8; 16], [4; 16]] {
+        let changeset = codec::Changeset {
+            parents: vec![wc],
+            change_id,
+            changes: Default::default(),
+            description: Vec::new(),
+        };
+        let changeset = store.put_object(&changeset.to_envelope()).unwrap();
+        let mut next = view.clone();
+        let entry = next.workspaces.get_mut("default").unwrap();
+        entry.heads.remove(&wc);
+        entry.heads.insert(changeset);
+        entry.working_copy = [changeset].into();
+        let next = store.put_object(&next.to_envelope()).unwrap();
+        raced.push(
+            store
+                .commit_op(&Operation {
+                    parents: [head].into(),
+                    workspace: "default".to_owned(),
+                    view: next,
+                })
+                .unwrap(),
+        );
+    }
+    raced.sort();
+    assert_eq!(code(&praps(&["describe", "picked"], &root)), 0);
+    let output = praps(&["undo"], &root);
+    assert_eq!(code(&output), 0, "{output:?}");
+    let short = |id: &HashRef| hash::hex(id.digest())[..12].to_owned();
+    assert_eq!(
+        stdout(&output).lines().next().unwrap(),
+        format!(
+            "undid the last op: the working copy is back to ops {}, {}",
+            short(&raced[0]),
+            short(&raced[1])
+        )
+    );
+    let _ = fs::remove_dir_all(&dir);
+}

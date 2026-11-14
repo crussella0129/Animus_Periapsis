@@ -369,11 +369,19 @@ fn undo(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 
     let (result, reported) = with_reports(&place, err, |ws| ws.undo());
     let code = match result {
         Ok((restored, _)) => {
-            let _ = writeln!(
-                out,
-                "undid the last op: the working copy is back to op {}",
-                short(restored.digest())
-            );
+            // One op, as before; several, every one in id order.
+            let ops: Vec<String> = restored.iter().map(|op| short(op.digest())).collect();
+            let _ = match ops.as_slice() {
+                [one] => writeln!(
+                    out,
+                    "undid the last op: the working copy is back to op {one}"
+                ),
+                _ => writeln!(
+                    out,
+                    "undid the last op: the working copy is back to ops {}",
+                    ops.join(", ")
+                ),
+            };
             0
         }
         Err(error) => fail("undo", &place.shown, &error, err),

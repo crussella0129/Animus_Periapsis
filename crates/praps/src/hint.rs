@@ -95,6 +95,10 @@ pub fn for_error(error: &workspace::Error) -> Hint {
         Error::BadWorkspaceFile(..) => {
             Hint::Fix("put that file right: it holds two lines, `name NAME` and `store PATH`")
         }
+        Error::NotInWorkspace(..) => run(
+            "praps ops",
+            "to list the operations, and give one made since this workspace was",
+        ),
     }
 }
 
@@ -266,10 +270,11 @@ mod tests {
             Error::UnfinishedLane(..) => "UnfinishedLane",
             Error::StoreGone(..) => "StoreGone",
             Error::BadWorkspaceFile(..) => "BadWorkspaceFile",
+            Error::NotInWorkspace(..) => "NotInWorkspace",
         }
     }
 
-    const VARIANTS: [&str; 14] = [
+    const VARIANTS: [&str; 15] = [
         "Io",
         "NotInitialised",
         "Corrupt",
@@ -284,6 +289,7 @@ mod tests {
         "UnfinishedLane",
         "StoreGone",
         "BadWorkspaceFile",
+        "NotInWorkspace",
     ];
 
     /// One error of each variant, as the crate would make it.
@@ -320,6 +326,7 @@ mod tests {
                 PathBuf::from("../agent-17/.praps/workspace"),
                 "it has no `store` line".into(),
             ),
+            Error::NotInWorkspace(id(b"old"), "agent-17".into()),
         ]
     }
 
