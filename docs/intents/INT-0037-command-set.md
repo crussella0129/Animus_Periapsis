@@ -108,7 +108,7 @@ many agents is [INT-0038](INT-0038-live-view.md).
   - Error: δ = 1/20.
 - **AC-8** `necessary` `asserted` — The project owner approves the vocabulary table and the list of refused words.
   - Signers: project owner.
-  - Note: signed in part by the project owner (crussella0129), 2026-11-10, for the eleven commands built (`status`, `describe`, `new`, `log`, `undo`, `ops`, `restore`, `init`, `verify`, `help`, `version`) and the list of refused words. The names not built yet stay proposals, so this criterion is not met ([sign-offs of 2026-11-10](../sprints/s6/sign-offs.md)).
+  - Note: signed in part by the project owner (crussella0129), 2026-11-10, for the eleven commands built (`status`, `describe`, `new`, `log`, `undo`, `ops`, `restore`, `init`, `verify`, `help`, `version`) and the list of refused words. On 2026-11-14 the owner also signed `lane` and `lanes` ([sign-offs of 2026-11-14](../sprints/s7/sign-offs.md)). The names not built yet stay proposals, so this criterion is not met ([sign-offs of 2026-11-10](../sprints/s6/sign-offs.md)).
 
 ## Rationale
 - Owner direction, 2026-11-09: Periapsis needs "a far more intuitive command

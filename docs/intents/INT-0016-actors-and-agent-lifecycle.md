@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0016
-- **State:** planned
+- **State:** active
 - **Work evidence:** [Sprint 7 T-001 build plan](../sprints/s7/sprint-plans/build-plan.md#t-001-record-sprint-6s-last-runs-the-dependency-update-and-the-owners-two-sign-offs), [Sprint 7 T-003 build plan](../sprints/s7/sprint-plans/build-plan.md#t-003-the-canonical-merge-of-op-heads)
 - **Completion evidence:** none
 - **Code evidence:** none
@@ -63,6 +63,7 @@ signed later counts".
   - Threshold: 0 entries changed by a non-owner ([INT-0035](INT-0035-scale-and-asynchrony.md) AC-6).
 - **AC-8** `supporting` `asserted` — The project owner approves the classes of owner and what each may change, before agents rely on them.
   - Signers: project owner.
+  - Note: signed in part by the project owner (crussella0129), 2026-11-14, for one class of owner, the workspace: each workspace's entry in the view belongs to that workspace, every operation names the workspace that made it, and when op heads are merged an operation's effect on another workspace's entry is not applied. The other classes, the public line and the Book's records, are still to come, so this criterion is not met ([sign-offs of 2026-11-14](../sprints/s7/sign-offs.md)).
 
 ## Rationale
 - Nostr cannot carry this identity model: NIP-26 delegation is deprecated,
@@ -124,3 +125,4 @@ signed later counts".
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from the Biblio report §3–4 and Master Report v6 II §3.4 as slimmed by R3).
 - 2026-11-10: revised while `proposed` (Sprint 6 Plan, on owner direction of 2026-11-09 for thousands of agents): signatures said who made an operation but nothing said what an actor may change. The Intent adds ownership of view entries, applied when operations are merged, so a faulty agent can change only its own work. AC-7 and AC-8 are added. Consequences record delegated birth signing, what "registered at that point" means on a log with many heads, and the format's part.
 - 2026-11-14: `proposed` → `planned` (Sprint 7 build plan T-001 and T-003, approved by the owner on 2026-11-14: the workspace as the first class of owner, applied when op heads are merged; AC-8 for that class. AC-1 to AC-7 wait for signed operations). Consequences record what is built, what is not proved without signatures, and what is not yet reported.
+- 2026-11-14: `planned` → `active` (Sprint 7 build, T-001 starts: the owner's approval of the workspace as a class of owner is recorded).
