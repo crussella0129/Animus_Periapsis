@@ -566,4 +566,4 @@
 - **Completed:** 2026-11-14T17:15:55Z
 - **Files modified:** crates/sim/src/processes.rs, crates/sim/tests/processes.rs
 - **Evidence:** `sim::Processes` keeps one condition variable for each process, which waits on its own; a boundary wakes only the process drawn to run next, or every process once the run is ending, so each unwinds. The draws are unchanged: every `Processes` test and the four-writer matrix (44,836 cells, digest e5819bdf) pass with the literals they had at ce4686c. New test `a_thousand_processes_run`: 1,000 processes, three syscalls each, all end done. Release timing on this Windows machine, the same throwaway test (1,000 processes, 3,001 syscalls) run once before and once after: 6.54 s at ce4686c, 0.13 s with this change, about a fiftieth (the criterion asks for at most a tenth). `cargo ci` passes on Windows: all 6 steps, 41 units, 644 passed, 0 failed.
-- **Commit:** PENDING
+- **Commit:** `893c1a1afd1bc63504dea3429124df2e487fb6b0`
