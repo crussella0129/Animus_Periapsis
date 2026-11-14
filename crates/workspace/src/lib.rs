@@ -29,7 +29,8 @@ use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 
 use codec::{
-    CHANGE_ID_LEN, Changeset, Mode, Operation, RepoPath, View, blob, decode_envelope, object_id,
+    CHANGE_ID_LEN, Changeset, Mode, Operation, RepoPath, View, WorkspaceEntry, blob,
+    decode_envelope, object_id,
 };
 use hash::{HashAlg, HashRef};
 use sim::{Fs, Kind, Name, Rng, dir_exists, parent_dir};
@@ -472,8 +473,9 @@ impl<F: Fs> Workspace<F> {
     }
 
     /// Commits the root op on `store` if it has no op: an empty changeset
-    /// with no parents and a change ID drawn from `seed`, a view whose head
-    /// and `default` workspace are that changeset, and an op naming the view.
+    /// with no parents and a change ID drawn from `seed`, a view whose
+    /// `default` entry has that changeset as its working copy and its one
+    /// head, and an op made in `default` naming the view.
     /// On a store that has an op it writes nothing. Tests pass a store built
     /// with a negative-control variant here.
     pub fn init_with_store(store: Store<F>, root: &Path, seed: u64) -> Result<(Self, bool), Error> {
@@ -491,12 +493,19 @@ impl<F: Fs> Workspace<F> {
         };
         let change_id = workspace.store.put_object(&change.to_envelope())?;
         let view = View {
-            heads: [change_id].into(),
-            workspaces: [(DEFAULT_WORKSPACE.to_owned(), change_id)].into(),
+            workspaces: [(
+                DEFAULT_WORKSPACE.to_owned(),
+                WorkspaceEntry {
+                    working_copy: [change_id].into(),
+                    heads: [change_id].into(),
+                },
+            )]
+            .into(),
         };
         let view_id = workspace.store.put_object(&view.to_envelope())?;
         workspace.store.commit_op(&Operation {
             parents: BTreeSet::new(),
+            workspace: DEFAULT_WORKSPACE.to_owned(),
             view: view_id,
         })?;
         Ok((workspace, true))
@@ -596,11 +605,7 @@ impl<F: Fs> Workspace<F> {
 
     /// The working-copy tree of a view.
     fn wc_tree_of(&self, view: &View) -> Result<Tree, Error> {
-        let wc_id = view
-            .workspaces
-            .get(DEFAULT_WORKSPACE)
-            .ok_or_else(|| corrupt("the view has no default workspace"))?;
-        self.tree_of(wc_id)
+        self.tree_of(&working_copy_of(view)?)
     }
 
     /// A blob's content.
@@ -701,6 +706,7 @@ impl<F: Fs> Workspace<F> {
         }
         let op = Operation {
             parents: [loaded.head].into(),
+            workspace: DEFAULT_WORKSPACE.to_owned(),
             view: *view_id,
         };
         let id = object_id(ALG, &op.to_envelope());
@@ -790,10 +796,7 @@ impl<F: Fs> Workspace<F> {
         let op = &ops[&head];
         let view = View::from_envelope(&self.store.get_object(&op.view)?)
             .map_err(|error| corrupt(format!("view {}: {error}", op.view)))?;
-        let wc_id = *view
-            .workspaces
-            .get(DEFAULT_WORKSPACE)
-            .ok_or_else(|| corrupt("the view has no default workspace"))?;
+        let wc_id = working_copy_of(&view)?;
         let wc = self.changeset(&wc_id)?;
         let parent_tree = match wc.parents.as_slice() {
             [] => Tree::new(),
@@ -912,8 +915,8 @@ impl<F: Fs> Workspace<F> {
     }
 
     /// Puts `changeset`, a view in which it replaces the working-copy
-    /// changeset as a head and as the `default` workspace's change, and an
-    /// op over the single head. Then moves `state` to what it wrote: the op
+    /// changeset as a head and as the working copy of the `default` entry,
+    /// and an op made in `default` over the single head. Then moves `state` to what it wrote: the op
     /// joins the log as its head, and the trees are those a fresh read
     /// would build, by [`tree::of`] from the same changesets.
     fn replace_working_copy(
@@ -923,12 +926,17 @@ impl<F: Fs> Workspace<F> {
     ) -> Result<HashRef, Error> {
         let id = self.store.put_object(&changeset.to_envelope())?;
         let mut view = state.at.view.clone();
-        view.heads.remove(&state.at.wc_id);
-        view.heads.insert(id);
-        view.workspaces.insert(DEFAULT_WORKSPACE.to_owned(), id);
+        let entry = view
+            .workspaces
+            .entry(DEFAULT_WORKSPACE.to_owned())
+            .or_default();
+        entry.heads.remove(&state.at.wc_id);
+        entry.heads.insert(id);
+        entry.working_copy = [id].into();
         let view_id = self.store.put_object(&view.to_envelope())?;
         let op = Operation {
             parents: [state.at.head].into(),
+            workspace: DEFAULT_WORKSPACE.to_owned(),
             view: view_id,
         };
         let head = self.store.commit_op(&op)?;
@@ -1075,10 +1083,7 @@ impl<F: Fs> Workspace<F> {
                 }
             }
             let view = self.view_of(op)?;
-            let working_copy = *view
-                .workspaces
-                .get(DEFAULT_WORKSPACE)
-                .ok_or_else(|| corrupt(format!("view {}: no default workspace", op.view)))?;
+            let working_copy = working_copy_of(&view)?;
             let changeset = self.changeset(&working_copy)?;
             entries.push(OpEntry {
                 id: *id,
@@ -1170,6 +1175,23 @@ fn resolve(ops: &BTreeMap<HashRef, Operation>, spec: &str) -> Result<HashRef, Er
         [] => Err(unknown()),
         [one] => Ok(*one),
         _ => Err(Error::AmbiguousOp(spec.to_owned(), matches)),
+    }
+}
+
+/// The `default` workspace's working-copy changeset in `view`. Until the
+/// merge of op heads (Sprint 7, T-004) no command can leave a pointer of
+/// several changesets, so one that holds several is corrupt.
+fn working_copy_of(view: &View) -> Result<HashRef, Error> {
+    let entry = view
+        .workspaces
+        .get(DEFAULT_WORKSPACE)
+        .ok_or_else(|| corrupt("the view has no default workspace"))?;
+    match entry.working_copy.iter().collect::<Vec<_>>()[..] {
+        [one] => Ok(*one),
+        _ => Err(corrupt(format!(
+            "the default workspace's working copy names {} changesets",
+            entry.working_copy.len()
+        ))),
     }
 }
 

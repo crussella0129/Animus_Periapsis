@@ -47,8 +47,17 @@ fn init_creates_a_root_change() {
     assert!(op.parents.is_empty());
     let view = View::from_envelope(&ws.store().get_object(&op.view).unwrap()).unwrap();
     let (wc_id, _, tree) = ws.working_copy().unwrap();
-    assert_eq!(view.heads, [wc_id].into());
-    assert_eq!(view.workspaces, [("default".to_owned(), wc_id)].into());
+    assert_eq!(
+        view.workspaces,
+        [(
+            "default".to_owned(),
+            codec::WorkspaceEntry {
+                working_copy: [wc_id].into(),
+                heads: [wc_id].into(),
+            },
+        )]
+        .into()
+    );
     let wc = Changeset::from_envelope(&ws.store().get_object(&wc_id).unwrap()).unwrap();
     assert!(wc.parents.is_empty() && wc.changes.is_empty() && wc.description.is_empty());
     assert!(tree.is_empty());
@@ -135,15 +144,17 @@ fn several_heads_stop_every_command() {
     let a = other
         .commit_op(&Operation {
             parents: [head].into(),
+            workspace: "default".to_owned(),
             view: op.view,
         })
         .unwrap();
     view.workspaces
-        .insert("other".to_owned(), view.workspaces["default"]);
+        .insert("other".to_owned(), view.workspaces["default"].clone());
     let second_view = other.put_object(&view.to_envelope()).unwrap();
     let b = other
         .commit_op(&Operation {
             parents: [head].into(),
+            workspace: "default".to_owned(),
             view: second_view,
         })
         .unwrap();
@@ -233,8 +244,8 @@ fn snapshot_replaces_its_head() {
     let view = View::from_envelope(&ws.store().get_object(&op.view).unwrap()).unwrap();
     let (new, ..) = ws.working_copy().unwrap();
     assert_ne!(old, new);
-    assert_eq!(view.heads, [new].into());
-    assert_eq!(view.workspaces["default"], new);
+    assert_eq!(view.workspaces["default"].heads, [new].into());
+    assert_eq!(view.workspaces["default"].working_copy, [new].into());
 }
 
 #[test]
@@ -458,13 +469,20 @@ fn merge_changesets_are_refused() {
     };
     let merge = store.put_object(&merge.to_envelope()).unwrap();
     let view = View {
-        heads: [merge].into(),
-        workspaces: [("default".to_owned(), merge)].into(),
+        workspaces: [(
+            "default".to_owned(),
+            codec::WorkspaceEntry {
+                working_copy: [merge].into(),
+                heads: [merge].into(),
+            },
+        )]
+        .into(),
     };
     let view = store.put_object(&view.to_envelope()).unwrap();
     store
         .commit_op(&Operation {
             parents: [head].into(),
+            workspace: "default".to_owned(),
             view,
         })
         .unwrap();
@@ -769,13 +787,20 @@ fn snapshot_keeps_other_heads() {
     };
     let other = store.put_object(&other.to_envelope()).unwrap();
     let view = View {
-        heads: [wc, other].into(),
-        workspaces: [("default".to_owned(), wc)].into(),
+        workspaces: [(
+            "default".to_owned(),
+            codec::WorkspaceEntry {
+                working_copy: [wc].into(),
+                heads: [wc, other].into(),
+            },
+        )]
+        .into(),
     };
     let view = store.put_object(&view.to_envelope()).unwrap();
     store
         .commit_op(&Operation {
             parents: [head].into(),
+            workspace: "default".to_owned(),
             view,
         })
         .unwrap();
@@ -787,7 +812,7 @@ fn snapshot_keeps_other_heads() {
     let op = ws.store().ops().unwrap()[&op].clone();
     let view = View::from_envelope(&ws.store().get_object(&op.view).unwrap()).unwrap();
     let (new, ..) = ws.working_copy().unwrap();
-    assert_eq!(view.heads, [new, other].into());
+    assert_eq!(view.workspaces["default"].heads, [new, other].into());
 }
 
 /// A directory whose name has no UTF-8 form is reported and not entered,
@@ -1079,11 +1104,12 @@ fn commit_over_head(other: &mut Store<Arc<SimFs>>) -> (hash::HashRef, hash::Hash
     let head = *heads.first().unwrap();
     let mut view = View::from_envelope(&other.get_object(&ops[&head].view).unwrap()).unwrap();
     view.workspaces
-        .insert("other".to_owned(), view.workspaces["default"]);
+        .insert("other".to_owned(), view.workspaces["default"].clone());
     let view = other.put_object(&view.to_envelope()).unwrap();
     let new = other
         .commit_op(&Operation {
             parents: [head].into(),
+            workspace: "default".to_owned(),
             view,
         })
         .unwrap();
@@ -1162,13 +1188,20 @@ fn accessors_read_what_is_stored() {
     };
     let child = other.put_object(&child.to_envelope()).unwrap();
     let view = View {
-        heads: [child].into(),
-        workspaces: [("default".to_owned(), child)].into(),
+        workspaces: [(
+            "default".to_owned(),
+            codec::WorkspaceEntry {
+                working_copy: [child].into(),
+                heads: [child].into(),
+            },
+        )]
+        .into(),
     };
     let view = other.put_object(&view.to_envelope()).unwrap();
     other
         .commit_op(&Operation {
             parents: [head].into(),
+            workspace: "default".to_owned(),
             view,
         })
         .unwrap();

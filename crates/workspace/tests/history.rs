@@ -289,7 +289,14 @@ fn disk_files(fs: &SimFs) -> common::Files {
 fn op_files(ws: &Ws, op: &HashRef) -> common::Files {
     let view_id = view_of(ws, op);
     let view = codec::View::from_envelope(&ws.store().get_object(&view_id).unwrap()).unwrap();
-    tree_files(ws, &view.workspaces["default"])
+    let [wc] = view.workspaces["default"]
+        .working_copy
+        .iter()
+        .collect::<Vec<_>>()[..]
+    else {
+        panic!("a pointer of one changeset");
+    };
+    tree_files(ws, wc)
 }
 
 /// 200 pairs of working copies that differ only in uncommitted content,
@@ -660,12 +667,13 @@ fn a_failed_snapshot_reports_nothing_stale() {
     let mut second = codec::View::from_envelope(&other.get_object(&view).unwrap()).unwrap();
     second
         .workspaces
-        .insert("other".to_owned(), second.workspaces["default"]);
+        .insert("other".to_owned(), second.workspaces["default"].clone());
     let second = other.put_object(&second.to_envelope()).unwrap();
     for view in [view, second] {
         other
             .commit_op(&codec::Operation {
                 parents: [base].into(),
+                workspace: "default".to_owned(),
                 view,
             })
             .unwrap();
@@ -797,13 +805,20 @@ fn changes_carry_each_description() {
     };
     let described = store.put_object(&described.to_envelope()).unwrap();
     let view = codec::View {
-        heads: [described].into(),
-        workspaces: [("default".to_owned(), described)].into(),
+        workspaces: [(
+            "default".to_owned(),
+            codec::WorkspaceEntry {
+                working_copy: [described].into(),
+                heads: [described].into(),
+            },
+        )]
+        .into(),
     };
     let view = store.put_object(&view.to_envelope()).unwrap();
     store
         .commit_op(&codec::Operation {
             parents: [head(&ws)].into(),
+            workspace: "default".to_owned(),
             view,
         })
         .unwrap();
@@ -912,8 +927,8 @@ fn describe_sets_the_description() {
     );
     // The view names the new changeset in place of the old one.
     let view = codec::View::from_envelope(&ws.store().get_object(&ops[&op].view).unwrap()).unwrap();
-    assert_eq!(view.heads, [id].into());
-    assert_eq!(view.workspaces["default"], id);
+    assert_eq!(view.workspaces["default"].heads, [id].into());
+    assert_eq!(view.workspaces["default"].working_copy, [id].into());
     // Nothing outside `.praps` was written, and no file there changed.
     assert!(
         writes(&fs.trace()[start..])

@@ -18,8 +18,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use codec::{
-    Changeset, Entry, Mode as FileMode, ObjectKind, Operation, RepoPath, View, blob,
-    decode_envelope, object_id, references,
+    Changeset, Entry, Mode as FileMode, ObjectKind, Operation, RepoPath, View, WorkspaceEntry,
+    blob, decode_envelope, object_id, references,
 };
 use hash::{HashAlg, HashRef};
 use sim::{Mode, Node, SimFs};
@@ -157,13 +157,14 @@ pub fn id_of(op: &Operation) -> HashRef {
 pub fn op(parents: &[HashRef], view: HashRef) -> Operation {
     Operation {
         parents: parents.iter().copied().collect(),
+        workspace: "default".to_owned(),
         view,
     }
 }
 
 /// The objects one recorded state needs, in put order: a blob per file, a
-/// changeset holding them, and a view whose head and `default` workspace are
-/// that changeset.
+/// changeset holding them, and a view whose `default` entry has that
+/// changeset as its working copy and its one head.
 pub fn state(tag: &str, files: &[&str]) -> Vec<Vec<u8>> {
     let mut envelopes = Vec::new();
     let mut changes = BTreeMap::new();
@@ -189,8 +190,14 @@ pub fn state(tag: &str, files: &[&str]) -> Vec<Vec<u8>> {
     envelopes.push(changeset);
     envelopes.push(
         View {
-            heads: [changeset_id].into(),
-            workspaces: [("default".to_owned(), changeset_id)].into(),
+            workspaces: [(
+                "default".to_owned(),
+                WorkspaceEntry {
+                    working_copy: [changeset_id].into(),
+                    heads: [changeset_id].into(),
+                },
+            )]
+            .into(),
         }
         .to_envelope(),
     );

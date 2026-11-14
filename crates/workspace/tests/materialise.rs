@@ -655,6 +655,7 @@ fn resume_keeps_a_tracked_file_at_a_temporary_name() {
     let restore_op = store
         .commit_op(&codec::Operation {
             parents: [now].into(),
+            workspace: "default".to_owned(),
             view,
         })
         .unwrap();

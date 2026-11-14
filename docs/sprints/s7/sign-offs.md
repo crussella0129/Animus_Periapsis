@@ -20,4 +20,4 @@ The same round of questions settled two choices that no criterion asks the owner
 
 ## Still to come in this sprint
 
-INT-0006 AC-6 asks for a sign-off of each change to the format specification. The owner is asked once T-002's text is written, and the answer is added here.
+INT-0006 AC-6 asks for a sign-off of each change to the format specification. T-002 wrote this sprint's change: an operation names the workspace that made it, and a view holds one entry per workspace, its working-copy pointer and its heads (`docs/spec/format-v1.md`, the `operation` and `view` bodies and four worked examples). As in Sprint 6, when the owner chose to take sign-offs as choices before the merge, the owner is asked at the end of the sprint, before the merge. The answer is added here only in the owner's own words; until then the criterion stays open for this change.

@@ -68,19 +68,27 @@ fn repo(label: &str) -> Repo {
     .to_envelope();
     let changeset = store.put_object(&holder).unwrap();
     let view = View {
-        heads: [changeset].into(),
-        workspaces: Default::default(),
+        workspaces: [(
+            "default".to_owned(),
+            codec::WorkspaceEntry {
+                working_copy: [changeset].into(),
+                heads: Default::default(),
+            },
+        )]
+        .into(),
     };
     let view = store.put_object(&view.to_envelope()).unwrap();
     let first = store
         .commit_op(&Operation {
             parents: Default::default(),
+            workspace: "default".to_owned(),
             view,
         })
         .unwrap();
     let op = store
         .commit_op(&Operation {
             parents: [first].into(),
+            workspace: "default".to_owned(),
             view,
         })
         .unwrap();
@@ -339,17 +347,19 @@ fn praps_status_with_several_heads_fails() {
     let a = store
         .commit_op(&Operation {
             parents: [head].into(),
+            workspace: "default".to_owned(),
             view,
         })
         .unwrap();
     let mut other = View::from_envelope(&store.get_object(&view).unwrap()).unwrap();
     other
         .workspaces
-        .insert("other".to_owned(), other.workspaces["default"]);
+        .insert("other".to_owned(), other.workspaces["default"].clone());
     let other = store.put_object(&other.to_envelope()).unwrap();
     let b = store
         .commit_op(&Operation {
             parents: [head].into(),
+            workspace: "default".to_owned(),
             view: other,
         })
         .unwrap();
@@ -1613,8 +1623,8 @@ fn working_copy_change(root: &Path) -> codec::Changeset {
     assert_eq!(heads.len(), 1);
     let view =
         View::from_envelope(&store.get_object(&ops[heads.first().unwrap()].view).unwrap()).unwrap();
-    codec::Changeset::from_envelope(&store.get_object(&view.workspaces["default"]).unwrap())
-        .unwrap()
+    let wc = view.workspaces["default"].working_copy.first().unwrap();
+    codec::Changeset::from_envelope(&store.get_object(wc).unwrap()).unwrap()
 }
 
 /// `praps describe TEXT` records the working copy, then leaves the current
@@ -2021,12 +2031,13 @@ fn every_refusal_prints_one_hint() {
         let mut other = View::from_envelope(&store.get_object(&view).unwrap()).unwrap();
         other
             .workspaces
-            .insert("other".to_owned(), other.workspaces["default"]);
+            .insert("other".to_owned(), other.workspaces["default"].clone());
         let other = store.put_object(&other.to_envelope()).unwrap();
         for view in [view, other] {
             store
                 .commit_op(&Operation {
                     parents: [head].into(),
+                    workspace: "default".to_owned(),
                     view,
                 })
                 .unwrap();
@@ -2083,7 +2094,7 @@ fn every_refusal_prints_one_hint() {
         let view =
             View::from_envelope(&store.get_object(&store.ops().unwrap()[&head].view).unwrap())
                 .unwrap();
-        let second = view.workspaces["default"];
+        let second = *view.workspaces["default"].working_copy.first().unwrap();
         let first = codec::Changeset::from_envelope(&store.get_object(&second).unwrap())
             .unwrap()
             .parents[0];
@@ -2095,13 +2106,20 @@ fn every_refusal_prints_one_hint() {
         };
         let both = store.put_object(&both.to_envelope()).unwrap();
         let view = View {
-            heads: [both].into(),
-            workspaces: [("default".to_owned(), both)].into(),
+            workspaces: [(
+                "default".to_owned(),
+                codec::WorkspaceEntry {
+                    working_copy: [both].into(),
+                    heads: [both].into(),
+                },
+            )]
+            .into(),
         };
         let view = store.put_object(&view.to_envelope()).unwrap();
         store
             .commit_op(&Operation {
                 parents: [head].into(),
+                workspace: "default".to_owned(),
                 view,
             })
             .unwrap();

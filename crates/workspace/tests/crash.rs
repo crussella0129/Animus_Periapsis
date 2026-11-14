@@ -404,7 +404,7 @@ fn snapshot_matrix_is_reproducible() {
     assert_eq!(first.len(), 24_320);
     assert_eq!(
         digest.to_string(),
-        "blake3:b6fca2372d26d8a0b40000df18c57b226eb976d4b9597d2deb2a95a629e84e1c"
+        "blake3:dde53a7ba4954356d8bcee71c8d12a78376a3653f4ea2168aa9e67536091da3f"
     );
 }
 

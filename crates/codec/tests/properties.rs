@@ -5,8 +5,8 @@ use std::fmt::Debug;
 
 use codec::{
     Bytes, Changeset, Decode, DecodeError, Decoder, Encode, Encoder, Entry, Mode, ObjectKind,
-    Operation, RESERVED_KINDS, RepoPath, View, blob, decode_envelope, encode_object, from_slice,
-    object_id, to_vec,
+    Operation, RESERVED_KINDS, RepoPath, View, WorkspaceEntry, blob, decode_envelope,
+    encode_object, from_slice, object_id, to_vec,
 };
 use hash::{HashAlg, HashRef};
 use proptest::prelude::*;
@@ -52,10 +52,19 @@ fn any_bytes() -> impl Strategy<Value = Bytes> {
     prop::collection::vec(any::<u8>(), 0..400).prop_map(Bytes)
 }
 
-/// Up to three parents and a view, over both hash algorithms.
+/// Up to three parents, a workspace name that is not empty, and a view, over
+/// both hash algorithms.
 fn any_operation() -> impl Strategy<Value = Operation> {
-    (prop::collection::btree_set(any_hash(), 0..4), any_hash())
-        .prop_map(|(parents, view)| Operation { parents, view })
+    (
+        prop::collection::btree_set(any_hash(), 0..4),
+        ".{1,8}",
+        any_hash(),
+    )
+        .prop_map(|(parents, workspace, view)| Operation {
+            parents,
+            workspace,
+            view,
+        })
 }
 
 /// A repository path of one to three components; no component is `.` or
@@ -96,12 +105,23 @@ fn any_changeset() -> impl Strategy<Value = Changeset> {
         })
 }
 
-fn any_view() -> impl Strategy<Value = View> {
+/// A view entry: one to three working-copy changesets, so that a pointer in
+/// conflict is drawn too, and up to three heads.
+fn any_workspace_entry() -> impl Strategy<Value = WorkspaceEntry> {
     (
+        prop::collection::btree_set(any_hash(), 1..4),
         prop::collection::btree_set(any_hash(), 0..4),
-        prop::collection::btree_map(".{0,8}", any_hash(), 0..4),
     )
-        .prop_map(|(heads, workspaces)| View { heads, workspaces })
+        .prop_map(|(working_copy, heads)| WorkspaceEntry {
+            working_copy,
+            heads,
+        })
+}
+
+/// Up to three entries, each under a name that is not empty.
+fn any_view() -> impl Strategy<Value = View> {
+    prop::collection::btree_map(".{1,8}", any_workspace_entry(), 0..4)
+        .prop_map(|workspaces| View { workspaces })
 }
 
 fn any_nested() -> impl Strategy<Value = Nested> {
@@ -761,19 +781,44 @@ fn operation_rejects_unsorted_parents() {
 #[test]
 fn operation_needs_a_view() {
     // Sprint 2: the body ends with the view's hashref, so a body holding only
-    // the parent set fails where the view should start.
+    // the parent set and, from Sprint 7, the workspace fails where the view
+    // should start.
     let mut enc = Encoder::new();
     enc.uvarint(0);
+    "default".to_owned().encode(&mut enc);
     assert!(matches!(
         from_slice::<Operation>(&enc.finish()),
-        Err(DecodeError::Hash { at: 1, .. })
+        Err(DecodeError::Hash { at: 9, .. })
     ));
+}
+
+#[test]
+fn operation_names_its_workspace() {
+    let parents = BTreeSet::from([
+        hash_of(HashAlg::Blake3, b"p"),
+        hash_of(HashAlg::Sha256, b"q"),
+    ]);
+    let view = hash_of(HashAlg::Blake3, b"v");
+    let op = Operation {
+        parents: parents.clone(),
+        workspace: "agent-17".to_owned(),
+        view,
+    };
+    // The body is the three fields, in order.
+    let mut enc = Encoder::new();
+    parents.encode(&mut enc);
+    "agent-17".to_owned().encode(&mut enc);
+    view.encode(&mut enc);
+    assert_eq!(to_vec(&op), enc.finish());
+    assert_eq!(from_slice::<Operation>(&to_vec(&op)), Ok(op.clone()));
+    assert_eq!(Operation::from_envelope(&op.to_envelope()), Ok(op));
 }
 
 #[test]
 fn operation_rejects_trailing_bytes() {
     let op = Operation {
         parents: BTreeSet::new(),
+        workspace: "default".to_owned(),
         view: hash_of(HashAlg::Blake3, b""),
     };
     let mut body = to_vec(&op);
@@ -803,6 +848,7 @@ fn operation_kind_is_defined() {
     assert_eq!(ObjectKind::Operation.name(), "operation");
     let op = Operation {
         parents: BTreeSet::from([hash_of(HashAlg::Blake3, b"p")]),
+        workspace: "default".to_owned(),
         view: hash_of(HashAlg::Sha256, b"o"),
     };
     let envelope = op.to_envelope();

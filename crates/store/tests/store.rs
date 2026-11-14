@@ -5,7 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, ErrorKind};
 use std::path::Path;
 
-use codec::{Changeset, Entry, Mode as FileMode, Operation, RepoPath, View, blob, object_id};
+use codec::{
+    Changeset, Entry, Mode as FileMode, Operation, RepoPath, View, WorkspaceEntry, blob, object_id,
+};
 use hash::{HashAlg, HashRef};
 use sim::{Fs, Mode, Node, Rng, SimFs};
 use store::names::{file_name, parse_name};
@@ -46,11 +48,19 @@ fn holder(blobs: &[&HashRef]) -> Vec<u8> {
     .to_envelope()
 }
 
-/// A view whose heads are `changesets`.
+/// A view naming `changesets`, in that order: the first as the `default`
+/// entry's working copy and the others as its heads.
 fn view(changesets: &[&HashRef]) -> Vec<u8> {
+    let (first, rest) = changesets.split_first().expect("a changeset");
     View {
-        heads: changesets.iter().map(|id| *(*id)).collect(),
-        workspaces: BTreeMap::new(),
+        workspaces: [(
+            "default".to_owned(),
+            WorkspaceEntry {
+                working_copy: [**first].into(),
+                heads: rest.iter().map(|id| **id).collect(),
+            },
+        )]
+        .into(),
     }
     .to_envelope()
 }
@@ -64,6 +74,7 @@ fn state<F: Fs>(store: &mut Store<F>, blobs: &[&HashRef]) -> io::Result<HashRef>
 fn op(parents: &[&HashRef], view: HashRef) -> Operation {
     Operation {
         parents: parents.iter().map(|id| *(*id)).collect(),
+        workspace: "default".to_owned(),
         view,
     }
 }

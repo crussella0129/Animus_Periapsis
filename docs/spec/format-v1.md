@@ -12,7 +12,8 @@ header and the blob body. Those encodings freeze when the owner signs off this
 document (INT-0006 AC-6). Sprint 1 specifies the `operation` body as
 *provisional*, and Sprint 2 the `changeset` and `view` bodies and the `path`
 type: they are excluded from that sign-off and may still change (see
-[Change control](#change-control)). Object kinds marked *reserved* have no
+[Change control](#change-control)). Sprint 7 adds to an operation the
+workspace that made it, and gives a view one entry per workspace. Object kinds marked *reserved* have no
 body format yet. Format v1 as a whole freezes at the Phase 1 exit gate, once every kind and
 the storage representation are specified. See [Change control](#change-control).
 
@@ -116,17 +117,23 @@ until their bodies are specified here.
   body is
 
   ```text
-  parents: set<hashref> ‖ view: hashref
+  parents: set<hashref> ‖ workspace: string ‖ view: hashref
   ```
 
   `parents` are the ids of the operations this one follows; a root operation
   has none. They are a set, so their elements are strictly increasing in
-  `hashref` order and duplicates are rejected. `view` is the id of the `view`
-  object the operation leaves; everything the operation makes reachable is
-  reached through it. Sprint 2 replaced Sprint 1's provisional
-  `objects: set<hashref>` with `view`
-  ([INT-0006](../intents/INT-0006-format-v1.md)). An operation's id is its
-  envelope's id, like any object's.
+  `hashref` order and duplicates are rejected. `workspace` names the
+  workspace that made the operation; an empty name is rejected. The
+  operation writes only that workspace's entry of its view, and the other
+  entries it carries are what it saw: merging op heads takes each entry
+  from its own workspace's operations
+  ([INT-0010](../intents/INT-0010-lock-free-concurrency.md),
+  [INT-0016](../intents/INT-0016-actors-and-agent-lifecycle.md)). `view` is
+  the id of the `view` object the operation leaves; everything the
+  operation makes reachable is reached through it. Sprint 2 replaced Sprint
+  1's provisional `objects: set<hashref>` with `view`, and Sprint 7 added
+  `workspace` ([INT-0006](../intents/INT-0006-format-v1.md)). An
+  operation's id is its envelope's id, like any object's.
 - **changeset** — *provisional*: one version of a change. The body is
 
   ```text
@@ -150,11 +157,19 @@ until their bodies are specified here.
   body is
 
   ```text
-  heads: set<hashref> ‖ workspaces: map<string, hashref>
+  workspaces: map<string, entry>
+  entry = working_copy: set<hashref> ‖ heads: set<hashref>
   ```
 
-  `heads` are the visible changesets no other visible changeset follows.
-  `workspaces` maps each workspace's name to its working-copy changeset.
+  `workspaces` maps each workspace's name to its entry; an empty name is
+  rejected. `working_copy` is the workspace's working-copy changeset: one,
+  or several when commands of that workspace moved it at the same time and
+  none has chosen since. It is never empty, and an empty set is rejected.
+  `heads` are the visible changesets the workspace made that no other
+  changeset it made follows. Sprint 7 replaced the view's single
+  `heads: set<hashref>` and its `workspaces: map<string, hashref>` with these
+  entries, so that each workspace's part of the view is written by that
+  workspace's operations alone.
 
 ### Object identity
 
@@ -198,9 +213,10 @@ table, so the encoder is tested against the spec rather than against itself.
 | `path-nested` | `path` "src/π/main.rs" | `0e 73 72 63 2f cf 80 2f 6d 61 69 6e 2e 72 73` |
 | `changeset-root` | changeset envelope: no parents; change ID 00 01 … 0f; no changes; empty description | `01 02 00 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 00 00` |
 | `changeset-edit` | changeset envelope: parents [BLAKE3 of empty input]; change ID ff × 16; "README.md" → put(SHA-256 of "abc", regular), "bin/run" → put(BLAKE3 of empty input, executable), "src/old.rs" → delete; description "fix" | `01 02 01 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262 ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff 03 09 52 45 41 44 4d 45 2e 6d 64 01 02 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad 00 07 62 69 6e 2f 72 75 6e 01 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262 01 0a 73 72 63 2f 6f 6c 64 2e 72 73 00 03 66 69 78` |
-| `view` | view envelope: heads {BLAKE3 of empty input}; workspaces "default" → BLAKE3 of empty input | `01 04 01 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262 01 07 64 65 66 61 75 6c 74 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262` |
-| `operation-root` | operation envelope: no parents; view BLAKE3 of empty input | `01 03 00 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262` |
-| `operation-merge` | operation envelope: parents {BLAKE3 of empty input, SHA-256 of "abc"}; view SHA-256 of empty input | `01 03 02 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262 02 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad 02 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `view` | view envelope: "default" → working copy {BLAKE3 of empty input}, heads {BLAKE3 of empty input} | `01 04 01 07 64 65 66 61 75 6c 74 01 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262 01 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262` |
+| `view-conflict` | view envelope: "default" → working copy {BLAKE3 of empty input, SHA-256 of "abc"}, heads {BLAKE3 of empty input, SHA-256 of "abc"} | `01 04 01 07 64 65 66 61 75 6c 74 02 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262 02 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad 02 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262 02 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad` |
+| `operation-root` | operation envelope: no parents; workspace "default"; view BLAKE3 of empty input | `01 03 00 07 64 65 66 61 75 6c 74 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262` |
+| `operation-merge` | operation envelope: parents {BLAKE3 of empty input, SHA-256 of "abc"}; workspace "default"; view SHA-256 of empty input | `01 03 02 01 af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262 02 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad 07 64 65 66 61 75 6c 74 02 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
 
 ## Signatures (reserved)
 

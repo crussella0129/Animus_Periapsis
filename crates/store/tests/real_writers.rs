@@ -15,7 +15,9 @@ use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use codec::{Changeset, Entry, Mode as FileMode, Operation, RepoPath, View, blob, object_id};
+use codec::{
+    Changeset, Entry, Mode as FileMode, Operation, RepoPath, View, WorkspaceEntry, blob, object_id,
+};
 use hash::{HashAlg, HashRef};
 use sim::{RealFs, Rng};
 use store::Store;
@@ -60,8 +62,14 @@ fn state(store: &mut Store<RealFs>, tag: &str) -> HashRef {
     store
         .put_object(
             &View {
-                heads: [changeset].into(),
-                workspaces: [("default".to_owned(), changeset)].into(),
+                workspaces: [(
+                    "default".to_owned(),
+                    WorkspaceEntry {
+                        working_copy: [changeset].into(),
+                        heads: [changeset].into(),
+                    },
+                )]
+                .into(),
             }
             .to_envelope(),
         )
@@ -91,6 +99,7 @@ fn real_writer_child() {
         let view = state(&mut store, &format!("child {child} op {i}"));
         let op = Operation {
             parents: [previous].into(),
+            workspace: "default".to_owned(),
             view,
         };
         let id = store.commit_op(&op).unwrap();
@@ -113,6 +122,7 @@ fn real_four_processes_lose_nothing() {
         store
             .commit_op(&Operation {
                 parents: BTreeSet::new(),
+                workspace: "default".to_owned(),
                 view,
             })
             .unwrap()
