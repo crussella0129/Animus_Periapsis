@@ -32,6 +32,14 @@ fn writers(fs: &Arc<SimFs>) -> Run<'_, Vec<String>> {
         .collect()
 }
 
+/// How long a guarded run may take before it counts as deadlocked. These
+/// runs take well under a second here, but on GitHub's Windows runners,
+/// under the suite's load, this binary took 31 s in all before Sprint 7 and
+/// one guarded run passed 60 s (Sprint 7 Test, pull request run
+/// 43628379803). Five minutes still fails a deadlock long before the job's
+/// 30-minute limit.
+const GUARD: Duration = Duration::from_secs(300);
+
 /// Runs `f` on its own thread and fails if it gives no result within
 /// `limit`: a deadlock fails the test instead of hanging it (test critique
 /// C-001). A timed-out thread is left behind; the test binary still exits.
@@ -315,7 +323,7 @@ fn orderings_are_released_by_a_crash() {
 /// source ends, so it was provably waiting (test critique C-002).
 #[test]
 fn orderings_are_released_when_the_source_process_ends() {
-    within(Duration::from_secs(60), || {
+    within(GUARD, || {
         for how in ["returns", "is killed", "panics"] {
             let mut waited = 0;
             for seed in 0..20 {
@@ -389,7 +397,7 @@ fn orderings_are_released_when_the_source_process_ends() {
 /// C-003).
 #[test]
 fn a_kill_comes_before_an_ordering_wait() {
-    within(Duration::from_secs(60), || {
+    within(GUARD, || {
         for seed in 0..20 {
             let fs = Arc::new(SimFs::new(0, Mode::Strict));
             let run: Run<'_, ()> = (0..2)
@@ -689,7 +697,7 @@ fn point_events_are_ordered() {
 /// seeds, under a watchdog (test critique C-001).
 #[test]
 fn panic_in_a_process_ends_the_run() {
-    within(Duration::from_secs(60), || {
+    within(GUARD, || {
         for seed in 0..10 {
             let fs = Arc::new(SimFs::new(0, Mode::Strict));
             let panicked = Arc::new(AtomicBool::new(false));

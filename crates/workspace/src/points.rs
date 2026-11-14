@@ -51,4 +51,14 @@ pub const POINTS: &[Point] = &[
         unit: "workspace::describe",
         sprint: 6,
     },
+    Point {
+        name: "workspace.merge.computed",
+        unit: "workspace::merge",
+        sprint: 7,
+    },
+    Point {
+        name: "workspace.lane.made",
+        unit: "workspace::lane",
+        sprint: 7,
+    },
 ];

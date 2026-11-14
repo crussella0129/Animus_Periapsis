@@ -257,7 +257,7 @@ fn real_resume_does_not_follow_a_symlinked_directory() {
     let mut ws = Workspace::init(RealFs, &root, 1).unwrap().0;
     put(&root, "d/x", b"F's x");
     ws.snapshot().unwrap();
-    let from = *ws.store().heads().unwrap().first().unwrap();
+    let from = ws.working_copy().unwrap().0;
     RealFs.remove_file(&root.join("d").join("x")).unwrap();
     RealFs.remove_dir(&root.join("d")).unwrap();
     ws.snapshot().unwrap();
@@ -275,7 +275,15 @@ fn real_resume_does_not_follow_a_symlinked_directory() {
         let _ = std::fs::remove_dir_all(&base);
         return;
     }
-    record::write(&RealFs, &root.join(".praps"), &Record { from, target }).unwrap();
+    record::write(
+        &RealFs,
+        &root.join(".praps"),
+        &Record {
+            from: Some(from),
+            target,
+        },
+    )
+    .unwrap();
     let ws = Workspace::open(RealFs, &root, 1).unwrap();
     assert_eq!(std::fs::read(base.join("elsewhere/x")).unwrap(), b"F's x");
     assert!(!root.join(".praps/working-copy").exists());

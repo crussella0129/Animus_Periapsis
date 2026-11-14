@@ -47,8 +47,17 @@ fn init_creates_a_root_change() {
     assert!(op.parents.is_empty());
     let view = View::from_envelope(&ws.store().get_object(&op.view).unwrap()).unwrap();
     let (wc_id, _, tree) = ws.working_copy().unwrap();
-    assert_eq!(view.heads, [wc_id].into());
-    assert_eq!(view.workspaces, [("default".to_owned(), wc_id)].into());
+    assert_eq!(
+        view.workspaces,
+        [(
+            "default".to_owned(),
+            codec::WorkspaceEntry {
+                working_copy: [wc_id].into(),
+                heads: [wc_id].into(),
+            },
+        )]
+        .into()
+    );
     let wc = Changeset::from_envelope(&ws.store().get_object(&wc_id).unwrap()).unwrap();
     assert!(wc.parents.is_empty() && wc.changes.is_empty() && wc.description.is_empty());
     assert!(tree.is_empty());
@@ -116,10 +125,10 @@ fn open_without_ops_fails() {
     );
 }
 
-/// Two ops with the same parent: every command stops, names both heads and
-/// writes nothing (until INT-0010's merge).
+/// Two ops with the same parent: every command works from their merge
+/// (INT-0010). Until Sprint 7 every command stopped and named both heads.
 #[test]
-fn several_heads_stop_every_command() {
+fn several_heads_are_merged_for_every_command() {
     let ws = fresh(4);
     let fs = fs_of(&ws);
     let mut other = Store::open(
@@ -135,46 +144,40 @@ fn several_heads_stop_every_command() {
     let a = other
         .commit_op(&Operation {
             parents: [head].into(),
+            workspace: "default".to_owned(),
             view: op.view,
         })
         .unwrap();
     view.workspaces
-        .insert("other".to_owned(), view.workspaces["default"]);
+        .insert("other".to_owned(), view.workspaces["default"].clone());
     let second_view = other.put_object(&view.to_envelope()).unwrap();
     let b = other
         .commit_op(&Operation {
             parents: [head].into(),
+            workspace: "default".to_owned(),
             view: second_view,
         })
         .unwrap();
     drop(ws);
-    let mut ws = match Workspace::open(Arc::clone(&fs), Path::new(ROOT), 4) {
-        Err(Error::SeveralHeads(heads)) => {
-            let mut expected = vec![a, b];
-            expected.sort();
-            assert_eq!(heads, expected);
-            // `init_with_store` still gives a handle, to try the commands.
-            Workspace::init_with_store(other, Path::new(ROOT), 4)
-                .unwrap()
-                .0
-        }
-        other => panic!("open should stop: {:?}", other.err()),
-    };
-    put(&fs, "f", b"x");
+    drop(other);
+    let mut ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 4).unwrap();
+    // A command that changes nothing writes nothing.
     let before = fs.snapshot();
-    for result in [
-        ws.snapshot().map(drop),
-        ws.status().map(drop),
-        ws.new_change().map(drop),
-    ] {
-        let error = result.unwrap_err();
-        assert!(
-            matches!(&error, Error::SeveralHeads(h) if h.len() == 2),
-            "{error}"
-        );
-        assert!(error.to_string().contains(&a.to_string()));
-    }
+    ws.status().unwrap();
     assert_eq!(fs.snapshot(), before);
+    // One that writes commits once, over both heads, in its own workspace.
+    put(&fs, "f", b"x");
+    let snapshot = ws.snapshot().unwrap().op.expect("the edit is recorded");
+    let ops = ws.store().ops().unwrap();
+    assert_eq!(ops[&snapshot].parents, [a, b].into());
+    assert_eq!(ops[&snapshot].workspace, "default");
+    assert_eq!(ws.store().heads().unwrap(), [snapshot].into());
+    // The other entry `b` carries was made by no operation of its own
+    // workspace, so the merge leaves it out.
+    let view = View::from_envelope(&ws.store().get_object(&ops[&snapshot].view).unwrap()).unwrap();
+    assert_eq!(view.workspaces.keys().collect::<Vec<_>>(), ["default"]);
+    ws.new_change().unwrap();
+    assert_eq!(ws.status().unwrap().changes, []);
 }
 
 /// The constructor tests use to pass a store built with a negative-control
@@ -233,8 +236,8 @@ fn snapshot_replaces_its_head() {
     let view = View::from_envelope(&ws.store().get_object(&op.view).unwrap()).unwrap();
     let (new, ..) = ws.working_copy().unwrap();
     assert_ne!(old, new);
-    assert_eq!(view.heads, [new].into());
-    assert_eq!(view.workspaces["default"], new);
+    assert_eq!(view.workspaces["default"].heads, [new].into());
+    assert_eq!(view.workspaces["default"].working_copy, [new].into());
 }
 
 #[test]
@@ -458,13 +461,20 @@ fn merge_changesets_are_refused() {
     };
     let merge = store.put_object(&merge.to_envelope()).unwrap();
     let view = View {
-        heads: [merge].into(),
-        workspaces: [("default".to_owned(), merge)].into(),
+        workspaces: [(
+            "default".to_owned(),
+            codec::WorkspaceEntry {
+                working_copy: [merge].into(),
+                heads: [merge].into(),
+            },
+        )]
+        .into(),
     };
     let view = store.put_object(&view.to_envelope()).unwrap();
     store
         .commit_op(&Operation {
             parents: [head].into(),
+            workspace: "default".to_owned(),
             view,
         })
         .unwrap();
@@ -731,6 +741,32 @@ fn invalid_op_files_are_refused() {
     assert!(matches!(error, Error::Corrupt(_)), "{error}");
 }
 
+/// An op that names a parent no file in `ops/` holds stops every command as
+/// corrupt, as a damaged op file does, rather than the merge meeting the gap
+/// as it walks what the heads follow (Sprint 7 code review, finding 3).
+#[test]
+fn a_missing_parent_op_is_refused() {
+    let mut ws = fresh(26);
+    let fs = fs_of(&ws);
+    put(&fs, "f", b"x");
+    let first = ws.snapshot().unwrap().op.unwrap();
+    put(&fs, "f", b"y");
+    let second = ws.snapshot().unwrap().op.unwrap();
+    assert!(ws.store().ops().unwrap()[&second].parents.contains(&first));
+    let op_path = Path::new("repo/.praps/store/ops").join(store::names::file_name(&first));
+    fs.remove_file(&op_path).unwrap();
+    let error = ws.status().unwrap_err();
+    assert!(
+        matches!(&error, Error::Corrupt(what)
+            if *what == format!("op {second} names a missing parent {first}")),
+        "{error}"
+    );
+    let error = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 27)
+        .err()
+        .unwrap();
+    assert!(matches!(error, Error::Corrupt(_)), "{error}");
+}
+
 /// `.praps` and `.git` at the top are ignored whatever their case, as a
 /// case-insensitive filesystem treats them (code review CR-13).
 #[test]
@@ -769,13 +805,20 @@ fn snapshot_keeps_other_heads() {
     };
     let other = store.put_object(&other.to_envelope()).unwrap();
     let view = View {
-        heads: [wc, other].into(),
-        workspaces: [("default".to_owned(), wc)].into(),
+        workspaces: [(
+            "default".to_owned(),
+            codec::WorkspaceEntry {
+                working_copy: [wc].into(),
+                heads: [wc, other].into(),
+            },
+        )]
+        .into(),
     };
     let view = store.put_object(&view.to_envelope()).unwrap();
     store
         .commit_op(&Operation {
             parents: [head].into(),
+            workspace: "default".to_owned(),
             view,
         })
         .unwrap();
@@ -787,7 +830,7 @@ fn snapshot_keeps_other_heads() {
     let op = ws.store().ops().unwrap()[&op].clone();
     let view = View::from_envelope(&ws.store().get_object(&op.view).unwrap()).unwrap();
     let (new, ..) = ws.working_copy().unwrap();
-    assert_eq!(view.heads, [new, other].into());
+    assert_eq!(view.workspaces["default"].heads, [new, other].into());
 }
 
 /// A directory whose name has no UTF-8 form is reported and not entered,
@@ -1079,11 +1122,12 @@ fn commit_over_head(other: &mut Store<Arc<SimFs>>) -> (hash::HashRef, hash::Hash
     let head = *heads.first().unwrap();
     let mut view = View::from_envelope(&other.get_object(&ops[&head].view).unwrap()).unwrap();
     view.workspaces
-        .insert("other".to_owned(), view.workspaces["default"]);
+        .insert("other".to_owned(), view.workspaces["default"].clone());
     let view = other.put_object(&view.to_envelope()).unwrap();
     let new = other
         .commit_op(&Operation {
             parents: [head].into(),
+            workspace: "default".to_owned(),
             view,
         })
         .unwrap();
@@ -1092,10 +1136,10 @@ fn commit_over_head(other: &mut Store<Arc<SimFs>>) -> (hash::HashRef, hash::Hash
 
 /// The one case in which a command does not start from the log on disk:
 /// an op another handle commits between `open` and the first command. The
-/// command succeeds, both ops stand over the old head, and the next
-/// command says the log has two heads (INT-0014; Sprint 6 T-003).
+/// command succeeds and both ops stand over the old head; the next command
+/// merges them (INT-0014, INT-0010; Sprint 6 T-003, Sprint 7 T-004).
 #[test]
-fn an_operation_written_after_open_leaves_two_heads() {
+fn an_operation_written_after_open_is_merged() {
     let (fs, _) = five_ops(45);
     let mut ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 46).unwrap();
     let (old_head, theirs) = commit_over_head(&mut other_handle(&fs, 47));
@@ -1111,14 +1155,16 @@ fn an_operation_written_after_open_leaves_two_heads() {
         );
     }
     let before = fs.snapshot();
-    let error = ws.status().unwrap_err();
-    let mut expected = vec![ours, theirs];
-    expected.sort();
-    assert!(
-        matches!(&error, Error::SeveralHeads(heads) if *heads == expected),
-        "{error}"
+    ws.status().unwrap();
+    assert_eq!(
+        fs.snapshot(),
+        before,
+        "a command that changes nothing writes nothing"
     );
-    assert_eq!(fs.snapshot(), before, "the stopped command wrote nothing");
+    put(&fs, "mine", b"again");
+    let joined = ws.snapshot().unwrap().op.expect("the edit is recorded");
+    let ops = ws.store().ops().unwrap();
+    assert_eq!(ops[&joined].parents, [ours, theirs].into());
 }
 
 /// After a command has finished, the next one starts from the log on disk:
@@ -1162,13 +1208,20 @@ fn accessors_read_what_is_stored() {
     };
     let child = other.put_object(&child.to_envelope()).unwrap();
     let view = View {
-        heads: [child].into(),
-        workspaces: [("default".to_owned(), child)].into(),
+        workspaces: [(
+            "default".to_owned(),
+            codec::WorkspaceEntry {
+                working_copy: [child].into(),
+                heads: [child].into(),
+            },
+        )]
+        .into(),
     };
     let view = other.put_object(&view.to_envelope()).unwrap();
     other
         .commit_op(&Operation {
             parents: [head].into(),
+            workspace: "default".to_owned(),
             view,
         })
         .unwrap();
@@ -1204,10 +1257,6 @@ fn messages_say_only_what_is_wrong() {
             "project is not an initialised Periapsis repository".to_owned(),
         ),
         (
-            Error::SeveralHeads(vec![one, two]),
-            format!("the op log has 2 heads, which cannot be merged yet: {one} {two}"),
-        ),
-        (
             Error::Corrupt("view x: truncated".to_owned()),
             "the repository is corrupt: view x: truncated".to_owned(),
         ),
@@ -1228,7 +1277,7 @@ fn messages_say_only_what_is_wrong() {
         ),
         (
             Error::NothingToUndo,
-            "nothing to undo: the last op is the root op".to_owned(),
+            "nothing to undo: this workspace's last op is the one that made it".to_owned(),
         ),
         (
             Error::UnknownOp("3f".to_owned()),
@@ -1238,13 +1287,36 @@ fn messages_say_only_what_is_wrong() {
             Error::AmbiguousOp("3".to_owned(), vec![one, two]),
             format!("`3` matches 2 ops:\n  {one}\n  {two}"),
         ),
+        (
+            Error::LaneExists("agent-17".to_owned()),
+            "agent-17 is already a workspace".to_owned(),
+        ),
+        (
+            Error::NotFree("lanes/a".into()),
+            "lanes/a is not empty, so no lane can be made there".to_owned(),
+        ),
+        (
+            Error::UnfinishedLane("a".to_owned(), "lanes/a".into()),
+            "the lane a at lanes/a was never finished: no op made it".to_owned(),
+        ),
+        (
+            Error::StoreGone("repo/.praps/store".into(), "gone".to_owned()),
+            "the store this lane names, repo/.praps/store, does not open: gone".to_owned(),
+        ),
+        (
+            Error::NotInWorkspace(one, "a".to_owned()),
+            format!("op {one} holds nothing of workspace a"),
+        ),
+        (
+            Error::BadWorkspaceFile("lanes/a/.praps/workspace".into(), "it is not UTF-8".to_owned()),
+            "lanes/a/.praps/workspace cannot be read: it is not UTF-8".to_owned(),
+        ),
     ];
     // Every variant is here: this match has no catch-all arm, so a variant
     // added to the crate must be named, and then counted below.
     let name = |error: &Error| match error {
         Error::Io(_) => "Io",
         Error::NotInitialised(_) => "NotInitialised",
-        Error::SeveralHeads(_) => "SeveralHeads",
         Error::Corrupt(_) => "Corrupt",
         Error::Merge(_) => "Merge",
         Error::Hazards(_) => "Hazards",
@@ -1252,15 +1324,30 @@ fn messages_say_only_what_is_wrong() {
         Error::NothingToUndo => "NothingToUndo",
         Error::UnknownOp(_) => "UnknownOp",
         Error::AmbiguousOp(..) => "AmbiguousOp",
+        Error::LaneExists(_) => "LaneExists",
+        Error::NotFree(_) => "NotFree",
+        Error::UnfinishedLane(..) => "UnfinishedLane",
+        Error::StoreGone(..) => "StoreGone",
+        Error::BadWorkspaceFile(..) => "BadWorkspaceFile",
+        Error::NotInWorkspace(..) => "NotInWorkspace",
     };
     let names: std::collections::BTreeSet<&str> =
         cases.iter().map(|(error, _)| name(error)).collect();
-    assert_eq!(names.len(), 10, "{names:?}");
-    assert_eq!(cases.len(), 10);
+    assert_eq!(names.len(), 15, "{names:?}");
+    assert_eq!(cases.len(), 15);
     for (error, text) in &cases {
         let shown = error.to_string();
         assert_eq!(&shown, text, "{}", name(error));
-        for advice in ["praps", "run ", "try again", "hint", "move them", "(run"] {
+        // A command is advice; a path under `.praps` is not.
+        for advice in [
+            "praps ",
+            "`praps",
+            "run ",
+            "try again",
+            "hint",
+            "move them",
+            "(run",
+        ] {
             assert!(
                 !shown.contains(advice),
                 "{}: {shown:?} holds {advice:?}",
@@ -1268,4 +1355,183 @@ fn messages_say_only_what_is_wrong() {
             );
         }
     }
+}
+
+/// Three ops over the head, each made in `default` with the head's own
+/// entry, written through another handle: three op heads whose merge is the
+/// head's state. Each view also carries an entry no op of its own made,
+/// which keeps the three views, and so the three ops, apart.
+fn three_heads(fs: &Arc<SimFs>) -> Vec<hash::HashRef> {
+    let mut other = other_handle(fs, 21);
+    let ops = other.ops().unwrap();
+    let head = *store::heads_of(&ops).first().unwrap();
+    let view = View::from_envelope(&other.get_object(&ops[&head].view).unwrap()).unwrap();
+    let mut heads = Vec::new();
+    for name in ["x1", "x2", "x3"] {
+        let mut copy = view.clone();
+        copy.workspaces
+            .insert(name.to_owned(), view.workspaces["default"].clone());
+        let copy = other.put_object(&copy.to_envelope()).unwrap();
+        heads.push(
+            other
+                .commit_op(&Operation {
+                    parents: [head].into(),
+                    workspace: "default".to_owned(),
+                    view: copy,
+                })
+                .unwrap(),
+        );
+    }
+    heads.sort();
+    heads
+}
+
+/// A command that writes commits one op over every head, made in its own
+/// workspace, whose view is the merge with only its own entry changed
+/// (INT-0010).
+#[test]
+fn a_writer_commits_over_every_head() {
+    let ws = fresh(61);
+    let fs = fs_of(&ws);
+    drop(ws);
+    let heads = three_heads(&fs);
+    let mut ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 62).unwrap();
+    let ops = ws.store().ops().unwrap();
+    let Ok(merged) = workspace::merge::merge(&ops, &heads.iter().copied().collect(), |id| {
+        Ok::<_, std::convert::Infallible>(
+            View::from_envelope(&ws.store().get_object(id).unwrap()).unwrap(),
+        )
+    });
+    put(&fs, "f", b"x");
+    let id = ws.snapshot().unwrap().op.expect("the edit is recorded");
+    let op = ws.store().ops().unwrap()[&id].clone();
+    assert_eq!(op.parents, heads.iter().copied().collect());
+    assert_eq!(op.workspace, "default");
+    let view = View::from_envelope(&ws.store().get_object(&op.view).unwrap()).unwrap();
+    let mut others = view.workspaces.clone();
+    let own = others.remove("default").unwrap();
+    let mut merged_others = merged.workspaces.clone();
+    merged_others.remove("default");
+    assert_eq!(others, merged_others, "only its own entry changed");
+    assert_eq!(own.working_copy.len(), 1, "its pointer holds one changeset");
+    assert_eq!(ws.store().heads().unwrap(), [id].into());
+}
+
+/// Readers add nothing (INT-0010 AC-7): 2 and then 8 processes run, at once,
+/// commands that change nothing over three op heads, and the op files are
+/// the same before and after.
+#[test]
+fn readers_write_nothing() {
+    for readers in [2_usize, 8] {
+        let ws = fresh(63 + readers as u64);
+        let fs = fs_of(&ws);
+        drop(ws);
+        three_heads(&fs);
+        let ops_before = fs
+            .snapshot()
+            .into_keys()
+            .filter(|path| path.contains("/ops/"))
+            .collect::<Vec<_>>();
+        let closures: Vec<Box<dyn FnOnce() -> std::io::Result<()> + Send>> = (0..readers)
+            .map(|p| {
+                let fs = Arc::clone(&fs);
+                Box::new(move || {
+                    let mut ws = Workspace::open(fs, Path::new(ROOT), 70 + p as u64)
+                        .map_err(std::io::Error::other)?;
+                    ws.status().map_err(std::io::Error::other)?;
+                    ws.changes().map_err(std::io::Error::other)?;
+                    ws.ops().map_err(std::io::Error::other)?;
+                    let text = ws.changes().map_err(std::io::Error::other)?[0]
+                        .description
+                        .clone();
+                    let described = ws.describe(&text).map_err(std::io::Error::other)?;
+                    assert!(described.op.is_none(), "the text it has writes nothing");
+                    Ok(())
+                }) as Box<dyn FnOnce() -> std::io::Result<()> + Send>
+            })
+            .collect();
+        let ended = sim::Processes::new(readers as u64)
+            .run(&fs, closures)
+            .unwrap_or_else(|stopped| panic!("{readers} readers: {stopped:?}"));
+        assert!(
+            ended
+                .iter()
+                .all(|ended| matches!(ended, sim::Outcome::Done(Ok(())))),
+            "{readers} readers: {ended:?}"
+        );
+        let ops_after = fs
+            .snapshot()
+            .into_keys()
+            .filter(|path| path.contains("/ops/"))
+            .collect::<Vec<_>>();
+        assert_eq!(ops_after, ops_before, "{readers} readers wrote an op");
+    }
+}
+
+/// The race rule (INT-0014): two `new` from one state leave the pointer at
+/// two changes. The next command continues from the smaller, writes nothing
+/// when it changes nothing, and says so once; one that commits leaves the
+/// pointer at one change and the other among the heads.
+#[test]
+fn a_raced_pointer_continues_from_the_smallest() {
+    let ws = fresh(81);
+    let fs = fs_of(&ws);
+    drop(ws);
+    // Two handles, each holding the state `open` read: both `new` stand
+    // over the one head.
+    let mut first = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 82).unwrap();
+    let mut second = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 83).unwrap();
+    first.new_change().unwrap();
+    second.new_change().unwrap();
+    drop((first, second));
+    let mut ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 84).unwrap();
+    let ops = ws.store().ops().unwrap();
+    let heads = store::heads_of(&ops);
+    assert_eq!(heads.len(), 2);
+    let mut raced: Vec<hash::HashRef> = heads
+        .iter()
+        .map(|head| {
+            let view =
+                View::from_envelope(&ws.store().get_object(&ops[head].view).unwrap()).unwrap();
+            *view.workspaces["default"].working_copy.first().unwrap()
+        })
+        .collect();
+    raced.sort();
+    let before = fs.snapshot();
+    assert_eq!(ws.status().unwrap().changes, []);
+    assert_eq!(
+        fs.snapshot(),
+        before,
+        "a command that changes nothing writes nothing"
+    );
+    assert_eq!(
+        ws.working_copy().unwrap().0,
+        raced[0],
+        "it continues from the smaller"
+    );
+    assert_eq!(ws.notes().len(), 1, "{:?}", ws.notes());
+    assert!(
+        raced
+            .iter()
+            .all(|id| ws.notes()[0].contains(&id.to_string())),
+        "{:?}",
+        ws.notes()
+    );
+    let described = ws
+        .describe(b"picked")
+        .unwrap()
+        .op
+        .expect("a new description");
+    let ops = ws.store().ops().unwrap();
+    let view = View::from_envelope(&ws.store().get_object(&ops[&described].view).unwrap()).unwrap();
+    let entry = &view.workspaces["default"];
+    assert_eq!(entry.working_copy.len(), 1, "one change once it commits");
+    assert!(
+        entry.heads.contains(&raced[1]),
+        "the other stays among the heads"
+    );
+    assert!(
+        !entry.heads.contains(&raced[0]),
+        "the smaller was rewritten"
+    );
 }

@@ -43,6 +43,13 @@ pub fn run(command: &Command, args: &[&OsStr], out: &mut impl Write, err: &mut i
             None => usage_error(command, &hint::operation_ids(), err),
         },
         Action::Init => init(dir(0), out, err),
+        Action::Lane => match dir(0) {
+            Some(dir) => lane(dir, out, err),
+            // The parser has counted the arguments; this keeps the match
+            // whole.
+            None => usage_error(command, &hint::usage(command), err),
+        },
+        Action::Lanes => lanes(dir(0), out, err),
         Action::Verify => verify(dir(0), out, err),
         // The parser answers these two itself; they are here so that every
         // action has a body.
@@ -100,6 +107,18 @@ fn refuse(command: &str, why: impl Display, hint: &Hint, err: &mut impl Write) -
 /// Prints an error from the working copy at `place`, then the hint for it,
 /// and returns exit code 1.
 fn fail(command: &str, place: &str, error: &workspace::Error, err: &mut impl Write) -> u8 {
+    // A command opens the working copy as `.` from its top, so an unfinished
+    // lane would be named `.`; it is named by the place instead, so that the
+    // hint's `praps lane DIR` works from the working copy it was made from
+    // (Sprint 7 code review, finding 5).
+    let named;
+    let error = match error {
+        workspace::Error::UnfinishedLane(name, _) => {
+            named = workspace::Error::UnfinishedLane(name.clone(), PathBuf::from(place));
+            &named
+        }
+        other => other,
+    };
     refuse(
         command,
         format_args!("{place}: {}", hint::said(error)),
@@ -347,8 +366,9 @@ fn ops(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 {
             for entry in entries {
                 let _ = writeln!(
                     out,
-                    "{} change {} {}",
+                    "{} {} change {} {}",
                     short(entry.id.digest()),
+                    entry.workspace,
                     short(&entry.change_id),
                     paths(entry.paths)
                 );
@@ -369,11 +389,19 @@ fn undo(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 
     let (result, reported) = with_reports(&place, err, |ws| ws.undo());
     let code = match result {
         Ok((restored, _)) => {
-            let _ = writeln!(
-                out,
-                "undid the last op: the working copy is back to op {}",
-                short(restored.digest())
-            );
+            // One op, as before; several, every one in id order.
+            let ops: Vec<String> = restored.iter().map(|op| short(op.digest())).collect();
+            let _ = match ops.as_slice() {
+                [one] => writeln!(
+                    out,
+                    "undid the last op: the working copy is back to op {one}"
+                ),
+                _ => writeln!(
+                    out,
+                    "undid the last op: the working copy is back to ops {}",
+                    ops.join(", ")
+                ),
+            };
             0
         }
         Err(error) => fail("undo", &place.shown, &error, err),
@@ -488,6 +516,32 @@ fn init(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 
         Ok(full) => full,
         Err(code) => return code,
     };
+    // A lane's own top: a repository is not made in a lane either. A lane
+    // file that cannot be read is no proof there is none (Sprint 7 code
+    // review, finding 6).
+    let lane_file = dir.join(PRAPS_DIR).join(workspace::lane::WORKSPACE_FILE);
+    match RealFs.read(&lane_file) {
+        Ok(_) => {
+            return refuse(
+                "init",
+                format_args!(
+                    "{}: it is a lane's working copy, and a repository is not made inside another",
+                    dir.display()
+                ),
+                &hint::inside_a_working_copy(),
+                err,
+            );
+        }
+        Err(error) if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {}
+        Err(error) => {
+            return refuse(
+                "init",
+                format_args!("{}: {error}", lane_file.display()),
+                &hint::unreadable_file(),
+                err,
+            );
+        }
+    }
     match top_above("init", &full, err) {
         Ok(None) => {}
         Ok(Some(top)) => {
@@ -552,7 +606,7 @@ fn store_for(given: Option<&Path>, err: &mut impl Write) -> Result<(PathBuf, Str
         |dir| dir.display().to_string(),
     );
     match place::is_top(&RealFs, dir) {
-        Ok(true) => return Ok((dir.join(PRAPS_DIR).join(STORE_DIR), named, true)),
+        Ok(true) => return Ok((store_of(dir), named, true)),
         Ok(false) => {}
         Err(error) => {
             return Err(refuse(
@@ -581,13 +635,133 @@ fn store_for(given: Option<&Path>, err: &mut impl Write) -> Result<(PathBuf, Str
     }
     must_exist("verify", dir, &hint::store_or_working_copy(), err)?;
     match top_above("verify", &full, err)? {
-        Some(top) => Ok((
-            top.join(PRAPS_DIR).join(STORE_DIR),
-            top.display().to_string(),
-            true,
-        )),
+        Some(top) => Ok((store_of(&top), top.display().to_string(), true)),
         None => Ok((dir.to_path_buf(), named, false)),
     }
+}
+
+/// The store a working copy at `top` uses: its own `.praps/store`, or, for
+/// a lane, the one its `.praps/workspace` names.
+fn store_of(top: &Path) -> PathBuf {
+    let own = top.join(PRAPS_DIR).join(STORE_DIR);
+    if RealFs.list(&own).is_ok() {
+        return own;
+    }
+    match workspace::lane::read(&RealFs, &top.join(PRAPS_DIR)) {
+        Ok(Some(Ok(file))) => file.store,
+        _ => own,
+    }
+}
+
+fn lane(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
+    // DIR is read from where `praps` was started, before `locate` moves to
+    // the working copy's top.
+    let full = match full_path("lane", dir, err) {
+        Ok(full) => full,
+        Err(code) => return code,
+    };
+    let Some(name) = full
+        .file_name()
+        .and_then(|name| name.to_str())
+        // A control character, such as a line break, is not plain text, and
+        // `.praps/workspace` holds the name on a line (Sprint 7 code review,
+        // finding 4).
+        .filter(|name| {
+            !name.is_empty() && *name != "." && *name != ".." && !name.chars().any(char::is_control)
+        })
+        .map(str::to_owned)
+    else {
+        return refuse(
+            "lane",
+            format_args!(
+                "{}: a lane is named after its directory's last name, and this one has none \
+                 that is plain text",
+                dir.display()
+            ),
+            &hint::lane_name(),
+            err,
+        );
+    };
+    // From DIR's parent up: DIR itself only has to be free, which the
+    // workspace checks, and an interrupted lane there is made again.
+    match top_above("lane", &full, err) {
+        Ok(None) => {}
+        Ok(Some(top)) => {
+            return refuse(
+                "lane",
+                format_args!(
+                    "{}: it lies inside the working copy at {}, which would record the lane's \
+                     files as its own",
+                    dir.display(),
+                    top.display()
+                ),
+                &hint::lane_outside(),
+                err,
+            );
+        }
+        Err(code) => return code,
+    }
+    let place = match locate("lane", None, err) {
+        Ok(place) => place,
+        Err(code) => return code,
+    };
+    // The lane names the store by its full path, so the working copy is
+    // opened by its full path too.
+    let root = match full_path("lane", &place.root, err) {
+        Ok(root) => root,
+        Err(code) => return code,
+    };
+    let place = Place {
+        root,
+        shown: place.shown,
+    };
+    let (result, reported) = with_reports(&place, err, |ws| ws.make_lane(&name, &full));
+    let code = match result {
+        Ok((_, change_id)) => {
+            let _ = writeln!(
+                out,
+                "made lane {name} at {}, on change {}",
+                dir.display(),
+                short(&change_id)
+            );
+            0
+        }
+        Err(error) => fail("lane", &place.shown, &error, err),
+    };
+    print_reported(&reported, out);
+    code
+}
+
+fn lanes(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 {
+    let place = match locate("lanes", given, err) {
+        Ok(place) => place,
+        Err(code) => return code,
+    };
+    let (result, reported) = with_reports(&place, err, |ws| ws.lanes());
+    let code = match result {
+        Ok(lanes) => {
+            for lane in lanes {
+                let others: Vec<String> = lane.others.iter().map(|id| short(id)).collect();
+                let _ = writeln!(
+                    out,
+                    "{} {} change {} {}{}",
+                    if lane.this { '*' } else { ' ' },
+                    lane.name,
+                    short(&lane.change_id),
+                    paths(lane.paths),
+                    if others.is_empty() {
+                        String::new()
+                    } else {
+                        format!(", also changes {}", others.join(", "))
+                    }
+                );
+            }
+            0
+        }
+        Err(error) => fail("lanes", &place.shown, &error, err),
+    };
+    print_reported(&reported, out);
+    code
 }
 
 fn verify(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 {

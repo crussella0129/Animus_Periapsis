@@ -21,6 +21,8 @@ pub enum Action {
     Verify,
     Help,
     Version,
+    Lane,
+    Lanes,
 }
 
 /// The purpose a command is listed under.
@@ -28,18 +30,25 @@ pub enum Action {
 pub enum Group {
     /// What a day's work needs (INT-0037 AC-5: at most ten).
     Everyday,
+    WorkingTogether,
     LookingBack,
     Care,
 }
 
 impl Group {
     /// Every group, in the order the list shows them.
-    pub const ALL: [Group; 3] = [Group::Everyday, Group::LookingBack, Group::Care];
+    pub const ALL: [Group; 4] = [
+        Group::Everyday,
+        Group::WorkingTogether,
+        Group::LookingBack,
+        Group::Care,
+    ];
 
     /// The heading the list prints.
     pub fn heading(self) -> &'static str {
         match self {
             Group::Everyday => "Every day",
+            Group::WorkingTogether => "Working together",
             Group::LookingBack => "Looking back",
             Group::Care => "Starting and care",
         }
@@ -88,6 +97,42 @@ const DIR: Arg = Arg {
 
 /// Every command, in the order the list shows them within each group.
 pub const COMMANDS: &[Command] = &[
+    Command {
+        action: Action::Lane,
+        name: "lane",
+        group: Group::WorkingTogether,
+        summary: "Make a working copy of your own over this repository",
+        about: "Records the working copy, then makes a lane at DIR: a working copy of its own \
+                over this repository's store, named after DIR's last name. Its first change \
+                starts from the change before the current one, so edits in progress stay \
+                here. Every command run in DIR, or below it, acts on the lane.",
+        args: &[Arg {
+            name: "DIR",
+            required: true,
+            about: "where to make the lane: a directory that does not exist yet, or is empty, \
+                    outside any working copy",
+        }],
+        flags: &[],
+        idempotent: false,
+        examples: &[(
+            "praps lane ../agent-17",
+            "make lane agent-17 in a new directory beside this one",
+        )],
+    },
+    Command {
+        action: Action::Lanes,
+        name: "lanes",
+        group: Group::WorkingTogether,
+        summary: "List the working copies over this repository",
+        about: "Records the working copy, then lists every lane in name order: `*` for this \
+                one, its name, the change its working copy is on and how many paths that \
+                change changes, and the other changes commands left it on at the same time, \
+                if any.",
+        args: &[DIR],
+        flags: &[],
+        idempotent: true,
+        examples: &[("praps lanes", "every lane, and the change each is on")],
+    },
     Command {
         action: Action::Status,
         name: "status",

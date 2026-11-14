@@ -102,7 +102,7 @@ fn writers_matrix_is_reproducible() {
     assert_eq!(first.len(), 44_836);
     assert_eq!(
         digest.to_string(),
-        "blake3:253b1eabc4054f7aebfb6edd2e907fdaccbc76549158410a47fedc610ba0855c"
+        "blake3:e5819bdf6d5f40714b3e6d8188016cc80ef08c5aadd312307e8b1646d194d28b"
     );
 }
 

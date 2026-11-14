@@ -446,7 +446,7 @@ fn describe_matrix_is_reproducible() {
 
 /// The matrix's size and digest, the same on Windows and Linux.
 const CELLS: usize = 28_720;
-const DIGEST: &str = "blake3:686dfb8f7cf9c8e10f15223549fa00b237669767c97e3f1c903962dd7f6c0f1a";
+const DIGEST: &str = "blake3:919cd713956767f84cdad2c512bb34c2247f6c439793a59dd0dd2afcb986dd29";
 
 /// A workspace whose snapshot drops the description is caught: the change
 /// no longer holds what the last acknowledged command left.

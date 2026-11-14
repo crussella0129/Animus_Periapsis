@@ -33,6 +33,8 @@ list:
 | `praps new [DIR]` | Start the next change |
 | `praps log [DIR]` | List the changes that lead to the working copy, newest first |
 | `praps undo [DIR]` | Take back the last operation |
+| `praps lane DIR` | Make a working copy of your own over this repository |
+| `praps lanes [DIR]` | List the working copies over this repository |
 | `praps ops [DIR]` | List every operation, newest first |
 | `praps restore OP [DIR]` | Return to the state an operation left |
 | `praps init [DIR]` | Make a directory a repository |
@@ -50,10 +52,13 @@ Nothing is lost: `undo` and `restore` are operations themselves, and the
 edits they replace stay reachable. A write that a crash interrupts is
 finished by the next command, and names the filesystem cannot hold (case
 collisions, Windows device names) are refused before anything is written.
-Checking out another change, merging concurrent operations and several
-workspaces come later: today two commands that run at the same time leave
-two operation heads, and every later command stops until a build can join
-them.
+Several agents can work in one repository at once. `praps lane DIR` gives
+each a working copy of its own over the same store, and `praps lanes` lists
+them. Commands that run at the same time, in one working copy or in several,
+each record their operation, and every later command works from their merge,
+writing nothing unless it changes something. `undo` and `restore` act on the
+working copy that runs them and leave the others as they are. Checking out
+another change comes later.
 
 | Crate | What it does |
 |---|---|
@@ -61,7 +66,7 @@ them.
 | `codec` | Canonical binary encoding and object envelopes |
 | `sim` | Filesystem and randomness, real and deterministically simulated with crashes |
 | `store` | The crash-safe object store and op log, with its integrity check |
-| `workspace` | The working copy: init, snapshot (with `.gitignore` rules), describe, new, status, the lists of changes and operations, undo and restore |
+| `workspace` | The working copy: init, snapshot (with `.gitignore` rules), describe, new, status, the lists of changes and operations, undo and restore; lanes, and the merge of operation heads |
 | `praps` | The Periapsis command: its registry of commands, help, hints and the commands themselves |
 | `book` | Checks the Book's typed acceptance criteria |
 | `xtask` | Project tooling behind `cargo ci`, `cargo policy` and `cargo reach` |

@@ -16,7 +16,9 @@
 
 pub mod hazard;
 mod ignore;
+pub mod lane;
 pub mod materialise;
+pub mod merge;
 pub mod points;
 pub mod record;
 pub mod tree;
@@ -29,7 +31,8 @@ use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 
 use codec::{
-    CHANGE_ID_LEN, Changeset, Mode, Operation, RepoPath, View, blob, decode_envelope, object_id,
+    CHANGE_ID_LEN, Changeset, Mode, Operation, RepoPath, View, WorkspaceEntry, blob,
+    decode_envelope, object_id,
 };
 use hash::{HashAlg, HashRef};
 use sim::{Fs, Kind, Name, Rng, dir_exists, parent_dir};
@@ -57,9 +60,6 @@ pub enum Error {
     Io(io::Error),
     /// The directory holds no repository, or one whose `init` never finished.
     NotInitialised(PathBuf),
-    /// Several op heads: concurrent operations that cannot be merged until
-    /// INT-0010's canonical merge exists. Nothing was written.
-    SeveralHeads(Vec<HashRef>),
     /// The repository's state does not decode or is incomplete.
     Corrupt(String),
     /// A changeset with more than one parent, whose tree needs INT-0012's
@@ -78,6 +78,23 @@ pub enum Error {
     UnknownOp(String),
     /// `restore` was given a prefix that names several ops.
     AmbiguousOp(String, Vec<HashRef>),
+    /// Making a lane: the name is already a workspace's. Nothing but the
+    /// opening snapshot was written.
+    LaneExists(String),
+    /// Making a lane: the directory holds more than an interrupted making
+    /// leaves. Nothing but the opening snapshot was written.
+    NotFree(PathBuf),
+    /// A lane whose `.praps/workspace` names a workspace no op made: its
+    /// making stopped before its op was committed.
+    UnfinishedLane(String, PathBuf),
+    /// The store a lane's `.praps/workspace` names does not open.
+    StoreGone(PathBuf, String),
+    /// A lane's `.praps/workspace` cannot be read or does not parse.
+    BadWorkspaceFile(PathBuf, String),
+    /// `restore` was given an op whose view holds no entry for this
+    /// workspace: one made before the workspace was. Nothing but the
+    /// opening snapshot was written.
+    NotInWorkspace(HashRef, String),
 }
 
 /// Each message says only what is wrong. What to do about it is said once,
@@ -92,17 +109,6 @@ impl fmt::Display for Error {
                 "{} is not an initialised Periapsis repository",
                 root.display()
             ),
-            Error::SeveralHeads(heads) => {
-                write!(
-                    f,
-                    "the op log has {} heads, which cannot be merged yet:",
-                    heads.len()
-                )?;
-                for head in heads {
-                    write!(f, " {head}")?;
-                }
-                Ok(())
-            }
             Error::Corrupt(what) => write!(f, "the repository is corrupt: {what}"),
             Error::Merge(id) => write!(
                 f,
@@ -128,7 +134,9 @@ impl fmt::Display for Error {
                 }
                 Ok(())
             }
-            Error::NothingToUndo => f.write_str("nothing to undo: the last op is the root op"),
+            Error::NothingToUndo => {
+                f.write_str("nothing to undo: this workspace's last op is the one that made it")
+            }
             Error::UnknownOp(spec) => write!(f, "no op matches `{spec}`"),
             Error::AmbiguousOp(spec, candidates) => {
                 write!(f, "`{spec}` matches {} ops:", candidates.len())?;
@@ -136,6 +144,30 @@ impl fmt::Display for Error {
                     write!(f, "\n  {candidate}")?;
                 }
                 Ok(())
+            }
+            Error::LaneExists(name) => write!(f, "{name} is already a workspace"),
+            Error::NotFree(dir) => write!(
+                f,
+                "{} is not empty, so no lane can be made there",
+                dir.display()
+            ),
+            Error::UnfinishedLane(name, dir) => write!(
+                f,
+                "the lane {name} at {} was never finished: no op made it",
+                dir.display()
+            ),
+            Error::StoreGone(store, why) => {
+                write!(
+                    f,
+                    "the store this lane names, {}, does not open: {why}",
+                    store.display()
+                )
+            }
+            Error::BadWorkspaceFile(path, why) => {
+                write!(f, "{} cannot be read: {why}", path.display())
+            }
+            Error::NotInWorkspace(op, name) => {
+                write!(f, "op {op} holds nothing of workspace {name}")
             }
         }
     }
@@ -237,22 +269,28 @@ pub struct Described {
 }
 
 /// What a command works from: the op log as one listing read it, and the
-/// state its single head leaves. A command reads this once, at its start,
+/// state its heads leave together. A command reads this once, at its start,
 /// and passes it through its steps; a step that commits an op moves it to
 /// what was just written, as a fresh read would find it. It never outlives
 /// the command ("Reading the op log" in the spec).
 struct State {
     /// Every valid op, by id.
     ops: BTreeMap<HashRef, Operation>,
-    /// The state the single head leaves.
+    /// The state the heads leave together.
     at: Loaded,
 }
 
-/// The state one op leaves, as a workspace reads it.
+/// The state the op heads leave together, as a workspace reads it.
 struct Loaded {
-    head: HashRef,
+    /// The op heads: one, or several that no command has joined yet.
+    heads: BTreeSet<HashRef>,
+    /// Their canonical merge ([`merge::merge`]): with one head, its view.
     view: View,
-    /// The working-copy changeset's id and value.
+    /// Every changeset this workspace's pointer holds, when it holds
+    /// several (commands that moved it at once); empty when it holds one.
+    raced: Vec<HashRef>,
+    /// The working-copy changeset's id and value: the pointer's one
+    /// changeset, or the smallest of several (the race rule, INT-0014).
     wc_id: HashRef,
     wc: Changeset,
     /// The tree of the working-copy change's parent (empty for a root).
@@ -409,6 +447,8 @@ impl<F: Fs> Scan<'_, F> {
 pub struct Workspace<F: Fs> {
     store: Store<F>,
     root: PathBuf,
+    /// The workspace this working copy is, whose view entry it writes.
+    name: String,
     rng: Rng,
     /// What resuming an interrupted write left undone, for the user.
     notes: Vec<String>,
@@ -418,6 +458,8 @@ pub struct Workspace<F: Fs> {
     /// opens and runs one command then reads the op log once. `None` once a
     /// command has taken it, and on a workspace `init` returned.
     kept: Option<State>,
+    /// The op this handle committed last, if any.
+    last_op: Option<HashRef>,
     #[cfg(feature = "variants")]
     variant: Variant,
 }
@@ -448,7 +490,9 @@ fn corrupt(what: impl fmt::Display) -> Error {
 /// Refuses an op log in which `ops/` holds files that do not hash to their
 /// names or do not decode: the valid ops alone would let a damaged head
 /// silently give way to its parent, or a store whose ops are all damaged
-/// look uninitialised (code review CR-10).
+/// look uninitialised (code review CR-10). Refuses one in which an op names
+/// a parent that is not there too: the merge walks every op a head follows
+/// (Sprint 7 code review, finding 3).
 fn refuse_invalid(log: &OpLog) -> Result<(), Error> {
     if log.invalid > 0 {
         return Err(corrupt(format!(
@@ -456,6 +500,11 @@ fn refuse_invalid(log: &OpLog) -> Result<(), Error> {
             log.invalid,
             log.ops.len() + log.invalid
         )));
+    }
+    for (id, op) in &log.ops {
+        if let Some(parent) = op.parents.iter().find(|p| !log.ops.contains_key(p)) {
+            return Err(corrupt(format!("op {id} names a missing parent {parent}")));
+        }
     }
     Ok(())
 }
@@ -472,8 +521,9 @@ impl<F: Fs> Workspace<F> {
     }
 
     /// Commits the root op on `store` if it has no op: an empty changeset
-    /// with no parents and a change ID drawn from `seed`, a view whose head
-    /// and `default` workspace are that changeset, and an op naming the view.
+    /// with no parents and a change ID drawn from `seed`, a view whose
+    /// `default` entry has that changeset as its working copy and its one
+    /// head, and an op made in `default` naming the view.
     /// On a store that has an op it writes nothing. Tests pass a store built
     /// with a negative-control variant here.
     pub fn init_with_store(store: Store<F>, root: &Path, seed: u64) -> Result<(Self, bool), Error> {
@@ -491,15 +541,48 @@ impl<F: Fs> Workspace<F> {
         };
         let change_id = workspace.store.put_object(&change.to_envelope())?;
         let view = View {
-            heads: [change_id].into(),
-            workspaces: [(DEFAULT_WORKSPACE.to_owned(), change_id)].into(),
+            workspaces: [(
+                DEFAULT_WORKSPACE.to_owned(),
+                WorkspaceEntry {
+                    working_copy: [change_id].into(),
+                    heads: [change_id].into(),
+                },
+            )]
+            .into(),
         };
         let view_id = workspace.store.put_object(&view.to_envelope())?;
-        workspace.store.commit_op(&Operation {
+        let root_op = workspace.store.commit_op(&Operation {
             parents: BTreeSet::new(),
+            workspace: DEFAULT_WORKSPACE.to_owned(),
             view: view_id,
         })?;
+        workspace.last_op = Some(root_op);
         Ok((workspace, true))
+    }
+
+    /// Opens the lane at `root` over `store`, a store built with a
+    /// negative-control variant, as [`Workspace::open`] opens it over the
+    /// store its `.praps/workspace` names. For the Concurrency scenario.
+    #[cfg(feature = "variants")]
+    pub fn open_lane_with_store(store: Store<F>, root: &Path, seed: u64) -> Result<Self, Error> {
+        let praps = root.join(PRAPS_DIR);
+        let file = match lane::read(store.fs(), &praps)? {
+            Some(Ok(file)) => file,
+            Some(Err(why)) => {
+                return Err(Error::BadWorkspaceFile(
+                    praps.join(lane::WORKSPACE_FILE),
+                    why,
+                ));
+            }
+            None => return Err(Error::NotInitialised(root.to_path_buf())),
+        };
+        let mut workspace = Self::new(store, root, seed);
+        workspace.name = file.name;
+        let log = workspace.store.op_log()?;
+        refuse_invalid(&log)?;
+        workspace.resume(&log.ops)?;
+        workspace.kept = Some(workspace.state_of(log)?);
+        Ok(workspace)
     }
 
     /// Opens the repository at `root`: makes `.praps` and the root durable
@@ -508,18 +591,37 @@ impl<F: Fs> Workspace<F> {
     /// one head. It reads the op log once, and keeps what it read for the
     /// first command. `seed` drives the change IDs it mints.
     pub fn open(fs: F, root: &Path, seed: u64) -> Result<Self, Error> {
-        if !dir_exists(&fs, &root.join(PRAPS_DIR).join(STORE_DIR))? {
-            return Err(Error::NotInitialised(root.to_path_buf()));
-        }
-        let store_root = prepare(&fs, root)?;
-        let store = Store::open(fs, &store_root, ALG, seed).map_err(|error| {
-            if error.kind() == ErrorKind::NotFound {
-                Error::NotInitialised(root.to_path_buf())
-            } else {
-                Error::Io(error)
-            }
-        })?;
-        let mut workspace = Self::new(store, root, seed);
+        let praps = root.join(PRAPS_DIR);
+        let mut workspace = if dir_exists(&fs, &praps.join(STORE_DIR))? {
+            let store_root = prepare(&fs, root)?;
+            let store = Store::open(fs, &store_root, ALG, seed).map_err(|error| {
+                if error.kind() == ErrorKind::NotFound {
+                    Error::NotInitialised(root.to_path_buf())
+                } else {
+                    Error::Io(error)
+                }
+            })?;
+            Self::new(store, root, seed)
+        } else {
+            // A lane: `.praps/workspace` names its workspace and the store
+            // it shares. Probed only where there is no store, so opening a
+            // repository's own working copy makes no new syscall.
+            let file = match lane::read(&fs, &praps)? {
+                None => return Err(Error::NotInitialised(root.to_path_buf())),
+                Some(Err(why)) => {
+                    return Err(Error::BadWorkspaceFile(
+                        praps.join(lane::WORKSPACE_FILE),
+                        why,
+                    ));
+                }
+                Some(Ok(file)) => file,
+            };
+            let store = Store::open(fs, &file.store, ALG, seed)
+                .map_err(|error| Error::StoreGone(file.store.clone(), error.to_string()))?;
+            let mut workspace = Self::new(store, root, seed);
+            workspace.name = file.name;
+            workspace
+        };
         let log = workspace.store.op_log()?;
         // Before resume, which looks for the record's target among the
         // valid ops: a target whose file is damaged would look like a write
@@ -535,10 +637,12 @@ impl<F: Fs> Workspace<F> {
         Workspace {
             store,
             root: root.to_path_buf(),
+            name: DEFAULT_WORKSPACE.to_owned(),
             rng: Rng::new(seed),
             notes: Vec::new(),
             reported: Vec::new(),
             kept: None,
+            last_op: None,
             #[cfg(feature = "variants")]
             variant: Variant::Correct,
         }
@@ -558,6 +662,36 @@ impl<F: Fs> Workspace<F> {
     #[cfg(not(feature = "variants"))]
     fn writes_record(&self) -> bool {
         true
+    }
+
+    #[cfg(feature = "variants")]
+    fn loads_first_head_only(&self) -> bool {
+        self.variant == Variant::FirstHeadOnly
+    }
+
+    #[cfg(not(feature = "variants"))]
+    fn loads_first_head_only(&self) -> bool {
+        false
+    }
+
+    #[cfg(feature = "variants")]
+    fn commits_merges(&self) -> bool {
+        self.variant == Variant::MergeOnRead
+    }
+
+    #[cfg(not(feature = "variants"))]
+    fn commits_merges(&self) -> bool {
+        false
+    }
+
+    #[cfg(feature = "variants")]
+    fn writes_lane_file_in_place(&self) -> bool {
+        self.variant == Variant::LaneFileInPlace
+    }
+
+    #[cfg(not(feature = "variants"))]
+    fn writes_lane_file_in_place(&self) -> bool {
+        false
     }
 
     #[cfg(feature = "variants")]
@@ -594,13 +728,19 @@ impl<F: Fs> Workspace<F> {
             .map_err(|error| corrupt(format!("view {}: {error}", op.view)))
     }
 
-    /// The working-copy tree of a view.
+    /// The working-copy tree this workspace's entry names in a view that an
+    /// operation of this workspace left: its pointer holds one changeset.
     fn wc_tree_of(&self, view: &View) -> Result<Tree, Error> {
-        let wc_id = view
-            .workspaces
-            .get(DEFAULT_WORKSPACE)
-            .ok_or_else(|| corrupt("the view has no default workspace"))?;
-        self.tree_of(wc_id)
+        self.tree_of(&working_copy_of(view, &self.name)?)
+    }
+
+    /// The view `heads` leave together ([`merge::merge`]), reading each view
+    /// it needs from the store.
+    fn merged(&self, ops: &merge::Ops, heads: &BTreeSet<HashRef>) -> Result<View, Error> {
+        merge::merge(ops, heads, |id| {
+            View::from_envelope(&self.store.get_object(id)?)
+                .map_err(|error| corrupt(format!("view {id}: {error}")))
+        })
     }
 
     /// A blob's content.
@@ -629,18 +769,24 @@ impl<F: Fs> Workspace<F> {
             self.store.fs().point("workspace.resume.dropped");
             return Ok(());
         };
-        let from_op = ops.get(&record.from).ok_or_else(|| {
-            corrupt(format!(
-                "the record names op {}, which is missing",
-                record.from
-            ))
-        })?;
-        let from = self.wc_tree_of(&self.view_of(from_op)?)?;
+        let from = match &record.from {
+            Some(changeset) => self.tree_of(changeset).map_err(|error| match error {
+                Error::Io(error) if error.kind() == ErrorKind::NotFound => corrupt(format!(
+                    "{PRAPS_DIR}/{} names {changeset}, which is no changeset in the store",
+                    record::RECORD
+                )),
+                error => error,
+            })?,
+            None => Tree::new(),
+        };
         let target = self.wc_tree_of(&self.view_of(target_op)?)?;
         let fs = self.store.fs();
         materialise::remove_temporaries(fs, &self.root, &from, &target)?;
-        let heads = store::heads_of(ops);
-        if heads.len() == 1 && heads.contains(&record.target) {
+        // The write is finished while its op is still the only latest op of
+        // its workspace: an op of another workspace since changes nothing
+        // here (INT-0014, "Resume").
+        let writers = merge::writers(ops, &store::heads_of(ops));
+        if writers.get(&target_op.workspace) == Some(&BTreeSet::from([record.target])) {
             let plan =
                 materialise::plan(fs, &self.root, &from, &target, fs.name_rules(), ALG, true)?;
             let kept =
@@ -653,7 +799,8 @@ impl<F: Fs> Workspace<F> {
         } else {
             self.notes.push(format!(
                 "an interrupted write of the working copy (to op {}) was abandoned: \
-                 that op is no longer the only head; the working copy was left as it was",
+                 another op of this workspace followed it or was made beside it; \
+                 the working copy was left as it was",
                 record.target
             ));
         }
@@ -663,26 +810,32 @@ impl<F: Fs> Workspace<F> {
 
     /// Snapshots, then moves the working copy to the view `view_id` names:
     /// checks hazards and blocking entries, writes the record, commits an op
-    /// over the head whose view is exactly that view, materialises, and
+    /// over every head whose view is exactly that view, materialises, and
     /// drops the record. Returns the new op. `undo` and `restore` choose the
     /// view ("History commands" in the spec).
     pub fn restore_view(&mut self, view_id: &HashRef) -> Result<HashRef, Error> {
         let mut state = self.begin()?;
         self.snapshot_in(&mut state)?;
-        self.restore_view_in(state, view_id)
+        let view = View::from_envelope(&self.store.get_object(view_id)?)
+            .map_err(|error| corrupt(format!("view {view_id}: {error}")))?;
+        self.restore_view_in(state, view_id, &view)
     }
 
     /// Moves the working copy to the view `view_id` names, from the state a
     /// command already holds, which that command has just snapshotted: the
     /// working copy is scanned once for a command, and the write then
     /// reads each path again before it removes or replaces it. It takes
-    /// the state for good: the op it commits moves the head, and nothing
+    /// the state for good: the op it commits joins the heads, and nothing
     /// follows it in a command.
-    fn restore_view_in(&mut self, state: State, view_id: &HashRef) -> Result<HashRef, Error> {
+    /// `view` is the view `view_id` names, which the caller has read.
+    fn restore_view_in(
+        &mut self,
+        state: State,
+        view_id: &HashRef,
+        view: &View,
+    ) -> Result<HashRef, Error> {
         let loaded = &state.at;
-        let view = View::from_envelope(&self.store.get_object(view_id)?)
-            .map_err(|error| corrupt(format!("view {view_id}: {error}")))?;
-        let target = self.wc_tree_of(&view)?;
+        let target = self.wc_tree_of(view)?;
         let fs = self.store.fs();
         let plan = materialise::plan(
             fs,
@@ -700,7 +853,8 @@ impl<F: Fs> Workspace<F> {
             return Err(Error::Blocked(plan.blocked));
         }
         let op = Operation {
-            parents: [loaded.head].into(),
+            parents: loaded.heads.clone(),
+            workspace: self.name.clone(),
             view: *view_id,
         };
         let id = object_id(ALG, &op.to_envelope());
@@ -711,12 +865,13 @@ impl<F: Fs> Workspace<F> {
                 self.store.fs(),
                 &praps,
                 &Record {
-                    from: loaded.head,
+                    from: Some(loaded.wc_id),
                     target: id,
                 },
             )?;
         }
         let committed = self.store.commit_op(&op)?;
+        self.last_op = Some(committed);
         if committed != id {
             return Err(corrupt(format!(
                 "op {committed} was committed where {id} was expected"
@@ -776,24 +931,43 @@ impl<F: Fs> Workspace<F> {
         Ok(tree)
     }
 
-    /// The state the single head of `log` leaves, or why there is none: an
-    /// invalid op file, no op at all, or several heads.
+    /// The state the heads of `log` leave together, or why there is none:
+    /// an invalid op file, or no op at all. Several heads are merged in
+    /// memory and nothing is written ([`merge::merge`]).
     fn state_of(&self, log: OpLog) -> Result<State, Error> {
         refuse_invalid(&log)?;
         let ops = log.ops;
-        let heads = store::heads_of(&ops);
-        let head = match heads.len() {
-            0 => return Err(Error::NotInitialised(self.root.clone())),
-            1 => *heads.first().expect("one head"),
-            _ => return Err(Error::SeveralHeads(heads.into_iter().collect())),
-        };
-        let op = &ops[&head];
-        let view = View::from_envelope(&self.store.get_object(&op.view)?)
-            .map_err(|error| corrupt(format!("view {}: {error}", op.view)))?;
-        let wc_id = *view
+        let mut heads = store::heads_of(&ops);
+        if heads.is_empty() {
+            return Err(Error::NotInitialised(self.root.clone()));
+        }
+        if self.loads_first_head_only() {
+            heads = heads.into_iter().take(1).collect();
+        }
+        if heads.len() > 1 {
+            self.store.fs().point("workspace.merge.computed");
+        }
+        let view = self.merged(&ops, &heads)?;
+        let pointer = &view
             .workspaces
-            .get(DEFAULT_WORKSPACE)
-            .ok_or_else(|| corrupt("the view has no default workspace"))?;
+            .get(&self.name)
+            .ok_or_else(|| {
+                if self.name == DEFAULT_WORKSPACE {
+                    corrupt(format!("the view has no workspace {}", self.name))
+                } else {
+                    Error::UnfinishedLane(self.name.clone(), self.root.clone())
+                }
+            })?
+            .working_copy;
+        // The race rule: the smallest of several, the others kept.
+        let wc_id = *pointer
+            .first()
+            .ok_or_else(|| corrupt("a working copy names no changeset"))?;
+        let raced = if pointer.len() > 1 {
+            pointer.iter().copied().collect()
+        } else {
+            Vec::new()
+        };
         let wc = self.changeset(&wc_id)?;
         let parent_tree = match wc.parents.as_slice() {
             [] => Tree::new(),
@@ -804,8 +978,9 @@ impl<F: Fs> Workspace<F> {
         Ok(State {
             ops,
             at: Loaded {
-                head,
+                heads,
                 view,
+                raced,
                 wc_id,
                 wc,
                 parent_tree,
@@ -814,8 +989,8 @@ impl<F: Fs> Workspace<F> {
         })
     }
 
-    /// Reads the op log, with one listing of `ops/`, and the state its
-    /// single head leaves.
+    /// Reads the op log, with one listing of `ops/`, and the state its heads
+    /// leave together.
     fn read_state(&self) -> Result<State, Error> {
         self.state_of(self.store.op_log()?)
     }
@@ -826,10 +1001,32 @@ impl<F: Fs> Workspace<F> {
     /// (code review CR-07).
     fn begin(&mut self) -> Result<State, Error> {
         self.reported.clear();
-        match self.kept.take() {
-            Some(state) => Ok(state),
-            None => self.read_state(),
+        let mut state = match self.kept.take() {
+            Some(state) => state,
+            None => self.read_state()?,
+        };
+        if self.commits_merges() && state.at.heads.len() > 1 {
+            let view_id = self.store.put_object(&state.at.view.to_envelope())?;
+            let op = Operation {
+                parents: std::mem::take(&mut state.at.heads),
+                workspace: self.name.clone(),
+                view: view_id,
+            };
+            let head = self.store.commit_op(&op)?;
+            self.last_op = Some(head);
+            state.ops.insert(head, op);
+            state.at.heads = [head].into();
         }
+        if !state.at.raced.is_empty() {
+            let raced: Vec<String> = state.at.raced.iter().map(ToString::to_string).collect();
+            self.notes.push(format!(
+                "commands moved the working copy at the same time, to {}; \
+                 this command continues from {}, and the others stay among the changes",
+                raced.join(", "),
+                state.at.wc_id
+            ));
+        }
+        Ok(state)
     }
 
     /// Scans the working copy, putting no blob yet.
@@ -912,8 +1109,8 @@ impl<F: Fs> Workspace<F> {
     }
 
     /// Puts `changeset`, a view in which it replaces the working-copy
-    /// changeset as a head and as the `default` workspace's change, and an
-    /// op over the single head. Then moves `state` to what it wrote: the op
+    /// changeset as a head and as the working copy of this workspace's
+    /// entry, and an op made in this workspace over every head. Then moves `state` to what it wrote: the op
     /// joins the log as its head, and the trees are those a fresh read
     /// would build, by [`tree::of`] from the same changesets.
     fn replace_working_copy(
@@ -923,15 +1120,18 @@ impl<F: Fs> Workspace<F> {
     ) -> Result<HashRef, Error> {
         let id = self.store.put_object(&changeset.to_envelope())?;
         let mut view = state.at.view.clone();
-        view.heads.remove(&state.at.wc_id);
-        view.heads.insert(id);
-        view.workspaces.insert(DEFAULT_WORKSPACE.to_owned(), id);
+        let entry = view.workspaces.entry(self.name.clone()).or_default();
+        entry.heads.remove(&state.at.wc_id);
+        entry.heads.insert(id);
+        entry.working_copy = [id].into();
         let view_id = self.store.put_object(&view.to_envelope())?;
         let op = Operation {
-            parents: [state.at.head].into(),
+            parents: std::mem::take(&mut state.at.heads),
+            workspace: self.name.clone(),
             view: view_id,
         };
         let head = self.store.commit_op(&op)?;
+        self.last_op = Some(head);
         let parent_tree = match changeset.parents.as_slice() {
             [] => Tree::new(),
             // A new change on top of the old working-copy change.
@@ -946,8 +1146,9 @@ impl<F: Fs> Workspace<F> {
         let wc_tree = tree::of(&changeset, &parent_tree);
         state.ops.insert(head, op);
         state.at = Loaded {
-            head,
+            heads: [head].into(),
             view,
+            raced: Vec::new(),
             wc_id: id,
             wc: changeset,
             parent_tree,
@@ -973,6 +1174,146 @@ impl<F: Fs> Workspace<F> {
         };
         self.replace_working_copy(&mut state, changeset)?;
         Ok(change_id)
+    }
+
+    /// Snapshots, then makes lane `name` at `dir`, a working copy over this
+    /// store (INT-0014; "Lanes" in the spec), in this order:
+    /// 1. refuses unless `name` is no workspace yet and `dir` is free;
+    /// 2. forms the lane's first change: no changes, on the parent of this
+    ///    workspace's working-copy change (on nothing when it has none);
+    /// 3. makes `dir` and `dir/.praps` durable and writes
+    ///    `dir/.praps/workspace`;
+    /// 4. writes the record, `from empty`, in `dir/.praps`;
+    /// 5. commits one op made in `name` over every head, whose view adds
+    ///    `name`'s entry;
+    /// 6. writes the change's files into `dir`, and drops the record.
+    ///
+    /// Returns the op and the lane's change ID.
+    pub fn make_lane(
+        &mut self,
+        name: &str,
+        dir: &Path,
+    ) -> Result<(HashRef, [u8; CHANGE_ID_LEN]), Error> {
+        let mut state = self.begin()?;
+        self.snapshot_in(&mut state)?;
+        if state.at.view.workspaces.contains_key(name) {
+            return Err(Error::LaneExists(name.to_owned()));
+        }
+        self.refuse_unless_free(dir, &state.at.view)?;
+        let parents = match state.at.wc.parents.as_slice() {
+            [] => Vec::new(),
+            [parent] => vec![*parent],
+            _ => return Err(Error::Merge(state.at.wc_id)),
+        };
+        let tree = match parents.as_slice() {
+            [parent] => self.tree_of(parent)?,
+            _ => Tree::new(),
+        };
+        let change_id = self.change_id();
+        let changeset = Changeset {
+            parents,
+            change_id,
+            changes: BTreeMap::new(),
+            description: Vec::new(),
+        };
+        let change = self.store.put_object(&changeset.to_envelope())?;
+        let mut view = state.at.view.clone();
+        view.workspaces.insert(
+            name.to_owned(),
+            WorkspaceEntry {
+                working_copy: [change].into(),
+                heads: [change].into(),
+            },
+        );
+        let view_id = self.store.put_object(&view.to_envelope())?;
+        let op = Operation {
+            parents: state.at.heads.clone(),
+            workspace: name.to_owned(),
+            view: view_id,
+        };
+        let id = object_id(ALG, &op.to_envelope());
+        let fs = self.store.fs();
+        prepare(fs, dir)?;
+        let praps = dir.join(PRAPS_DIR);
+        let plan = materialise::plan(fs, dir, &Tree::new(), &tree, fs.name_rules(), ALG, false)?;
+        if !plan.hazards.is_empty() {
+            return Err(Error::Hazards(plan.hazards));
+        }
+        // As `restore` refuses it: a path whose temporary name another of
+        // the change's paths takes would otherwise be left out of the lane
+        // (Sprint 7 code review, finding 1).
+        if !plan.blocked.is_empty() {
+            return Err(Error::Blocked(plan.blocked));
+        }
+        lane::write(
+            fs,
+            &praps,
+            &lane::LaneFile {
+                name: name.to_owned(),
+                store: self.store.root().to_path_buf(),
+            },
+            self.writes_lane_file_in_place(),
+        )?;
+        record::write(
+            fs,
+            &praps,
+            &Record {
+                from: None,
+                target: id,
+            },
+        )?;
+        let committed = self.store.commit_op(&op)?;
+        self.last_op = Some(committed);
+        if committed != id {
+            return Err(corrupt(format!(
+                "op {committed} was committed where {id} was expected"
+            )));
+        }
+        self.store.fs().point("workspace.lane.made");
+        let fs = self.store.fs();
+        let kept =
+            materialise::apply(fs, dir, &Tree::new(), ALG, &plan, |blob| self.content(blob))?;
+        self.notes.extend(kept);
+        record::drop_record(fs, &praps)?;
+        Ok((committed, change_id))
+    }
+
+    /// Refuses `dir` unless it is free for a lane: absent, empty, or holding
+    /// nothing but the `.praps` an interrupted making left. Such a `.praps`
+    /// holds no `workspace` file, or one naming a workspace `view` has no
+    /// entry for, and at most the temporary names and the record beside it.
+    fn refuse_unless_free(&self, dir: &Path, view: &View) -> Result<(), Error> {
+        let fs = self.store.fs();
+        if !dir_exists(fs, dir)? {
+            return Ok(());
+        }
+        let not_free = || Error::NotFree(dir.to_path_buf());
+        let entries = fs.list(dir)?;
+        if entries.is_empty() {
+            return Ok(());
+        }
+        if entries.len() != 1 || entries[0] != PRAPS_DIR {
+            return Err(not_free());
+        }
+        let praps = dir.join(PRAPS_DIR);
+        let left = [
+            lane::WORKSPACE_FILE,
+            lane::WORKSPACE_FILE_NEW,
+            record::RECORD,
+            record::RECORD_NEW,
+        ];
+        if fs
+            .list(&praps)?
+            .iter()
+            .any(|entry| !left.contains(&entry.as_str()))
+        {
+            return Err(not_free());
+        }
+        match lane::read(fs, &praps)? {
+            None => Ok(()),
+            Some(Ok(file)) if !view.workspaces.contains_key(&file.name) => Ok(()),
+            Some(_) => Err(not_free()),
+        }
     }
 
     /// Snapshots, then sets the working-copy change's description to
@@ -1077,18 +1418,65 @@ impl<F: Fs> Workspace<F> {
             let view = self.view_of(op)?;
             let working_copy = *view
                 .workspaces
-                .get(DEFAULT_WORKSPACE)
-                .ok_or_else(|| corrupt(format!("view {}: no default workspace", op.view)))?;
+                .get(&op.workspace)
+                .and_then(|entry| entry.working_copy.first())
+                .ok_or_else(|| {
+                    corrupt(format!("view {}: no entry for {}", op.view, op.workspace))
+                })?;
             let changeset = self.changeset(&working_copy)?;
             entries.push(OpEntry {
                 id: *id,
                 parents: op.parents.clone(),
+                workspace: op.workspace.clone(),
                 working_copy,
                 change_id: changeset.change_id,
                 paths: changeset.changes.len(),
             });
         }
         Ok(entries)
+    }
+
+    /// Snapshots, then lists every workspace the heads hold, in name order:
+    /// its working-copy change (the smallest, when its pointer holds
+    /// several), what that change changes, and the other changes of a
+    /// pointer that holds several. With no edit it writes nothing.
+    pub fn lanes(&mut self) -> Result<Vec<LaneEntry>, Error> {
+        let mut state = self.begin()?;
+        self.snapshot_in(&mut state)?;
+        let mut lanes = Vec::new();
+        for (name, entry) in &state.at.view.workspaces {
+            let mut changes = Vec::new();
+            for id in &entry.working_copy {
+                changes.push(self.changeset(id)?);
+            }
+            let first = changes.remove(0);
+            lanes.push(LaneEntry {
+                name: name.clone(),
+                this: *name == self.name,
+                change_id: first.change_id,
+                paths: first.changes.len(),
+                others: changes.iter().map(|change| change.change_id).collect(),
+            });
+        }
+        Ok(lanes)
+    }
+
+    /// The workspace this working copy is.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The op this handle committed last, if it has committed one. A
+    /// command that writes nothing leaves it as it was, so a caller can
+    /// tell what each command committed (the Concurrency scenario).
+    pub fn last_op(&self) -> Option<HashRef> {
+        self.last_op
+    }
+
+    /// The view the op heads leave together, as a command loads it: read
+    /// from the store each time, never from the state a command holds.
+    pub fn view(&self) -> Result<View, Error> {
+        Ok(self.read_state()?.at.view)
     }
 
     /// Snapshots, then lists the working-copy change and the changes before
@@ -1113,40 +1501,91 @@ impl<F: Fs> Workspace<F> {
         Ok(entries)
     }
 
-    /// Undoes the last op: takes H, the single head now, snapshots once, and
-    /// moves to the view of H's parent as [`Workspace::restore_view`] does.
-    /// Returns H's parent and the new op. With no parent it fails with
+    /// Undoes this workspace's last op (INT-0009, "Undo is scoped"): takes
+    /// its writers as they are before the snapshot (with one head, that
+    /// head), snapshots once, and returns this workspace's entry to its value
+    /// just before them, in the view their parents leave together. No other
+    /// entry changes. Returns those parents and the new op. With no parent,
+    /// or none that holds this workspace (its writer made it), it fails with
     /// [`Error::NothingToUndo`], having written only the snapshot.
-    pub fn undo(&mut self) -> Result<(HashRef, HashRef), Error> {
+    pub fn undo(&mut self) -> Result<(BTreeSet<HashRef>, HashRef), Error> {
         let mut state = self.begin()?;
-        let h = state.at.head;
+        let writers = merge::writers(&state.ops, &state.at.heads)
+            .remove(&self.name)
+            .unwrap_or_default();
         self.snapshot_in(&mut state)?;
-        let op = state
-            .ops
-            .get(&h)
-            .ok_or_else(|| corrupt(format!("op {h} disappeared")))?;
-        let Some(parent) = op.parents.first().copied() else {
+        let mut parents = BTreeSet::new();
+        for writer in &writers {
+            let op = state
+                .ops
+                .get(writer)
+                .ok_or_else(|| corrupt(format!("op {writer} disappeared")))?;
+            parents.extend(op.parents.iter().copied());
+        }
+        if parents.is_empty() {
+            return Err(Error::NothingToUndo);
+        }
+        let before = self.merged(&state.ops, &parents)?;
+        let Some(entry) = before.workspaces.get(&self.name).cloned() else {
             return Err(Error::NothingToUndo);
         };
-        let view = state
-            .ops
-            .get(&parent)
-            .ok_or_else(|| corrupt(format!("op {h} names a missing parent {parent}")))?
-            .view;
-        let new = self.restore_view_in(state, &view)?;
-        Ok((parent, new))
+        let own_view = match parents.iter().collect::<Vec<_>>()[..] {
+            [one] => Some(state.ops[one].view),
+            _ => None,
+        };
+        let (view_id, view) = self.scoped_view(&state, entry, own_view)?;
+        let new = self.restore_view_in(state, &view_id, &view)?;
+        Ok((parents, new))
     }
 
-    /// Snapshots, then moves to the view of the op `spec` names: an op id
-    /// in text form, or a unique prefix of its hex digest, with or without
-    /// the algorithm name. Returns that op and the new op.
+    /// Snapshots, then returns this workspace's entry to its value in the
+    /// view of the op `spec` names: an op id in text form, or a unique
+    /// prefix of its hex digest, with or without the algorithm name. No
+    /// other entry changes. Returns that op and the new op.
     pub fn restore(&mut self, spec: &str) -> Result<(HashRef, HashRef), Error> {
         let mut state = self.begin()?;
         self.snapshot_in(&mut state)?;
         let target = resolve(&state.ops, spec)?;
-        let view = state.ops[&target].view;
-        let new = self.restore_view_in(state, &view)?;
+        let own_view = state.ops[&target].view;
+        let view = self.view_of(&state.ops[&target])?;
+        let Some(entry) = view.workspaces.get(&self.name).cloned() else {
+            return Err(Error::NotInWorkspace(target, self.name.clone()));
+        };
+        let (view_id, view) = self.scoped_view(&state, entry, Some(own_view))?;
+        let new = self.restore_view_in(state, &view_id, &view)?;
         Ok((target, new))
+    }
+
+    /// The view `undo` or `restore` moves to: the state's view with only
+    /// this workspace's entry set to `entry`. A pointer of several
+    /// changesets keeps the smallest, the others staying among the heads,
+    /// with the race note (INT-0014). When that view is exactly the view
+    /// `own_view` names, that object is named; otherwise it is written.
+    /// Returns the view's id and the view.
+    fn scoped_view(
+        &mut self,
+        state: &State,
+        mut entry: WorkspaceEntry,
+        own_view: Option<HashRef>,
+    ) -> Result<(HashRef, View), Error> {
+        if entry.working_copy.len() > 1 {
+            let raced: Vec<String> = entry.working_copy.iter().map(ToString::to_string).collect();
+            let kept = *entry.working_copy.first().expect("several");
+            self.notes.push(format!(
+                "the state this command returns to had the working copy at {}; \
+                 this command continues from {kept}, and the others stay among the changes",
+                raced.join(", ")
+            ));
+            entry.heads.extend(entry.working_copy.iter().copied());
+            entry.working_copy = [kept].into();
+        }
+        let mut view = state.at.view.clone();
+        view.workspaces.insert(self.name.clone(), entry);
+        let bytes = view.to_envelope();
+        if let Some(id) = own_view.filter(|id| *id == object_id(ALG, &bytes)) {
+            return Ok((id, view));
+        }
+        Ok((self.store.put_object(&bytes)?, view))
     }
 }
 
@@ -1173,6 +1612,23 @@ fn resolve(ops: &BTreeMap<HashRef, Operation>, spec: &str) -> Result<HashRef, Er
     }
 }
 
+/// Workspace `name`'s working-copy changeset in `view`, which an operation
+/// of that workspace left: every operation a command commits holds one
+/// changeset in its own pointer, so one that holds several here is corrupt.
+fn working_copy_of(view: &View, name: &str) -> Result<HashRef, Error> {
+    let entry = view
+        .workspaces
+        .get(name)
+        .ok_or_else(|| corrupt(format!("the view has no workspace {name}")))?;
+    match entry.working_copy.iter().collect::<Vec<_>>()[..] {
+        [one] => Ok(*one),
+        _ => Err(corrupt(format!(
+            "the working copy of {name} names {} changesets",
+            entry.working_copy.len()
+        ))),
+    }
+}
+
 /// A changeset's one parent, if it has any. A changeset with several needs
 /// INT-0012's merge.
 fn only_parent(changeset: &Changeset, id: &HashRef) -> Result<Option<HashRef>, Error> {
@@ -1190,7 +1646,10 @@ pub struct OpEntry {
     pub id: HashRef,
     /// Its parent ops.
     pub parents: BTreeSet<HashRef>,
-    /// The working-copy changeset of its view.
+    /// The workspace that made it.
+    pub workspace: String,
+    /// That workspace's working-copy changeset in the op's view: the
+    /// smallest, when the pointer holds several.
     pub working_copy: HashRef,
     /// That changeset's change ID.
     pub change_id: [u8; CHANGE_ID_LEN],
@@ -1198,6 +1657,22 @@ pub struct OpEntry {
     /// the files of its whole tree would need the chain of changes behind
     /// it, for every op listed.
     pub paths: usize,
+}
+
+/// One workspace, as `lanes` lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LaneEntry {
+    /// The workspace's name.
+    pub name: String,
+    /// Whether it is the workspace the command ran in.
+    pub this: bool,
+    /// Its working-copy change's change ID.
+    pub change_id: [u8; CHANGE_ID_LEN],
+    /// How many paths that change changes against its parent.
+    pub paths: usize,
+    /// The change IDs of the pointer's other changes, when commands moved it
+    /// at the same time.
+    pub others: Vec<[u8; CHANGE_ID_LEN]>,
 }
 
 /// One change, as `log` lists it.

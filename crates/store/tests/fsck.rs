@@ -5,7 +5,7 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use codec::{Changeset, Entry, Mode as FileMode, Operation, RepoPath, View, blob};
+use codec::{Changeset, Entry, Mode as FileMode, Operation, RepoPath, View, WorkspaceEntry, blob};
 use common::matrix::{ROOT, run_matrix};
 use hash::{HashAlg, HashRef};
 use sim::{Fs, Mode, SimFs};
@@ -56,13 +56,20 @@ fn build() -> Built {
     let mut commit = |parents: &[HashRef], objects: &[HashRef]| {
         let changeset = store.put_object(&holder(objects)).unwrap();
         let view = View {
-            heads: [changeset].into(),
-            workspaces: Default::default(),
+            workspaces: [(
+                "default".to_owned(),
+                WorkspaceEntry {
+                    working_copy: [changeset].into(),
+                    heads: Default::default(),
+                },
+            )]
+            .into(),
         };
         let view = store.put_object(&view.to_envelope()).unwrap();
         store
             .commit_op(&Operation {
                 parents: parents.iter().copied().collect(),
+                workspace: "default".to_owned(),
                 view,
             })
             .unwrap()

@@ -43,6 +43,13 @@ fn head(ws: &Ws) -> (HashRef, HashRef) {
     (head, ops[&head].view)
 }
 
+/// The working-copy changeset op `op`'s view names, as a record's `from`.
+fn wc_of(ws: &Ws, op: &HashRef) -> HashRef {
+    let view_id = ws.store().ops().unwrap()[op].view;
+    let view = codec::View::from_envelope(&ws.store().get_object(&view_id).unwrap()).unwrap();
+    *view.workspaces["default"].working_copy.first().unwrap()
+}
+
 /// Snapshots and returns the head's view.
 fn checkpoint(ws: &mut Ws) -> HashRef {
     ws.snapshot().unwrap();
@@ -434,7 +441,7 @@ fn resume_drops_a_record_whose_target_is_not_the_head() {
         &*fs,
         &praps(),
         &Record {
-            from: now,
+            from: Some(wc_of(&ws, &now)),
             target: old_op,
         },
     )
@@ -442,7 +449,7 @@ fn resume_drops_a_record_whose_target_is_not_the_head() {
     let before = files_on_disk(&*fs);
     let ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 70).unwrap();
     assert_eq!(ws.notes().len(), 1, "{:?}", ws.notes());
-    assert!(ws.notes()[0].contains("no longer the only head"));
+    assert!(ws.notes()[0].contains("another op of this workspace followed it"));
     assert_eq!(files_on_disk(&*fs), before);
     assert!(!fs.snapshot().contains_key("repo/.praps/working-copy"));
 }
@@ -462,7 +469,7 @@ fn resume_with_a_target_that_is_not_the_head_removes_temporaries() {
         &*fs,
         &praps(),
         &Record {
-            from: now,
+            from: Some(wc_of(&ws, &now)),
             target: old_op,
         },
     )
@@ -563,7 +570,7 @@ fn init_never_resumes() {
         &*fs,
         &praps(),
         &Record {
-            from: op,
+            from: Some(wc_of(&ws, &op)),
             target: missing,
         },
     )
@@ -594,7 +601,10 @@ fn record_round_trips() {
     let b: HashRef = "blake3:2222222222222222222222222222222222222222222222222222222222222222"
         .parse()
         .unwrap();
-    let record = Record { from: a, target: b };
+    let record = Record {
+        from: Some(a),
+        target: b,
+    };
     assert_eq!(Record::decode(&record.encode()), Ok(record));
     for bad in [&b""[..], b"from x\n", b"target 1\nfrom 2\n", b"\xff"] {
         assert!(Record::decode(bad).is_err(), "{bad:?}");
@@ -655,6 +665,7 @@ fn resume_keeps_a_tracked_file_at_a_temporary_name() {
     let restore_op = store
         .commit_op(&codec::Operation {
             parents: [now].into(),
+            workspace: "default".to_owned(),
             view,
         })
         .unwrap();
@@ -662,7 +673,7 @@ fn resume_keeps_a_tracked_file_at_a_temporary_name() {
         &*fs,
         &praps(),
         &Record {
-            from: now,
+            from: Some(wc_of(&ws, &now)),
             target: restore_op,
         },
     )
@@ -1282,4 +1293,185 @@ fn a_crash_during_a_removal_still_stops_the_write() {
         assert!(!recovered.snapshot().contains_key("repo/d"), "seed {seed}");
         assert!(!has_record(&recovered), "seed {seed}");
     }
+}
+
+/// A write back to the state after `a` = "1", interrupted after its op:
+/// the op is committed through another handle, over `over`, without writing
+/// a file, and the record names it. Returns the store handle, the target op
+/// and the working copy's files as they stand: `a` = "2".
+fn interrupted_write(
+    ws: &Ws,
+    fs: &Arc<SimFs>,
+    back_to: &HashRef,
+    over: &[HashRef],
+) -> (store::Store<Arc<SimFs>>, HashRef) {
+    let view = ws.store().ops().unwrap()[back_to].view;
+    let now = head(ws).0;
+    let mut store = store::Store::open(
+        Arc::clone(fs),
+        &Path::new(ROOT).join(".praps/store"),
+        hash::HashAlg::DEFAULT,
+        2,
+    )
+    .unwrap();
+    let target = store
+        .commit_op(&codec::Operation {
+            parents: over.iter().copied().collect(),
+            workspace: "default".to_owned(),
+            view,
+        })
+        .unwrap();
+    record::write(
+        &**fs,
+        &praps(),
+        &Record {
+            from: Some(wc_of(ws, &now)),
+            target,
+        },
+    )
+    .unwrap();
+    (store, target)
+}
+
+/// An op of another workspace, `lane`, over `parents`: its view adds lane's
+/// entry to `base`'s view and changes no other.
+fn lane_op(store: &mut store::Store<Arc<SimFs>>, base: &HashRef, parents: &[HashRef]) -> HashRef {
+    let view = store.ops().unwrap()[base].view;
+    let mut view = codec::View::from_envelope(&store.get_object(&view).unwrap()).unwrap();
+    let entry = view.workspaces["default"].clone();
+    view.workspaces.insert("lane".to_owned(), entry);
+    let view = store.put_object(&view.to_envelope()).unwrap();
+    store
+        .commit_op(&codec::Operation {
+            parents: parents.iter().copied().collect(),
+            workspace: "lane".to_owned(),
+            view,
+        })
+        .unwrap()
+}
+
+/// Two ops, `a` = "1" then `a` = "2": the first, and the head after both.
+fn ab_states(seed: u64) -> (Ws, Arc<SimFs>, HashRef, HashRef) {
+    let (mut ws, fs) = fresh(seed);
+    put(&fs, "a", b"1");
+    checkpoint(&mut ws);
+    let (one, _) = head(&ws);
+    put(&fs, "a", b"2");
+    checkpoint(&mut ws);
+    let (now, _) = head(&ws);
+    (ws, fs, one, now)
+}
+
+/// A record names the working-copy changeset a write starts from, or the
+/// empty tree, and the op it writes; both forms round-trip. A record of
+/// Sprint 6's form, whose `from` names an op, is refused as corrupt when
+/// resume reads it (Sprint 7 T-004).
+#[test]
+fn records_name_their_starting_change() {
+    let a: HashRef = "blake3:1111111111111111111111111111111111111111111111111111111111111111"
+        .parse()
+        .unwrap();
+    let b: HashRef = "blake3:2222222222222222222222222222222222222222222222222222222222222222"
+        .parse()
+        .unwrap();
+    let changeset = Record {
+        from: Some(a),
+        target: b,
+    };
+    assert_eq!(
+        String::from_utf8(changeset.encode()).unwrap(),
+        format!("from {a}\ntarget {b}\n")
+    );
+    let empty = Record {
+        from: None,
+        target: b,
+    };
+    assert_eq!(
+        String::from_utf8(empty.encode()).unwrap(),
+        format!("from empty\ntarget {b}\n")
+    );
+    for record in [changeset, empty] {
+        assert_eq!(Record::decode(&record.encode()), Ok(record));
+    }
+    // A record whose `from` is an op: its target landed, so resume reads
+    // `from` as a changeset, and an op does not decode as one.
+    let (ws, fs, one, now) = ab_states(102);
+    let (_, target) = interrupted_write(&ws, &fs, &one, &[now]);
+    drop(ws);
+    record::write(
+        &*fs,
+        &praps(),
+        &Record {
+            from: Some(now),
+            target,
+        },
+    )
+    .unwrap();
+    match Workspace::open(Arc::clone(&fs), Path::new(ROOT), 103) {
+        Err(Error::Corrupt(_)) => {}
+        other => panic!("{:?}", other.err()),
+    }
+}
+
+/// A write interrupted after its op is finished while that op is still its
+/// workspace's only writer, though another workspace's op follows it.
+#[test]
+fn resume_finishes_while_its_target_is_the_writer() {
+    let (ws, fs, one, now) = ab_states(104);
+    let (mut store, target) = interrupted_write(&ws, &fs, &one, &[now]);
+    lane_op(&mut store, &target, &[target]);
+    drop(ws);
+    let ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 105).unwrap();
+    assert_eq!(files_on_disk(&*fs)["a"].0, b"1", "the write was finished");
+    assert!(ws.notes().is_empty(), "{:?}", ws.notes());
+    assert!(!fs.snapshot().contains_key("repo/.praps/working-copy"));
+}
+
+/// Another op of the same workspace after the interrupted write's op: the
+/// write is abandoned, its record dropped and the files left, with a note.
+#[test]
+fn resume_leaves_files_when_its_workspace_moved_on() {
+    let (ws, fs, one, now) = ab_states(106);
+    let (mut store, target) = interrupted_write(&ws, &fs, &one, &[now]);
+    // The workspace moves on: an op made in it over the target, with the
+    // view the head had.
+    let view = store.ops().unwrap()[&now].view;
+    store
+        .commit_op(&codec::Operation {
+            parents: [target].into(),
+            workspace: "default".to_owned(),
+            view,
+        })
+        .unwrap();
+    drop(ws);
+    let ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 107).unwrap();
+    assert_eq!(files_on_disk(&*fs)["a"].0, b"2", "the files were left");
+    assert_eq!(ws.notes().len(), 1, "{:?}", ws.notes());
+    assert!(ws.notes()[0].contains("was abandoned"), "{:?}", ws.notes());
+    assert!(!fs.snapshot().contains_key("repo/.praps/working-copy"));
+}
+
+/// As in `resume_finishes_while_its_target_is_the_writer`, with the other
+/// workspace's op made beside the interrupted write's op, over the same
+/// head: the two are both op heads, and the write is still finished.
+#[test]
+fn resume_finishes_after_another_workspace_commits() {
+    let (ws, fs, one, now) = ab_states(108);
+    let mut store = store::Store::open(
+        Arc::clone(&fs),
+        &Path::new(ROOT).join(".praps/store"),
+        hash::HashAlg::DEFAULT,
+        3,
+    )
+    .unwrap();
+    let lane = lane_op(&mut store, &now, &[now]);
+    let (_, target) = interrupted_write(&ws, &fs, &one, &[now]);
+    assert_eq!(
+        store::heads_of(&store.ops().unwrap()),
+        [lane, target].into_iter().collect()
+    );
+    drop(ws);
+    let ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 109).unwrap();
+    assert_eq!(files_on_disk(&*fs)["a"].0, b"1", "the write was finished");
+    assert!(ws.notes().is_empty(), "{:?}", ws.notes());
 }

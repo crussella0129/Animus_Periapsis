@@ -122,7 +122,11 @@ struct Sched {
 
 struct Shared {
     sched: Mutex<Sched>,
-    turn: Condvar,
+    /// One for each process, which waits on its own: a boundary wakes only
+    /// the process drawn to run next, or every process once the run is
+    /// ending (Sprint 7 T-008). Waking every thread at every boundary cost
+    /// about 3 ms a boundary at 1,000 processes.
+    turns: Vec<Condvar>,
     setup: Processes,
     fs: Arc<SimFs>,
 }
@@ -177,7 +181,19 @@ impl Shared {
             let pick = sched.rng.below(able.len() as u64) as usize;
             sched.running = Some(able[pick]);
         }
-        self.turn.notify_all();
+        self.wake(sched);
+    }
+
+    /// Wakes the process that runs next, or, when the run is ending, every
+    /// process, so that each unwinds.
+    fn wake(&self, sched: &Sched) {
+        if sched.abort {
+            for turn in &self.turns {
+                turn.notify_all();
+            }
+        } else if let Some(next) = sched.running {
+            self.turns[next].notify_all();
+        }
     }
 
     /// Blocks until `me` holds the baton, or the run is ending (then the
@@ -188,8 +204,7 @@ impl Shared {
         me: usize,
     ) -> MutexGuard<'a, Sched> {
         while sched.running != Some(me) && !sched.abort {
-            sched = self
-                .turn
+            sched = self.turns[me]
                 .wait(sched)
                 .unwrap_or_else(PoisonError::into_inner);
         }
@@ -204,7 +219,7 @@ impl Shared {
         if sched.running == Some(me) || sched.running.is_none() {
             self.draw(&mut sched);
         } else {
-            self.turn.notify_all();
+            self.wake(&sched);
         }
     }
 
@@ -347,7 +362,7 @@ impl Processes {
                 panic: None,
                 deadlock: None,
             }),
-            turn: Condvar::new(),
+            turns: (0..n).map(|_| Condvar::new()).collect(),
             setup: self.clone(),
             fs: Arc::clone(fs),
         });
