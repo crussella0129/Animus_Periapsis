@@ -15,6 +15,7 @@ use std::any::Any;
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::panic::{self, AssertUnwindSafe};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
 
@@ -87,6 +88,9 @@ pub struct Processes {
     seed: u64,
     orderings: Vec<(After, usize, &'static str, u32)>,
     kills: BTreeMap<usize, KillAt>,
+    /// Wakes of a waiting process that found it was not its turn, over this
+    /// setup's runs (see [`Processes::needless_wakes`]).
+    needless: Arc<AtomicU64>,
 }
 
 /// The marker a killed or stopped process unwinds with.
@@ -207,6 +211,9 @@ impl Shared {
             sched = self.turns[me]
                 .wait(sched)
                 .unwrap_or_else(PoisonError::into_inner);
+            if sched.running != Some(me) && !sched.abort {
+                self.setup.needless.fetch_add(1, Ordering::Relaxed);
+            }
         }
         sched
     }
@@ -290,6 +297,14 @@ impl Processes {
     pub fn order(mut self, after: After, process: usize, point: &'static str, nth: u32) -> Self {
         self.orderings.push((after, process, point, nth));
         self
+    }
+
+    /// How many times, over this setup's runs so far, a waiting process woke
+    /// although it was not its turn and the run was not ending. A boundary
+    /// wakes only the process drawn next, so this is zero but for the
+    /// system's own spurious wakeups (Sprint 7 T-008; test critique C-011).
+    pub fn needless_wakes(&self) -> u64 {
+        self.needless.load(Ordering::Relaxed)
     }
 
     /// Kills process `process` at `at`. A process has at most one kill.

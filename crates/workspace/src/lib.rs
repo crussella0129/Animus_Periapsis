@@ -487,6 +487,20 @@ fn corrupt(what: impl fmt::Display) -> Error {
     Error::Corrupt(what.to_string())
 }
 
+/// The lane file in `praps`, if there is one. A file that cannot be read is
+/// refused as one that does not parse, naming it and why, not as a bare I/O
+/// error (Sprint 7 test critique, C-001); a crash stays an I/O error.
+fn read_lane_file(fs: &impl Fs, praps: &Path) -> Result<Option<lane::LaneFile>, Error> {
+    let path = praps.join(lane::WORKSPACE_FILE);
+    match lane::read(fs, praps) {
+        Ok(None) => Ok(None),
+        Ok(Some(Ok(file))) => Ok(Some(file)),
+        Ok(Some(Err(why))) => Err(Error::BadWorkspaceFile(path, why)),
+        Err(error) if sim::is_crash(&error) => Err(Error::Io(error)),
+        Err(error) => Err(Error::BadWorkspaceFile(path, error.to_string())),
+    }
+}
+
 /// Refuses an op log in which `ops/` holds files that do not hash to their
 /// names or do not decode: the valid ops alone would let a damaged head
 /// silently give way to its parent, or a store whose ops are all damaged
@@ -566,15 +580,8 @@ impl<F: Fs> Workspace<F> {
     #[cfg(feature = "variants")]
     pub fn open_lane_with_store(store: Store<F>, root: &Path, seed: u64) -> Result<Self, Error> {
         let praps = root.join(PRAPS_DIR);
-        let file = match lane::read(store.fs(), &praps)? {
-            Some(Ok(file)) => file,
-            Some(Err(why)) => {
-                return Err(Error::BadWorkspaceFile(
-                    praps.join(lane::WORKSPACE_FILE),
-                    why,
-                ));
-            }
-            None => return Err(Error::NotInitialised(root.to_path_buf())),
+        let Some(file) = read_lane_file(store.fs(), &praps)? else {
+            return Err(Error::NotInitialised(root.to_path_buf()));
         };
         let mut workspace = Self::new(store, root, seed);
         workspace.name = file.name;
@@ -606,15 +613,8 @@ impl<F: Fs> Workspace<F> {
             // A lane: `.praps/workspace` names its workspace and the store
             // it shares. Probed only where there is no store, so opening a
             // repository's own working copy makes no new syscall.
-            let file = match lane::read(&fs, &praps)? {
-                None => return Err(Error::NotInitialised(root.to_path_buf())),
-                Some(Err(why)) => {
-                    return Err(Error::BadWorkspaceFile(
-                        praps.join(lane::WORKSPACE_FILE),
-                        why,
-                    ));
-                }
-                Some(Ok(file)) => file,
+            let Some(file) = read_lane_file(&fs, &praps)? else {
+                return Err(Error::NotInitialised(root.to_path_buf()));
             };
             let store = Store::open(fs, &file.store, ALG, seed)
                 .map_err(|error| Error::StoreGone(file.store.clone(), error.to_string()))?;

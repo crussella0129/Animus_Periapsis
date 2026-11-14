@@ -2,6 +2,12 @@
 //! interleavings of two lanes' commands, each `undo` and `restore` by one
 //! lane leaves every entry the other owns as the merge left it just before,
 //! and the other lane's files as they were.
+//!
+//! In half of those steps the two lanes run at once: the lane opens, the
+//! other lane then records an edit, and the lane's `undo` or `restore` runs
+//! from the state it opened on. The op log then has two heads, and the
+//! other lane's entry is the one their merge leaves (Sprint 7 test
+//! critique, C-004).
 
 mod common;
 
@@ -55,7 +61,7 @@ fn write(fs: &SimFs, dir: &str, name: &str, content: &[u8]) {
 #[test]
 fn undo_is_scoped_over_200_interleavings() {
     let names = ["la", "lb"];
-    let mut checked = 0;
+    let (mut checked, mut succeeded, mut raced) = (0, 0, 0);
     for seed in 0..INTERLEAVINGS {
         let fs = Rc::new(SimFs::new(seed, Mode::Lenient));
         let mut ws = Workspace::init(Rc::clone(&fs), Path::new(ROOT), seed)
@@ -74,9 +80,24 @@ fn undo_is_scoped_over_200_interleavings() {
             // Each command opens its lane, as a `praps` process does.
             let mut lane: Ws =
                 Workspace::open(Rc::clone(&fs), Path::new(names[me]), seed * 100 + step).unwrap();
+            // The ops as this lane loaded them: an op written after it opened
+            // is not one its command knows.
+            let known: Vec<_> = lane.store().ops().unwrap().into_keys().collect();
+            let kind = rng.below(5);
+            // At once: the other lane records an edit after this one has
+            // opened, so this one's command runs from a state without it.
+            let at_once = kind >= 3 && rng.coin();
+            if at_once {
+                let mut them: Ws =
+                    Workspace::open(Rc::clone(&fs), Path::new(other), seed * 100 + step + 50)
+                        .unwrap();
+                write(&fs, other, "g", format!("{seed}-{step} at once").as_bytes());
+                them.status().unwrap();
+            }
             let entry_before = merged_entry(&lane, other);
             let files_before = lane_files(&fs, other);
-            let undoing = match rng.below(5) {
+            let mut done = false;
+            let undoing = match kind {
                 0 => {
                     let file = format!("f{}", rng.below(3));
                     write(&fs, names[me], &file, format!("{seed}-{step}").as_bytes());
@@ -93,16 +114,17 @@ fn undo_is_scoped_over_200_interleavings() {
                 }
                 3 => {
                     match lane.undo() {
-                        Ok(_) | Err(Error::NothingToUndo) => {}
+                        Ok(_) => done = true,
+                        Err(Error::NothingToUndo) => {}
                         Err(error) => panic!("seed {seed} step {step}: undo: {error}"),
                     }
                     true
                 }
                 _ => {
-                    let ops: Vec<_> = lane.store().ops().unwrap().into_keys().collect();
-                    let op = ops[rng.below(ops.len() as u64) as usize];
+                    let op = known[rng.below(known.len() as u64) as usize];
                     match lane.restore(&op.to_string()) {
-                        Ok(_) | Err(Error::NotInWorkspace(..)) => {}
+                        Ok(_) => done = true,
+                        Err(Error::NotInWorkspace(..)) => {}
                         Err(error) => panic!("seed {seed} step {step}: restore: {error}"),
                     }
                     true
@@ -110,6 +132,16 @@ fn undo_is_scoped_over_200_interleavings() {
             };
             if undoing {
                 let lane = Workspace::open(Rc::clone(&fs), Path::new(names[me]), 7).unwrap();
+                if done {
+                    succeeded += 1;
+                    let heads = store::heads_of(&lane.store().ops().unwrap());
+                    if at_once {
+                        // The command ran from a state without the other
+                        // lane's op, so the two are both heads.
+                        assert_eq!(heads.len(), 2, "seed {seed} step {step}");
+                        raced += 1;
+                    }
+                }
                 assert_eq!(
                     merged_entry(&lane, other),
                     entry_before,
@@ -124,6 +156,10 @@ fn undo_is_scoped_over_200_interleavings() {
             }
         }
     }
-    println!("{checked} undo and restore commands checked over {INTERLEAVINGS} interleavings");
+    println!(
+        "{checked} undo and restore commands checked over {INTERLEAVINGS} interleavings: {succeeded} succeeded, {raced} of them beside the other lane's op, two heads"
+    );
     assert!(checked >= 1_000, "{checked}");
+    assert!(succeeded >= 500, "{succeeded}");
+    assert!(raced >= 200, "{raced}");
 }

@@ -741,6 +741,24 @@ fn lanes_at_once_end_to_end() {
             assert_eq!(output.status.code(), Some(0), "{name}: {args}: {output:?}");
         }
     }
+    // How far the processes overlapped, read from the op log: its heads, and
+    // the ops that name several parents, each made by a command that merged
+    // heads (Sprint 7 test critique, C-006). The timing is the system's, so
+    // these are printed for the record.
+    let store = store::Store::open(
+        sim::RealFs,
+        &root.join(".praps").join("store"),
+        hash::HashAlg::DEFAULT,
+        5,
+    )
+    .unwrap();
+    let ops = store.ops().unwrap();
+    let merges = ops.values().filter(|op| op.parents.len() > 1).count();
+    println!(
+        "lanes at once: {} ops, {} op heads, {merges} ops over several heads",
+        ops.len(),
+        store::heads_of(&ops).len()
+    );
     // `praps lanes` prints the same lines in every working copy, apart from
     // the `*`, which marks each one's own line.
     let mut shown = Vec::new();

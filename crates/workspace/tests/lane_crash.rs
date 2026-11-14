@@ -97,15 +97,27 @@ fn check(recovered: SimFs, seed: u64, last: bool) -> Violations {
     let fs = Rc::new(recovered);
     let mut v = Violations::default();
     let landed = landed(&fs);
+    let before = fs.snapshot();
+    let lane_file = before.contains_key("lane/.praps/workspace");
     let opened = Workspace::open(Rc::clone(&fs), Path::new(LANE), seed + 1);
-    let record_left = fs.snapshot().contains_key("lane/.praps/working-copy");
+    let after = fs.snapshot();
+    let record_left = after.contains_key("lane/.praps/working-copy");
+    // Where the op did not land, opening writes nothing but dropping the
+    // record, if one was left (Sprint 7 test critique, C-008).
+    let mut dropped = before.clone();
+    dropped.remove("lane/.praps/working-copy");
     match (landed, opened) {
         (true, Ok(_)) => {
             if lane_files(&fs) != expected_files() || record_left {
                 v.files += 1;
             }
         }
-        (false, Err(Error::UnfinishedLane(..) | Error::NotInitialised(_))) => {}
+        // No repository: only where no lane file survived, and then nothing
+        // is written.
+        (false, Err(Error::NotInitialised(_))) if !lane_file && after == before => {}
+        // An interrupted lane, named by its name and its directory.
+        (false, Err(Error::UnfinishedLane(name, dir)))
+            if lane_file && name == LANE && dir == Path::new(LANE) && after == dropped => {}
         _ => v.outcome += 1,
     }
     if last && !(landed && lane_files(&fs) == expected_files() && !record_left) {
@@ -132,13 +144,32 @@ fn check(recovered: SimFs, seed: u64, last: bool) -> Violations {
 }
 
 fn digest(fs: &SimFs) -> HashRef {
+    digest_of(fs, false)
+}
+
+/// [`digest`], with every `\` in a lane file read as `/`: the one byte a
+/// lane file holds that depends on the system, the separator in its store's
+/// path (Sprint 7 test critique, C-010). It is the same on every system.
+fn portable_digest(fs: &SimFs) -> HashRef {
+    digest_of(fs, true)
+}
+
+fn digest_of(fs: &SimFs, portable: bool) -> HashRef {
     let mut bytes = Vec::new();
     for (path, node) in fs.snapshot() {
         bytes.extend_from_slice(path.as_bytes());
         bytes.push(0);
+        let lane_file = path.contains("/.praps/workspace");
         match node {
             Node::Dir => bytes.push(b'd'),
-            Node::File(content) | Node::Executable(content) => {
+            Node::File(mut content) | Node::Executable(mut content) => {
+                if portable && lane_file {
+                    for byte in &mut content {
+                        if *byte == b'\\' {
+                            *byte = b'/';
+                        }
+                    }
+                }
                 bytes.push(b'f');
                 bytes.extend_from_slice(&(content.len() as u64).to_le_bytes());
                 bytes.extend_from_slice(&content);
@@ -156,6 +187,7 @@ struct Cell {
     crash_at: u64,
     violations: Violations,
     state: HashRef,
+    portable: HashRef,
     trace: HashRef,
 }
 
@@ -185,6 +217,7 @@ fn matrix(variant: Variant) -> Vec<Cell> {
                     crash_at,
                     violations,
                     state: digest(&recovered),
+                    portable: portable_digest(&recovered),
                     trace: HashAlg::Blake3.hash(fs.trace().join("\n").as_bytes()),
                 });
             }
@@ -225,19 +258,29 @@ fn lane_matrix_is_reproducible() {
     let second = matrix(Variant::Correct);
     assert_eq!(first.len(), second.len());
     let mut all = Vec::new();
+    let mut portable = Vec::new();
     for (a, b) in first.iter().zip(&second) {
         let at = (a.mode, a.seed, a.crash_at);
         assert_eq!(at, (b.mode, b.seed, b.crash_at));
         assert_eq!(a.state, b.state, "cell {at:?}");
+        assert_eq!(a.portable, b.portable, "cell {at:?}");
         assert_eq!(a.trace, b.trace, "cell {at:?}");
         assert_eq!(a.violations, b.violations, "cell {at:?}");
         all.extend_from_slice(&a.state.to_bytes());
         all.extend_from_slice(&a.trace.to_bytes());
+        portable.extend_from_slice(&a.portable.to_bytes());
+        portable.extend_from_slice(&a.trace.to_bytes());
     }
     let digest = HashAlg::Blake3.hash(&all);
+    let portable = HashAlg::Blake3.hash(&portable);
     println!("lane matrix digest over {} cells: {digest}", first.len());
+    println!(
+        "lane matrix portable digest over {} cells: {portable}",
+        first.len()
+    );
     assert_eq!(first.len(), CELLS);
     assert_eq!(digest.to_string(), DIGEST);
+    assert_eq!(portable.to_string(), PORTABLE);
 }
 
 const CELLS: usize = 5_760;
@@ -250,6 +293,9 @@ const CELLS: usize = 5_760;
 const DIGEST: &str = "blake3:e67e05ecad31d03c26475a742d45eb9e9d40a1f9e2c06f278ffee3ff3b501724";
 #[cfg(not(windows))]
 const DIGEST: &str = "blake3:913e4ba049f5951fbddd5804a6965b2a22c26600c7d1fc4b4f300250a77bc103";
+/// The same on every system: the states with lane files read alike, and the
+/// traces (Sprint 7 test critique, C-010).
+const PORTABLE: &str = "blake3:913e4ba049f5951fbddd5804a6965b2a22c26600c7d1fc4b4f300250a77bc103";
 
 #[test]
 fn lane_matrix_catches_a_file_written_in_place() {

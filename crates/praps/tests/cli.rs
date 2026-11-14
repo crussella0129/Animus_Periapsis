@@ -989,6 +989,11 @@ fn idempotent_commands_repeat_exactly() {
         .collect();
     assert!(idempotent.len() >= 5, "{idempotent:?}");
     assert!(idempotent.iter().any(|name| name == "status"));
+    // `lanes` is marked idempotent (T-007; Sprint 7 test critique, C-007).
+    assert!(
+        idempotent.iter().any(|name| name == "lanes"),
+        "{idempotent:?}"
+    );
     for name in &idempotent {
         let root = dir.join(format!("repo-{name}"));
         assert_eq!(code(&praps(&["init", root.to_str().unwrap()], &dir)), 0);
@@ -2393,10 +2398,31 @@ store /no/such/.praps/store
         fs::write(lane.join(".praps").join("workspace"), file).unwrap();
         refused(what, praps(&["status"], &lane), 1, holds);
     }
-    // 34 everywhere; four more on Unix by file modes and one by a removed
+    // A `.praps/workspace` that cannot be read, a directory standing in its
+    // place: the search stops there, naming the file, and `init` there is
+    // refused rather than making a repository inside what may be a lane
+    // (Sprint 7 test critique, C-001).
+    let unreadable = lanes.join("unreadable");
+    fs::create_dir_all(unreadable.join(".praps").join("workspace")).unwrap();
+    let output = praps(&["status"], &unreadable);
+    assert!(stderr(&output).contains("workspace"), "{output:?}");
+    refused(
+        "an unreadable .praps/workspace",
+        output,
+        1,
+        "make that file readable",
+    );
+    refused(
+        "init where .praps/workspace cannot be read",
+        praps(&["init"], &unreadable),
+        1,
+        "make that file readable",
+    );
+    assert!(!unreadable.join(".praps").join("store").exists());
+    // 36 everywhere; four more on Unix by file modes and one by a removed
     // current directory; two more on Windows (a hazard, text that is not
     // Unicode).
-    let expected = if cfg!(unix) { 39 } else { 36 };
+    let expected = if cfg!(unix) { 41 } else { 38 };
     assert_eq!(kinds, expected, "kinds of refusal checked");
     let _ = fs::remove_dir_all(&dir);
 }
@@ -2609,8 +2635,34 @@ fn eight_new_at_once_all_succeed() {
         let output = child.wait_with_output().unwrap();
         assert_eq!(code(&output), 0, "{output:?}");
     }
+    // How far the commands overlapped, read from the op log: its heads, the
+    // ops that name several parents (a command that merged heads), and the
+    // changes the working copy's pointer holds in the merge (Sprint 7 test
+    // critique, C-006). The timing is the system's, so these are printed,
+    // and a pointer that holds several must be named by `status`'s note.
+    let store = Store::open(RealFs, &root.join(".praps/store"), HashAlg::DEFAULT, 5).unwrap();
+    let ops = store.ops().unwrap();
+    let heads = store::heads_of(&ops);
+    let merges = ops.values().filter(|op| op.parents.len() > 1).count();
+    let Ok(view) = workspace::merge::merge(&ops, &heads, |id| {
+        Ok::<_, std::convert::Infallible>(
+            View::from_envelope(&store.get_object(id).unwrap()).unwrap(),
+        )
+    });
+    let pointer = &view.workspaces["default"].working_copy;
+    println!(
+        "eight new: {} op heads, {merges} ops over several heads, {} changes in the pointer",
+        heads.len(),
+        pointer.len()
+    );
     let status = praps(&["status"], &root);
     assert_eq!(code(&status), 0, "{status:?}");
+    if pointer.len() > 1 {
+        let err = stderr(&status);
+        for id in pointer {
+            assert!(err.contains(&id.to_string()), "{id} in {err}");
+        }
+    }
     let verify = praps(&["verify"], &root);
     assert_eq!(code(&verify), 0, "{verify:?}");
     assert!(stdout(&verify).contains("clean"), "{verify:?}");
@@ -2726,7 +2778,19 @@ fn praps_lane_refusals() {
     fs::create_dir(dir.join("full")).unwrap();
     fs::write(dir.join("full/x"), b"x").unwrap();
     fs::create_dir(dir.join("other")).unwrap();
-    let cases: [(&str, String, &str); 6] = [
+    let cases: [(&str, String, &str); 8] = [
+        // `.` and `..` name the directory they lead to, and here neither is
+        // free (T-007; Sprint 7 test critique, C-007).
+        (
+            "the working copy itself, as `.`",
+            ".".into(),
+            "an empty one",
+        ),
+        (
+            "the directory that holds it, as `..`",
+            "..".into(),
+            "an empty one",
+        ),
         (
             "a directory inside this working copy",
             "sub".into(),
@@ -2874,9 +2938,15 @@ fn praps_lanes_lists_every_workspace() {
             .unwrap();
         raced.push(hash::hex(&change_id)[..12].to_owned());
     }
+    // An edit in lane a: `lanes` records it first, as every command does,
+    // and a's line counts it (T-007; Sprint 7 test critique, C-007).
+    fs::write(a.join("own"), b"own").unwrap();
+    let before = logged_ops(&root).len();
     let first = praps(&["lanes"], &a);
     assert_eq!(code(&first), 0, "{first:?}");
+    assert_eq!(logged_ops(&root).len(), before + 1, "the edit is recorded");
     let lines: Vec<String> = stdout(&first).lines().map(str::to_owned).collect();
+    assert!(lines[0].ends_with(" 1 path"), "{lines:?}");
     // After the two-character mark, `* ` or two spaces, the name.
     let names: Vec<&str> = lines
         .iter()
@@ -2985,5 +3055,195 @@ fn praps_ops_names_each_workspace() {
             .all(|l| l.split(' ').nth(1) == Some("default")),
         "{lines:?}"
     );
+    // An op of the lane whose own pointer holds two changes, as a merge that
+    // keeps a raced pointer can: `ops` shows the change of the smaller
+    // changeset (T-007; Sprint 7 test critique, C-007).
+    let mut store = Store::open(RealFs, &root.join(".praps/store"), HashAlg::DEFAULT, 5).unwrap();
+    let head = *store.heads().unwrap().first().unwrap();
+    let view = store.ops().unwrap()[&head].view;
+    let view = View::from_envelope(&store.get_object(&view).unwrap()).unwrap();
+    let wc = *view.workspaces["worker"].working_copy.first().unwrap();
+    let mut changes = std::collections::BTreeMap::new();
+    for change_id in [[7_u8; 16], [8; 16]] {
+        let changeset = codec::Changeset {
+            parents: vec![wc],
+            change_id,
+            changes: Default::default(),
+            description: Vec::new(),
+        };
+        changes.insert(
+            store.put_object(&changeset.to_envelope()).unwrap(),
+            change_id,
+        );
+    }
+    let mut next = view.clone();
+    let entry = next.workspaces.get_mut("worker").unwrap();
+    entry.working_copy = changes.keys().copied().collect();
+    entry.heads.extend(changes.keys().copied());
+    let next = store.put_object(&next.to_envelope()).unwrap();
+    store
+        .commit_op(&Operation {
+            parents: [head].into(),
+            workspace: "worker".to_owned(),
+            view: next,
+        })
+        .unwrap();
+    let smaller = changes.values().next().unwrap();
+    let lines = lines_of(&praps(&["ops"], &root));
+    assert!(
+        lines[0].contains(&format!(" worker change {} ", &hash::hex(smaller)[..12])),
+        "{lines:?}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// The command's stdout lines.
+fn lines_of(output: &Output) -> Vec<String> {
+    stdout(output).lines().map(str::to_owned).collect()
+}
+
+/// A repository at `dir/lane-template/repo` with `a` and `d1/d2/deep`
+/// recorded, and a lane made from it at `dir/lane-template/lane`, which has
+/// a change of its own on top of an edit it recorded. Returns the root that
+/// holds both.
+fn lane_template(dir: &Path) -> PathBuf {
+    let root = dir.join("lane-template");
+    fs::create_dir(&root).unwrap();
+    assert_eq!(code(&praps(&["init", "repo"], &root)), 0);
+    let repo = root.join("repo");
+    write(&repo, "a", b"1");
+    write(&repo, "d1/d2/deep", b"deep");
+    assert_eq!(code(&praps(&["new"], &repo)), 0);
+    assert_eq!(code(&praps(&["lane", "../lane"], &repo)), 0);
+    let lane = root.join("lane");
+    write(&lane, "a", b"2");
+    assert_eq!(code(&praps(&["status"], &lane)), 0);
+    assert_eq!(code(&praps(&["new"], &lane)), 0);
+    root
+}
+
+/// INT-0037 AC-3 inside a lane: a command run at a lane's top, from two
+/// levels down in it, and from outside with a directory below the lane's
+/// top given does the same thing, byte for byte. Each run is on its own copy
+/// of one repository and lane, whose `.praps/workspace` is pointed at the
+/// copy's own store; the copy's path is masked (Sprint 7 test critique,
+/// C-007).
+#[test]
+fn commands_act_the_same_from_below_in_a_lane() {
+    let dir = claim("below-lane");
+    let template = lane_template(&dir);
+    // The op that made the lane: `restore` of it returns the lane to its
+    // first change.
+    let made = lines(&praps(&["ops"], &template.join("lane")))
+        .iter()
+        .rfind(|line| line.split(' ').nth(1) == Some("lane"))
+        .map(|line| line.split(' ').next().unwrap().to_owned())
+        .unwrap();
+    type Edit = fn(&Path);
+    let corpus: Vec<(&str, Vec<String>, Edit)> = vec![
+        ("status with an edit", vec!["status".into()], |lane| {
+            write(lane, "d1/new", b"n")
+        }),
+        ("status with none", vec!["status".into()], |_| {}),
+        ("log", vec!["log".into()], |lane| write(lane, "a", b"3")),
+        ("ops", vec!["ops".into()], |lane| write(lane, "a", b"3")),
+        (
+            "describe",
+            vec!["describe".into(), "Change a in the lane".into()],
+            |lane| write(lane, "a", b"3"),
+        ),
+        ("undo", vec!["undo".into()], |lane| write(lane, "a", b"3")),
+        ("restore", vec!["restore".into(), made.clone()], |_| {}),
+        ("verify", vec!["verify".into()], |_| {}),
+        ("lanes", vec!["lanes".into()], |lane| write(lane, "a", b"3")),
+        ("a refusal", vec!["restore".into(), "0000".into()], |_| {}),
+    ];
+    for (n, (name, args, edit)) in corpus.iter().enumerate() {
+        let mut results = Vec::new();
+        for (place, sub, given) in [
+            ("at the lane's top", "", None),
+            ("from two levels down", "d1/d2", None),
+            ("with a directory below given", "..", Some("d1")),
+        ] {
+            let root = dir.join(format!("copy-{n}-{}", results.len()));
+            copy_tree(&template, &root);
+            let lane = root.join("lane");
+            let store = root.join("repo").join(".praps").join("store");
+            fs::write(
+                lane.join(".praps").join("workspace"),
+                format!("name lane\nstore {}\n", store.display()),
+            )
+            .unwrap();
+            edit(&lane);
+            let (cwd, given) = match given {
+                Some(below) => (
+                    dir.clone(),
+                    Some(lane.join(below).to_str().unwrap().to_owned()),
+                ),
+                None if sub.is_empty() => (lane.clone(), None),
+                None => (lane.join(sub), None),
+            };
+            let mut line: Vec<&str> = args.iter().map(String::as_str).collect();
+            if let Some(given) = &given {
+                line.push(given);
+            }
+            let output = praps(&line, &cwd);
+            let spelled = root.display().to_string();
+            let resolved = fs::canonicalize(&root).unwrap().display().to_string();
+            let resolved = resolved.trim_start_matches(r"\\?\").to_owned();
+            let marked = |text: &[u8]| {
+                String::from_utf8_lossy(text)
+                    .replace(&spelled, "<root>")
+                    .replace(&resolved, "<root>")
+            };
+            // Every file the copy holds, the store's among them, but the lane
+            // file, which names the copy's own store.
+            let files: Vec<_> = files_under(&root)
+                .into_iter()
+                .filter(|(path, _)| !path.ends_with(Path::new(".praps").join("workspace")))
+                .collect();
+            results.push((
+                place,
+                code(&output),
+                marked(&output.stdout),
+                marked(&output.stderr),
+                files,
+            ));
+        }
+        let (_, code0, out0, err0, files0) = &results[0];
+        for (place, code, out, err, files) in &results[1..] {
+            assert_eq!(code, code0, "{name}, {place}: exit code");
+            assert_eq!(out, out0, "{name}, {place}: stdout");
+            assert_eq!(err, err0, "{name}, {place}: stderr");
+            assert_eq!(files, files0, "{name}, {place}: the files left");
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A last name that is not UTF-8, reached through `..` from a repository
+/// inside such a directory, is refused as no plain text, with one hint and
+/// nothing written (T-007; Sprint 7 test critique, C-007). An argument that
+/// is not UTF-8 is a usage error before any command runs.
+#[cfg(unix)]
+#[test]
+fn praps_lane_refuses_a_last_name_that_is_not_utf8() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = claim("lane-not-utf8");
+    let odd = dir.join(std::ffi::OsStr::from_bytes(b"odd-\xff"));
+    fs::create_dir(&odd).unwrap();
+    assert_eq!(code(&praps(&["init", "repo"], &odd)), 0);
+    let root = odd.join("repo");
+    let ops = logged_ops(&root).len();
+    let output = praps(&["lane", ".."], &root);
+    assert_eq!(code(&output), 1, "{output:?}");
+    let err = stderr(&output);
+    assert!(err.contains("plain text"), "{err}");
+    assert_eq!(
+        err.lines().filter(|l| l.starts_with("hint: ")).count(),
+        1,
+        "{err}"
+    );
+    assert_eq!(logged_ops(&root).len(), ops);
     let _ = fs::remove_dir_all(&dir);
 }

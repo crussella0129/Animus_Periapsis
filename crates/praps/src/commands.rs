@@ -251,10 +251,19 @@ fn locate_or(
         }
         Err(error) => Err(refuse(
             command,
-            format_args!("{}: {error}", dir.join(PRAPS_DIR).join(STORE_DIR).display()),
-            &hint::unreadable_directory(),
+            format_args!("{error}"),
+            &unreadable(&error),
             err,
         )),
+    }
+}
+
+/// The hint for what the search could not read: a store's directory, or a
+/// lane's `.praps/workspace`.
+fn unreadable(error: &place::Unreadable) -> Hint {
+    match error {
+        place::Unreadable::Store(..) => hint::unreadable_directory(),
+        place::Unreadable::LaneFile(..) => hint::unreadable_file(),
     }
 }
 
@@ -611,8 +620,8 @@ fn store_for(given: Option<&Path>, err: &mut impl Write) -> Result<(PathBuf, Str
         Err(error) => {
             return Err(refuse(
                 "verify",
-                format_args!("{}: {error}", dir.join(PRAPS_DIR).join(STORE_DIR).display()),
-                &hint::unreadable_directory(),
+                format_args!("{error}"),
+                &unreadable(&error),
                 err,
             ));
         }

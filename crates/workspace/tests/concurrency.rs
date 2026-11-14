@@ -53,6 +53,7 @@ use hash::{HashAlg, HashRef};
 use sim::{Fs, KillAt, Mode, Node, Outcome, Processes, Rng, SimFs};
 use store::Store;
 use workspace::lane::{self, LaneFile};
+use workspace::record;
 use workspace::{Error, Variant, Workspace, merge};
 
 const SEEDS: u64 = 40;
@@ -481,7 +482,9 @@ fn present(store: &Store<Arc<SimFs>>, entry: &WorkspaceEntry) -> bool {
 
 /// The oracles on one store: it checks clean, holds every acknowledged op,
 /// and keeps each lane's writer and entry as the oracle requires. Returns
-/// the view its heads leave together, when it has one.
+/// the view its heads leave together, when it has one, and, for each lane
+/// whose writer is its last acknowledged op, that op's entry: what the lane
+/// must load for itself.
 fn check_store(
     fs: &Arc<SimFs>,
     root: &str,
@@ -489,24 +492,25 @@ fn check_store(
     log: &Log,
     v: &mut Violations,
     seen: &mut Seen,
-) -> Option<View> {
+) -> (Option<View>, BTreeMap<usize, WorkspaceEntry>) {
+    let mut kept_entries = BTreeMap::new();
     let Ok(store) = Store::open(Arc::clone(fs), Path::new(root), ALG, seed) else {
         v.store += 1;
-        return None;
+        return (None, kept_entries);
     };
     if !store.fsck().is_ok_and(|report| report.is_clean()) {
         v.store += 1;
     }
     let Ok(ops) = store.ops() else {
         v.store += 1;
-        return None;
+        return (None, kept_entries);
     };
     if ops
         .values()
         .any(|op| op.parents.iter().any(|parent| !ops.contains_key(parent)))
     {
         v.store += 1;
-        return None;
+        return (None, kept_entries);
     }
     let heads = store::heads_of(&ops);
     let merged = merge::merge(&ops, &heads, |id| view_of(&store, id)).ok();
@@ -521,12 +525,14 @@ fn check_store(
         };
         let written: Vec<&HashRef> = writers.get(&name).into_iter().flatten().collect();
         if written == [&last] {
-            // The merged view holds the last acknowledged entry.
-            let kept = entry(&last);
-            let held = merged.as_ref().and_then(|view| view.workspaces.get(&name));
-            if kept.is_none() || held != kept.as_ref() || !kept.is_some_and(|e| present(&store, &e))
-            {
-                v.kept += 1;
+            // The last acknowledged entry, with every changeset it names and
+            // follows, is in the store; `check` compares it with what the
+            // lane loads (Sprint 7 test critique, C-003).
+            match entry(&last) {
+                Some(kept) if present(&store, &kept) => {
+                    kept_entries.insert(p, kept);
+                }
+                _ => v.kept += 1,
             }
             continue;
         }
@@ -549,7 +555,16 @@ fn check_store(
             v.kept += 1;
         }
     }
-    merged
+    (merged, kept_entries)
+}
+
+/// The view the heads of the store at `root` leave together, if it can be
+/// read.
+fn merged_view(fs: &Arc<SimFs>, root: &str, seed: u64) -> Option<View> {
+    let store = Store::open(Arc::clone(fs), Path::new(root), ALG, seed).ok()?;
+    let ops = store.ops().ok()?;
+    let heads = store::heads_of(&ops);
+    merge::merge(&ops, &heads, |id| view_of(&store, id)).ok()
 }
 
 /// The oracles, on the recovered filesystem, and what the cell exercised.
@@ -572,31 +587,88 @@ fn check(
         v.store += 1;
     }
     let roots: &[&str] = if two { &[STORE, REPLICA] } else { &[STORE] };
-    let views: Vec<Option<View>> = roots
+    let (views, kept): (Vec<Option<View>>, Vec<BTreeMap<usize, WorkspaceEntry>>) = roots
         .iter()
         .map(|root| check_store(&fs, root, seed, log, &mut v, &mut seen))
-        .collect();
+        .unzip();
     if views.iter().any(Option::is_none) || views.windows(2).any(|pair| pair[0] != pair[1]) {
         v.view += 1;
     }
     for p in 0..LANES {
         let lane = lane_name(p);
-        let own = fs.list(&Path::new(&lane).join(".praps"));
-        if own.is_ok_and(|names| names.iter().any(|name| name == "store")) {
-            v.store += 1;
-        }
-        let expected = views[usize::from(two && p >= LANES / 2)].as_ref();
-        let seen = open_lane(&fs, p, two, seed + 500 + p as u64, variants).and_then(|ws| ws.view());
-        if !seen.is_ok_and(|view| Some(&view) == expected) {
-            v.view += 1;
+        let at = usize::from(two && p >= LANES / 2);
+        match open_lane(&fs, p, two, seed + 500 + p as u64, variants).and_then(|ws| ws.view()) {
+            Ok(view) => {
+                if Some(&view) != views[at].as_ref() {
+                    v.view += 1;
+                }
+                // What the lane loads for itself is its last acknowledged
+                // entry, where that op is its writer (Sprint 7 test critique,
+                // C-003).
+                if kept[at]
+                    .get(&p)
+                    .is_some_and(|entry| view.workspaces.get(&lane) != Some(entry))
+                {
+                    v.kept += 1;
+                }
+            }
+            Err(_) => v.view += 1,
         }
     }
     // One more command in each lane.
-    for p in 0..LANES {
+    let mut next_ok = [false; LANES];
+    for (p, ok) in next_ok.iter_mut().enumerate() {
         let next = open_lane(&fs, p, two, seed + 600 + p as u64, variants)
             .and_then(|mut ws| ws.describe(b"after recovery"));
+        *ok = next.is_ok();
         if next.is_err() {
             v.next += 1;
+        }
+    }
+    // Then each lane's `.praps` holds its lane file, no record and no store,
+    // and no object lies outside the stores: no lane is a clone (Sprint 7
+    // test critique, C-009). A record's temporary name may be left by a
+    // write the kill or the crash interrupted before it was renamed; the
+    // next record replaces it.
+    for (p, ok) in next_ok.iter().enumerate() {
+        let own = fs.list(&Path::new(&lane_name(p)).join(".praps"));
+        let only_its_file = own.is_ok_and(|names| {
+            names.iter().any(|name| name == lane::WORKSPACE_FILE)
+                && names
+                    .iter()
+                    .all(|name| name == lane::WORKSPACE_FILE || name == record::RECORD_NEW)
+        });
+        if *ok && !only_its_file {
+            v.store += 1;
+        }
+    }
+    let outside = fs.snapshot().into_keys().any(|path| {
+        path.contains("/objects/")
+            && !path.starts_with(&format!("{STORE}/"))
+            && !path.starts_with(&format!("{REPLICA}/"))
+    });
+    if outside {
+        v.store += 1;
+    }
+    // The ops just made stand on ops received from the other store; a second
+    // exchange brings the stores to one view again, which every lane loads.
+    if two {
+        if exchange(&fs, seed + 50).is_err() {
+            v.store += 1;
+        }
+        let views: Vec<Option<View>> = roots
+            .iter()
+            .map(|root| merged_view(&fs, root, seed))
+            .collect();
+        if views.iter().any(Option::is_none) || views[0] != views[1] {
+            v.view += 1;
+        }
+        for p in 0..LANES {
+            let loaded =
+                open_lane(&fs, p, two, seed + 700 + p as u64, variants).and_then(|ws| ws.view());
+            if !loaded.is_ok_and(|view| Some(&view) == views[0].as_ref()) {
+                v.view += 1;
+            }
         }
     }
     (v, seen)
@@ -675,13 +747,32 @@ fn exchange(fs: &Arc<SimFs>, seed: u64) -> io::Result<()> {
 }
 
 fn digest(fs: &SimFs) -> HashRef {
+    digest_of(fs, false)
+}
+
+/// [`digest`], with every `\` in a lane file read as `/`: the one byte a
+/// lane file holds that depends on the system, the separator in its store's
+/// path (Sprint 7 test critique, C-010). It is the same on every system.
+fn portable_digest(fs: &SimFs) -> HashRef {
+    digest_of(fs, true)
+}
+
+fn digest_of(fs: &SimFs, portable: bool) -> HashRef {
     let mut bytes = Vec::new();
     for (path, node) in fs.snapshot() {
         bytes.extend_from_slice(path.as_bytes());
         bytes.push(0);
+        let lane_file = path.contains("/.praps/workspace");
         match node {
             Node::Dir => bytes.push(b'd'),
-            Node::File(content) | Node::Executable(content) => {
+            Node::File(mut content) | Node::Executable(mut content) => {
+                if portable && lane_file {
+                    for byte in &mut content {
+                        if *byte == b'\\' {
+                            *byte = b'/';
+                        }
+                    }
+                }
                 bytes.push(b'f');
                 bytes.extend_from_slice(&(content.len() as u64).to_le_bytes());
                 bytes.extend_from_slice(&content);
@@ -702,6 +793,8 @@ struct Checked {
     violations: Violations,
     seen: Seen,
     state: HashRef,
+    /// The state's digest with lane files read the same on every system.
+    portable: HashRef,
     trace: HashRef,
     reach: Vec<(&'static str, u64)>,
 }
@@ -724,6 +817,7 @@ fn checked(
     let trace = HashAlg::Blake3.hash(fs.trace().join("\n").as_bytes());
     let recovered = fs.recover();
     let state = digest(&recovered);
+    let portable = portable_digest(&recovered);
     let log = log.lock().unwrap().clone();
     let (violations, mut seen) = check(recovered, two, seed, variants, &log);
     seen.killed = killed;
@@ -734,6 +828,7 @@ fn checked(
         violations,
         seen,
         state,
+        portable,
         trace,
         reach,
     };
@@ -858,10 +953,12 @@ fn concurrency_finds_no_violations() {
 }
 
 /// Compares `second`, a run of `two` again, with `first`, cell by cell.
-/// Returns the cell count and the digest over every cell's state and trace.
-fn compare(two: bool, first: &[Checked], second: &[Checked]) -> (usize, String) {
+/// Returns the cell count, the digest over every cell's state and trace,
+/// and the same over the portable states.
+fn compare(two: bool, first: &[Checked], second: &[Checked]) -> (usize, String, String) {
     assert_eq!(first.len(), second.len());
     let mut all = Vec::new();
+    let mut portable = Vec::new();
     for (a, b) in first.iter().zip(second) {
         let at = (a.mode, a.seed, a.crash_at);
         assert_eq!(at, (b.mode, b.seed, b.crash_at));
@@ -870,13 +967,21 @@ fn compare(two: bool, first: &[Checked], second: &[Checked]) -> (usize, String) 
         assert_eq!(a.violations, b.violations, "cell {at:?}");
         assert_eq!(a.seen, b.seen, "cell {at:?}");
         assert_eq!(a.reach, b.reach, "cell {at:?}");
+        assert_eq!(a.portable, b.portable, "cell {at:?}");
         all.extend_from_slice(&a.state.to_bytes());
         all.extend_from_slice(&a.trace.to_bytes());
+        portable.extend_from_slice(&a.portable.to_bytes());
+        portable.extend_from_slice(&a.trace.to_bytes());
     }
     let digest = HashAlg::Blake3.hash(&all).to_string();
+    let portable = HashAlg::Blake3.hash(&portable).to_string();
     let run = if two { "two stores" } else { "one store" };
     println!("{run}: digest over {} cells: {digest}", first.len());
-    (first.len(), digest)
+    println!(
+        "{run}: portable digest over {} cells: {portable}",
+        first.len()
+    );
+    (first.len(), digest, portable)
 }
 
 /// INT-0005 AC-1: each run, repeated, gives equal cells; each run's cell
@@ -892,9 +997,30 @@ fn concurrency_is_reproducible() {
     // literal is asserted.
     let one = compare(false, one_store(), &one);
     let two = compare(true, two_stores(), &two);
-    assert_eq!(one, (ONE_STORE_CELLS, ONE_STORE_DIGEST.to_owned()));
-    assert_eq!(two, (TWO_STORE_CELLS, TWO_STORE_DIGEST.to_owned()));
+    assert_eq!(
+        one,
+        (
+            ONE_STORE_CELLS,
+            ONE_STORE_DIGEST.to_owned(),
+            ONE_STORE_PORTABLE.to_owned()
+        )
+    );
+    assert_eq!(
+        two,
+        (
+            TWO_STORE_CELLS,
+            TWO_STORE_DIGEST.to_owned(),
+            TWO_STORE_PORTABLE.to_owned()
+        )
+    );
 }
+
+// The same on every system: each run's states with lane files read alike,
+// and its traces (Sprint 7 test critique, C-010).
+const ONE_STORE_PORTABLE: &str =
+    "blake3:a6e9c08352e0e4707468e26fa34b412382b9570c9327c3a1d401c911006e1f28";
+const TWO_STORE_PORTABLE: &str =
+    "blake3:ab960f27cd5085c5456ff6d1575e4fbabde6bbfcc090f2cfb88b236c000be8f7";
 
 const ONE_STORE_CELLS: usize = 160;
 const TWO_STORE_CELLS: usize = 160;
@@ -921,20 +1047,32 @@ const TWO_STORE_DIGEST: &str =
 /// A control needs one such cell; running every cell costs as much as the
 /// scenario itself (the counts over all 320 are in Sprint 7's T-009
 /// record).
+///
+/// With `PRAPS_FULL_CONTROLS` set, it runs every cell of both runs instead,
+/// for the record, and prints what each oracle found (Sprint 7 test
+/// critique, C-003).
 fn control(
     variants: Variants,
     breaks: fn(&Violations) -> bool,
 ) -> Option<(bool, Mode, u64, Option<u64>)> {
+    let full = std::env::var_os("PRAPS_FULL_CONTROLS").is_some();
+    let mut found = None;
     for two in [false, true] {
-        let cells = cells_until(two, variants, |cell| breaks(&cell.violations));
+        let cells = if full {
+            matrix(two, variants)
+        } else {
+            cells_until(two, variants, |cell| breaks(&cell.violations))
+        };
         let run = if two { "two stores" } else { "one store" };
         summary(&format!("{variants:?}, {run}"), &cells);
-        let last = cells.last().expect("a run has cells");
-        if breaks(&last.violations) {
-            return Some((two, last.mode, last.seed, last.crash_at));
+        if let Some(cell) = cells.iter().find(|cell| breaks(&cell.violations)) {
+            found = found.or(Some((two, cell.mode, cell.seed, cell.crash_at)));
+            if !full {
+                return found;
+            }
         }
     }
-    None
+    found
 }
 
 /// A load of the first head only continues from a state its own workspace
@@ -958,6 +1096,19 @@ fn concurrency_catches_merge_on_read() {
     };
     let caught = control(variants, |v| v.readers > 0);
     assert!(caught.is_some(), "no command that changes nothing wrote");
+}
+
+/// Op files whose data is never synced do not all survive the crash: an
+/// acknowledged op is missing from the store, which the `lost` oracle
+/// finds (Sprint 7 test critique, C-003).
+#[test]
+fn concurrency_catches_lost_ops() {
+    let variants = Variants {
+        store: store::Variant::UnsyncedObjects,
+        ..CORRECT
+    };
+    let caught = control(variants, |v| v.lost > 0);
+    assert!(caught.is_some(), "no acknowledged op was lost");
 }
 
 /// Objects whose data is never synced do not survive the crash: the store

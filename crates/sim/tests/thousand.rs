@@ -28,9 +28,17 @@ fn a_thousand_processes_run() {
             }) as Box<dyn FnOnce() -> usize + Send>
         })
         .collect();
-    let Ok(outcomes) = Processes::new(7).run(&fs, closures) else {
+    let setup = Processes::new(7);
+    let Ok(outcomes) = setup.run(&fs, closures) else {
         panic!("the run stopped early");
     };
     assert!(outcomes.iter().all(|o| matches!(o, Outcome::Done(_))));
     assert_eq!(fs.list(Path::new("d")).unwrap().len(), 1_000);
+    // A boundary wakes only the process drawn next: a waiting process is
+    // woken when it is not its turn only by the system's own spurious
+    // wakeups. Waking every process at each of the 3,001 boundaries would
+    // make millions (Sprint 7 test critique, C-011).
+    let needless = setup.needless_wakes();
+    println!("{needless} needless wakes over {} syscalls", fs.syscalls());
+    assert!(needless <= fs.syscalls() / 100, "{needless}");
 }

@@ -284,6 +284,25 @@ fn a_damaged_workspace_file_is_refused() {
     }
 }
 
+/// A `.praps/workspace` that cannot be read, here because a directory
+/// stands in its place, is refused with the same kind as one that does not
+/// parse, naming the file and why, not as a bare I/O error (Sprint 7 test
+/// critique, C-001).
+#[test]
+fn an_unreadable_workspace_file_is_refused() {
+    let fs = Arc::new(SimFs::new(18, DirMode::Strict));
+    fs.create_dir(Path::new("lane")).unwrap();
+    fs.create_dir(Path::new("lane/.praps")).unwrap();
+    fs.create_dir(Path::new("lane/.praps/workspace")).unwrap();
+    match Workspace::open(Arc::clone(&fs), Path::new("lane"), 19) {
+        Err(Error::BadWorkspaceFile(path, why)) => {
+            assert_eq!(path, Path::new("lane/.praps/workspace"));
+            assert!(why.contains("directory"), "{why}");
+        }
+        other => panic!("{:?}", other.err()),
+    }
+}
+
 #[test]
 fn eight_lanes_share_one_store() {
     let (mut ws, fs) = repository(16);
@@ -307,10 +326,23 @@ fn eight_lanes_share_one_store() {
         let praps = Path::new(name).join(".praps");
         assert_eq!(fs.list(&praps).unwrap(), [lane::WORKSPACE_FILE], "{name}");
     }
-    // Each object is one file: its name is its id.
-    let objects = fs.list(Path::new("repo/.praps/store/objects")).unwrap();
-    let unique: std::collections::BTreeSet<&String> = objects.iter().collect();
-    assert_eq!(unique.len(), objects.len());
+    // Every object is in the one store: no lane holds an object of its own
+    // (Sprint 7 test critique, C-009), and the store checks clean.
+    let outside: Vec<String> = fs
+        .snapshot()
+        .into_keys()
+        .filter(|path| path.contains("/objects/") && !path.starts_with(&format!("{STORE}/")))
+        .collect();
+    assert_eq!(outside, Vec::<String>::new());
+    assert!(
+        fs.list(Path::new(STORE).join("objects").as_path())
+            .unwrap()
+            .len()
+            > 8
+    );
+    let store =
+        store::Store::open(Arc::clone(&fs), Path::new(STORE), hash::HashAlg::DEFAULT, 0).unwrap();
+    assert!(store.fsck().unwrap().is_clean());
     // Each lane's entry holds its last command's state, and its files equal
     // its working-copy change.
     let ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 30).unwrap();

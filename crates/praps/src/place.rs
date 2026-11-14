@@ -9,6 +9,7 @@
 //! Turning a directory into a full path needs the process's current
 //! directory, which the caller reads.
 
+use std::fmt;
 use std::io::{self, ErrorKind};
 use std::path::{Component, Path, PathBuf};
 
@@ -16,35 +17,58 @@ use sim::Fs;
 use workspace::lane::WORKSPACE_FILE;
 use workspace::{PRAPS_DIR, STORE_DIR};
 
+/// What the search could not read in a directory it asked about, named by
+/// its path, so that a refusal names the file that failed (Sprint 7 test
+/// critique, C-001).
+#[derive(Debug)]
+pub enum Unreadable {
+    /// Its `.praps/store`, which could not be listed.
+    Store(PathBuf, io::Error),
+    /// Its `.praps/workspace`, which exists but could not be read.
+    LaneFile(PathBuf, io::Error),
+}
+
+impl fmt::Display for Unreadable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Unreadable::Store(path, error) | Unreadable::LaneFile(path, error) => {
+                write!(f, "{}: {error}", path.display())
+            }
+        }
+    }
+}
+
 /// Whether `dir` is the top of a working copy. Listing `dir/.praps/store`
 /// does not list `dir` itself, which may be large; [`Fs`] has no cheaper
 /// question to ask.
 ///
 /// Absence is `Ok(false)`: nothing is there, or a name on the way is not a
 /// directory (a file named `.praps`, say). Any other failure is returned,
-/// so that a `.praps` which cannot be read is never passed over for a
-/// repository further up.
-pub fn is_top(fs: &impl Fs, dir: &Path) -> io::Result<bool> {
+/// naming what failed, so that a `.praps` which cannot be read is never
+/// passed over for a repository further up.
+pub fn is_top(fs: &impl Fs, dir: &Path) -> Result<bool, Unreadable> {
     let absent =
         |error: &io::Error| matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory);
-    match fs.list(&dir.join(PRAPS_DIR).join(STORE_DIR)) {
+    let store = dir.join(PRAPS_DIR).join(STORE_DIR);
+    match fs.list(&store) {
         Ok(_) => return Ok(true),
         Err(error) if absent(&error) => {}
-        Err(error) => return Err(error),
+        Err(error) => return Err(Unreadable::Store(store, error)),
     }
     // A lane's top. A file that reads but does not parse is still a top:
     // opening it says what is wrong, and the search stops there.
-    match fs.read(&dir.join(PRAPS_DIR).join(WORKSPACE_FILE)) {
+    let file = dir.join(PRAPS_DIR).join(WORKSPACE_FILE);
+    match fs.read(&file) {
         Ok(_) => Ok(true),
         Err(error) if absent(&error) => Ok(false),
-        Err(error) => Err(error),
+        Err(error) => Err(Unreadable::LaneFile(file, error)),
     }
 }
 
 /// The first of `candidates` that is a top, by position: the nearest, when
 /// they are given nearest first. It asks about no directory after the one
 /// it finds, or after one whose question fails.
-pub fn nearest_top(fs: &impl Fs, candidates: &[PathBuf]) -> io::Result<Option<usize>> {
+pub fn nearest_top(fs: &impl Fs, candidates: &[PathBuf]) -> Result<Option<usize>, Unreadable> {
     for (at, dir) in candidates.iter().enumerate() {
         if is_top(fs, dir)? {
             return Ok(Some(at));
@@ -232,7 +256,11 @@ mod tests {
             asked: RefCell::new(Vec::new()),
         };
         let error = nearest_top(&fs, &upward("a/b")).unwrap_err();
-        assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+        assert!(
+            matches!(&error, Unreadable::Store(path, why)
+                if *path == fs.refused && why.kind() == ErrorKind::PermissionDenied),
+            "{error:?}"
+        );
         assert_eq!(
             fs.asked.borrow().as_slice(),
             std::slice::from_ref(&fs.refused)

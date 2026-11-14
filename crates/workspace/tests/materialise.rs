@@ -1451,6 +1451,42 @@ fn resume_leaves_files_when_its_workspace_moved_on() {
     assert!(!fs.snapshot().contains_key("repo/.praps/working-copy"));
 }
 
+/// Another op of the same workspace made beside the interrupted write's op,
+/// over the same head, as two commands at once in one working copy make:
+/// the target is no longer its workspace's only writer. The write is
+/// abandoned: its temporary name removed, its record dropped, every other
+/// file left, and a note (Sprint 7 test critique, C-005).
+#[test]
+fn resume_leaves_files_when_its_workspace_raced() {
+    let (ws, fs, one, now) = ab_states(110);
+    let (mut store, target) = interrupted_write(&ws, &fs, &one, &[now]);
+    let view = store.ops().unwrap()[&now].view;
+    let sibling = store
+        .commit_op(&codec::Operation {
+            parents: [now].into(),
+            workspace: "default".to_owned(),
+            view,
+        })
+        .unwrap();
+    assert_eq!(
+        store::heads_of(&store.ops().unwrap()),
+        [target, sibling].into_iter().collect()
+    );
+    // The only diff path is `a`, so its temporary name is `.praps-tmp-0`.
+    put(&fs, ".praps-tmp-0", b"1");
+    drop(ws);
+    let ws = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 111).unwrap();
+    assert_eq!(files_on_disk(&*fs)["a"].0, b"2", "the files were left");
+    assert_eq!(ws.notes().len(), 1, "{:?}", ws.notes());
+    assert!(ws.notes()[0].contains("was abandoned"), "{:?}", ws.notes());
+    let left = fs.snapshot();
+    assert!(!left.contains_key("repo/.praps/working-copy"));
+    assert!(
+        !left.contains_key("repo/.praps-tmp-0"),
+        "the temporary name is removed"
+    );
+}
+
 /// As in `resume_finishes_while_its_target_is_the_writer`, with the other
 /// workspace's op made beside the interrupted write's op, over the same
 /// head: the two are both op heads, and the write is still finished.
