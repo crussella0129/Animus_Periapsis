@@ -573,7 +573,7 @@ fn materialise_matrix_is_reproducible() {
     assert_eq!(first.cells.len(), 34_400);
     assert_eq!(
         digest.to_string(),
-        "blake3:3806881abb174d1387466a2b66edaff4393812388241aa913487cecc65df3746"
+        "blake3:1992301c25ffe9794573fe5c3eacebf0c8dd865333a6e0ae06fced55e6d0319a"
     );
 }
 

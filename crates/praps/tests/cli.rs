@@ -40,6 +40,13 @@ impl Drop for Repo {
     }
 }
 
+/// The working-copy changeset op `op`'s view names in `default`.
+fn wc_of(store: &Store<RealFs>, op: &HashRef) -> HashRef {
+    let view = store.ops().unwrap()[op].view;
+    let view = View::from_envelope(&store.get_object(&view).unwrap()).unwrap();
+    *view.workspaces["default"].working_copy.first().unwrap()
+}
+
 /// A healthy store on the real filesystem, built through `RealFs`.
 fn repo(label: &str) -> Repo {
     let dir = claim(label);
@@ -334,17 +341,17 @@ fn praps_status_outside_a_repository_fails() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// Two ops with the same parent: `status` stops, names both heads and exits
-/// 1 (until INT-0010's merge).
+/// Two ops with the same parent: `status` works from their merge and exits
+/// 0 (INT-0010). Until Sprint 7 it stopped, named both heads and exited 1.
 #[test]
-fn praps_status_with_several_heads_fails() {
+fn praps_status_with_several_heads_works() {
     let dir = claim("heads");
     let root = dir.join("repo");
     assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
     let mut store = Store::open(RealFs, &root.join(".praps/store"), HashAlg::DEFAULT, 5).unwrap();
     let head = *store.heads().unwrap().first().unwrap();
     let view = store.ops().unwrap()[&head].view;
-    let a = store
+    store
         .commit_op(&Operation {
             parents: [head].into(),
             workspace: "default".to_owned(),
@@ -356,7 +363,7 @@ fn praps_status_with_several_heads_fails() {
         .workspaces
         .insert("other".to_owned(), other.workspaces["default"].clone());
     let other = store.put_object(&other.to_envelope()).unwrap();
-    let b = store
+    store
         .commit_op(&Operation {
             parents: [head].into(),
             workspace: "default".to_owned(),
@@ -364,13 +371,8 @@ fn praps_status_with_several_heads_fails() {
         })
         .unwrap();
     let output = praps(&["status", "repo"], &dir);
-    assert_eq!(code(&output), 1, "{output:?}");
-    let err = String::from_utf8_lossy(&output.stderr);
-    assert!(err.contains("2 heads"), "{err}");
-    assert!(
-        err.contains(&a.to_string()) && err.contains(&b.to_string()),
-        "{err}"
-    );
+    assert_eq!(code(&output), 0, "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -703,7 +705,7 @@ fn praps_prints_notes() {
         &RealFs,
         &root.join(".praps"),
         &workspace::record::Record {
-            from: head,
+            from: Some(wc_of(&store, &head)),
             target: root_op,
         },
     )
@@ -2043,12 +2045,8 @@ fn every_refusal_prints_one_hint() {
                 .unwrap();
         }
     }
-    refused(
-        "several op heads",
-        praps(&["status"], &heads),
-        1,
-        "nothing was lost",
-    );
+    // Two op heads no longer stop a command (INT-0010).
+    assert_eq!(code(&praps(&["status"], &heads)), 0);
     // An op file that does not hash to its name.
     let corrupt = dir.join("corrupt");
     assert_eq!(code(&praps(&["init", "corrupt"], &dir)), 0);
@@ -2253,10 +2251,10 @@ fn every_refusal_prints_one_hint() {
         1,
         "`praps init` there if its `init` was interrupted",
     );
-    // 25 everywhere; four more on Unix by file modes and one by a removed
+    // 24 everywhere; four more on Unix by file modes and one by a removed
     // current directory; two more on Windows (a hazard, text that is not
     // Unicode).
-    let expected = if cfg!(unix) { 30 } else { 27 };
+    let expected = if cfg!(unix) { 29 } else { 26 };
     assert_eq!(kinds, expected, "kinds of refusal checked");
     let _ = fs::remove_dir_all(&dir);
 }
@@ -2392,5 +2390,87 @@ fn readme_lists_what_praps_lists() {
         })
         .collect();
     assert_eq!(rows, expected);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// After two `new` at once, written through the store, the next command
+/// works from the merge and prints one note naming both changes (the race
+/// rule, INT-0014).
+#[test]
+fn praps_notes_a_raced_working_copy() {
+    let dir = claim("raced");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    let mut store = Store::open(RealFs, &root.join(".praps/store"), HashAlg::DEFAULT, 5).unwrap();
+    let head = *store.heads().unwrap().first().unwrap();
+    let view = store.ops().unwrap()[&head].view;
+    let view = View::from_envelope(&store.get_object(&view).unwrap()).unwrap();
+    let wc = *view.workspaces["default"].working_copy.first().unwrap();
+    let mut raced = Vec::new();
+    for change_id in [[1_u8; 16], [2; 16]] {
+        let changeset = codec::Changeset {
+            parents: vec![wc],
+            change_id,
+            changes: Default::default(),
+            description: Vec::new(),
+        };
+        let changeset = store.put_object(&changeset.to_envelope()).unwrap();
+        let mut next = view.clone();
+        let entry = next.workspaces.get_mut("default").unwrap();
+        entry.heads.remove(&wc);
+        entry.heads.insert(changeset);
+        entry.working_copy = [changeset].into();
+        let next = store.put_object(&next.to_envelope()).unwrap();
+        store
+            .commit_op(&Operation {
+                parents: [head].into(),
+                workspace: "default".to_owned(),
+                view: next,
+            })
+            .unwrap();
+        raced.push(changeset);
+    }
+    let output = praps(&["status"], &root);
+    assert_eq!(code(&output), 0, "{output:?}");
+    let err = String::from_utf8_lossy(&output.stderr);
+    let notes: Vec<&str> = err
+        .lines()
+        .filter(|line| line.starts_with("note: "))
+        .collect();
+    assert_eq!(notes.len(), 1, "{err}");
+    for id in &raced {
+        assert!(notes[0].contains(&id.to_string()), "{err}");
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Eight `praps new` started together in one working copy each exit 0, and
+/// the repository goes on: the measurement that motivated Sprint 7 (3 of 8
+/// succeeded at `855eb67`; INT-0010).
+#[test]
+fn eight_new_at_once_all_succeed() {
+    let dir = claim("eight-new");
+    let root = dir.join("repo");
+    assert_eq!(code(&praps(&["init", "repo"], &dir)), 0);
+    let children: Vec<_> = (0..8)
+        .map(|_| {
+            Command::new(env!("CARGO_BIN_EXE_praps"))
+                .arg("new")
+                .current_dir(&root)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    for child in children {
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(code(&output), 0, "{output:?}");
+    }
+    let status = praps(&["status"], &root);
+    assert_eq!(code(&status), 0, "{status:?}");
+    let verify = praps(&["verify"], &root);
+    assert_eq!(code(&verify), 0, "{verify:?}");
+    assert!(stdout(&verify).contains("clean"), "{verify:?}");
     let _ = fs::remove_dir_all(&dir);
 }

@@ -67,7 +67,6 @@ pub fn for_error(error: &workspace::Error) -> Hint {
             "praps init",
             "in that directory to finish making it a repository",
         ),
-        Error::SeveralHeads(_) => Hint::NoRemedy("join operations made at the same time"),
         Error::Corrupt(_) => run(
             "praps verify",
             "to list what is damaged in the store; this build cannot repair what it finds, or \
@@ -242,7 +241,6 @@ mod tests {
         match error {
             Error::Io(_) => "Io",
             Error::NotInitialised(_) => "NotInitialised",
-            Error::SeveralHeads(_) => "SeveralHeads",
             Error::Corrupt(_) => "Corrupt",
             Error::Merge(_) => "Merge",
             Error::Hazards(_) => "Hazards",
@@ -253,10 +251,9 @@ mod tests {
         }
     }
 
-    const VARIANTS: [&str; 10] = [
+    const VARIANTS: [&str; 9] = [
         "Io",
         "NotInitialised",
-        "SeveralHeads",
         "Corrupt",
         "Merge",
         "Hazards",
@@ -276,7 +273,6 @@ mod tests {
                 "Access is denied. (os error 5)",
             )),
             Error::NotInitialised(PathBuf::from("project")),
-            Error::SeveralHeads(vec![id(b"one"), id(b"two")]),
             Error::Corrupt("2 of 9 op files do not hash to their names or do not decode".into()),
             Error::Merge(id(b"merge")),
             Error::Hazards(vec![workspace::hazard::Hazard {
