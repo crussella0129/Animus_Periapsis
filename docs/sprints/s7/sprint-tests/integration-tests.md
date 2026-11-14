@@ -1,27 +1,30 @@
 # Sprint 7 integration test results
 
-The tested head is `5b65da8`: T-001 to T-010 and two commits made during Test.
+The tested head is `b951d6d`: T-001 to T-010 and three commits made during Test.
 - `1d5c94b` holds the fixes from the [code review](code-review.md), and gives the lane matrix and the Concurrency scenario a digest for each platform.
-- `5b65da8` moves T-008's 1,000-process test into a test binary of its own and lets the scheduler tests' deadlock guards run five minutes. See "GitHub's Windows runner and the scheduler tests" below. The unit results are in [unit-tests.md](unit-tests.md), the matrices in [test-matrix-log.md](test-matrix-log.md), and the runs through the binary and on GitHub in [e2e-tests.md](e2e-tests.md).
+- `5b65da8` moves T-008's 1,000-process test into a test binary of its own and lets the scheduler tests' deadlock guards run five minutes. See "GitHub's Windows runner and the scheduler tests" below.
+- `b951d6d` answers the first round of the [test critique](critique-round1.md). An unreadable `.praps/workspace` is now refused as that file, and the tests the critique found weak are added or tightened.
+
+The unit results are in [unit-tests.md](unit-tests.md), the matrices in [test-matrix-log.md](test-matrix-log.md), and the runs through the binary and on GitHub in [e2e-tests.md](e2e-tests.md).
 
 ## The suite on both platforms
 
 | | Windows 11 (NTFS) | WSL Ubuntu 26.04.1 (ext4) |
 |---|---|---|
-| Where | the working checkout | a fresh clone of `5b65da8`, made for this run |
+| Where | the working checkout | a fresh clone of `b951d6d`, made for this run |
 | `rustc` | 1.99.1 (58cf8f9c3 2026-10-13) | the same |
 | `cargo ci` | all 6 steps passed | all 6 steps passed |
-| Wall time | 868 s at `5b65da8`, while the machine ran slow; 426 s at `1d5c94b`, on a quiet machine | 507 s at `5b65da8`; 304 s at `1d5c94b`; each a cold build in a fresh clone |
-| `test:` lines | 52 test executables built, 52 run; 43 units, 659 passed, 0 failed, 0 ignored | 52 built, 52 run; 43 units, 661 passed, 0 failed, 0 ignored |
+| Wall time | 205 s, on a quiet machine, building only what changed | 211 s, a cold build in the fresh clone |
+| `test:` lines | 52 test executables built, 52 run; 43 units, 663 passed, 0 failed, 0 ignored | 52 built, 52 run; 43 units, 666 passed, 0 failed, 0 ignored |
 | Tree after the run | clean | clean |
 | `cargo book`, first line | `book: docs (typed-acceptance 1, strict)` | the same |
 | `cargo book`, last line | `38 chapters, 267 criteria, 0 violations` | the same |
 | `cargo deny check` | `advisories ok, bans ok, licenses ok, sources ok` | the same |
 | `cargo reach`, then `git status` | wrote `docs/reach.md` with no difference | the same |
 
-- **Totals against Sprint 6.** At `855eb67`, 588 on Windows and 590 on Linux; now 659 and 661. The difference is the 71 tests this sprint adds, none for one system only. No test was removed; the three renamed are listed in [unit-tests.md](unit-tests.md).
-- **The slowest units** in the quiet Windows run at `1d5c94b`: `materialise_crash` 412 s, `describe_crash` 256 s, `crash` 254 s, `writers` 188 s, `concurrency` 106 s. At `5b65da8` the same machine took 853 s for `materialise_crash` alone. In WSL at `1d5c94b`: `materialise_crash` 199 s, `describe_crash` 154 s, `writers` 151 s, `crash` 144 s, `concurrency` 53 s; at `5b65da8` about twice those. Units run several at a time, so a unit's time includes waiting for the machine.
-- **The two times on each system** come from the same suite: `5b65da8` changes only where one scheduler test lives. The machine ran slower during the second pair of runs, and every heavy unit took about twice as long on both systems.
+- **Totals against Sprint 6.** At `855eb67`, 588 on Windows and 590 on Linux; now 663 and 666. The difference is the 76 tests this sprint adds, one of them for Unix only. No test was removed; the three renamed are listed in [unit-tests.md](unit-tests.md).
+- **The slowest units.** On Windows: `materialise_crash` 180 s, `describe_crash` 125 s, `crash` 120 s, `writers` 80 s, `lane_crash` 53 s, `concurrency` 53 s. In WSL: `materialise_crash` 128 s, `describe_crash` 94 s, `crash` 89 s, `writers` 83 s, `concurrency` 35 s. Units run several at a time, so a unit's time includes waiting for the machine.
+- **Earlier heads.** At `5b65da8` the suite took 868 s on Windows and 507 s in WSL, while the machine ran slow; at `1d5c94b`, 426 s and 304 s. It passed on both systems at both, with 659 tests on Windows and 661 on Linux.
 
 ## GitHub's Windows runner and the scheduler tests
 
@@ -32,10 +35,18 @@ The pull request's run at `1d5c94b` ([43628379803](https://github.com/crussella0
 - **The cause.** Each step of a simulated process hands the baton from one thread to another. On GitHub's Windows runners under the suite's load such a handoff is slow, and the 1,000-process test makes 3,001 of them in the same process as the guarded tests.
 - **The response, in `5b65da8`.** The 1,000-process test moved to `crates/sim/tests/thousand.rs`, and the guards allow five minutes. That is still far inside the job's 30-minute limit, so a deadlock still fails rather than hangs.
 - **The scheduler's logic is unchanged.** T-008's per-process wake was read again against every path that sets the next runner, and no change was made to it.
+- **What GitHub's three samples at `5b65da8` showed,** read from each job's own log:
+  - on Windows, `processes` took 22.6, 49.8 and 47.8 s, `thousand` 12.4, 7.8 and 22.9 s, and `concurrency` 113.0, 66.5 and 212.1 s;
+  - on Linux, 0.5 to 0.8 s, 2.2 to 2.7 s and 46.8 to 75.6 s.
+
+  The slowest run of the whole binary, 49.8 s, is a sixth of the 300 s that each guarded test may take, and the job's limit is 30 minutes. The times at `b951d6d` are in [e2e-tests.md](e2e-tests.md).
+- **The mechanism is now tested** (test critique, C-011). `sim::Processes` counts the wakes in which a process woke while another was chosen to run, outside an abort. `a_thousand_processes_run` asserts at most one per 100 syscalls; it saw 1 on Windows and 0 in WSL over 3,002 syscalls. With every process woken at each boundary, the count is 1,819,674 and the test fails.
 
 **The first WSL run found the one cross-platform difference.** At `38a6b96`, the head before the Test fixes, WSL ran 42 units, 656 passed and 2 failed: `lane_matrix_is_reproducible` and `concurrency_is_reproducible`. Both failed only at their digest literal, which had been taken on Windows. Their cells were equal between the two runs on Linux, and both matrices found no violation there.
 
-The cause is a lane's `.praps/workspace`. It names the store's path as the system spells it, `repo\.praps\store` on Windows and `repo/.praps/store` elsewhere, and that file is part of every cell's state. Nothing else differs: the cell counts and every violation count are equal (see the matrix log). GitHub's Linux job failed the same way and printed the same two digests as WSL. Each test now asserts one digest for Windows and one for other systems.
+The cause is a lane's `.praps/workspace`. It names the store's path as the system spells it, `repo\.praps\store` on Windows and `repo/.praps/store` elsewhere, and that file is part of every cell's state. GitHub's Linux job failed the same way and printed the same two digests as WSL. Each test now asserts one digest for Windows and one for other systems.
+
+**Since the test critique, one digest is the same everywhere** (C-010). The lane matrix and both Concurrency runs also compute a portable digest, which reads every `\` in a lane file as `/`, and each test asserts it as one literal on every system. It equals the Linux digest, and it passed on Windows, in WSL and in both of GitHub's suites. So the separator in the store's path is the only difference between the two systems' states, in every cell.
 
 **At each task's commit.** `cargo ci` passed on Windows before each task was committed. Wall times are not given, because other work ran on the machine during most of these runs.
 
@@ -52,6 +63,7 @@ The cause is a lane's `.praps/workspace`. It names the store's path as the syste
 | T-010 | `3eadc03` | 42 units, 656 passed |
 | Test fixes | `1d5c94b` | 42 units, 659 passed |
 | Test: the 1,000-process test apart | `5b65da8` | 43 units, 659 passed |
+| Test: answers to the test critique, round 1 | `b951d6d` | 43 units, 663 passed |
 
 - T-001 changed records only, and `cargo book` passed at its commit.
 - T-006 was committed before T-005, which builds on its lanes.
@@ -64,20 +76,27 @@ The cause is a lane's `.praps/workspace`. It names the store's path as the syste
 
 Seven matrices ran with `--nocapture` on both systems at the tested head. Their result lines are in [test-matrix-log.md](test-matrix-log.md).
 - **The five from earlier sprints keep their cell counts:** 32,840, 44,836, 24,320, 34,400 and 28,720, as at `855eb67`. T-002 moved all five digests and T-004 the Materialise digest again, as those tasks say; each digest is equal on the two systems.
+- **`b951d6d` moved no count and no digest.** Its new checks found no violation, and every cell's state and trace are as at `5b65da8`.
 - **The correct variants find 0 violations** in all seven, and every negative control is caught.
 
 ## The Concurrency scenario
 
-The details are in the matrix log. On both systems:
+The details are in the matrix log. Since the test critique, each cell also checks:
+- that each lane loads, as its own entry, the entry of its last acknowledged op, where that op is still the lane's writer (C-003);
+- after the next command, that each lane's `.praps` holds its lane file and no store, and that no object lies outside the stores (C-009);
+- in the two-store run, after the next command, that a second exchange brings both stores and every lane to one view, so ops made on top of received ops are checked too (C-009).
+
+On both systems:
 - **One store** (INT-0014 AC-3): 160 cells, 0 violations. 112 processes killed, 590 commands stopped by the crash, and 66 operations of a command in flight that landed.
 - **Two stores that then exchange** (INT-0010 AC-5): 160 cells, 0 violations; 116 killed, 594 stopped, 182 landed.
 - **Reproducibility:** each run is repeated, and every cell's state, trace, violations, coverage and reach are equal.
 - **Readers** (INT-0010 AC-7): 2, 8 and 1,000 processes over three op heads leave the op files as they were, and all compute the merge of the heads.
-- **The controls:** `FirstHeadOnly`, `MergeOnRead` and `UnsyncedObjects` are each caught in the first cell, by the oracle each breaks. Over all 320 cells, measured while T-009 was built on Windows, they were caught in 302, 180 and 320 cells.
+- **The controls:** `FirstHeadOnly`, `MergeOnRead` and `UnsyncedObjects` are each caught in the first cell, by the oracle each breaks. A fourth, `UnsyncedObjects` again, stops only where an acknowledged op is lost (C-003). Its one-store run breaks every cell but loses no acknowledged op; in the two-store run, the first cell loses 29.
+- **Every control over all its cells.** With `PRAPS_FULL_CONTROLS=1` each control runs all 320 cells. At the tested head: `FirstHeadOnly` is caught in 308 of 320 cells, `MergeOnRead` in 180 and `UnsyncedObjects` in all 320, and the lost-op check fires 3,632 times in the two-store run. Both systems printed the same lines; they are in the matrix log.
 
 ## Cost before and after
 
-A record, not a test: it traces to no clause and cannot fail the sprint.
+A record, not a test: it traces to no clause and cannot fail the sprint. It was measured at `5b65da8`. `b951d6d` changes only how an unreadable lane file is reported, on no path the probe takes.
 
 Sprint 6's probe, run with the release binary at `855eb67` and at the tested head on both systems, with one more column the test plan asks for. It times `status` with nothing changed, and the two lists, as the op log grows to 800 operations, on a working copy of 100 files: each figure is the median of 5. It then runs `status` on repositories whose op log has 2, 8 and 32 heads.
 - **The stores with several heads** were made at each commit by a throwaway test, not in the repository. It opens that many handles over one head and has each describe the change, so each commits over the same head.
@@ -128,7 +147,7 @@ A first Windows run, made while WSL ran its matrices, gave the same picture, wit
 ## What was not run
 
 - **Nighthawk.** The Debian machine still needs the owner to approve Tailscale access (INT-0004 AC-6).
-- **Real replicas over a network.** The two stores of the Concurrency scenario share one simulated filesystem (INT-0024).
+- **Real replicas over a network.** The two stores of the Concurrency scenario share one simulated filesystem, and exchange their files twice: after recovery, and after the next command. A store that syncs with another again and again belongs to INT-0024.
 
 ## The probe's script and helper
 
