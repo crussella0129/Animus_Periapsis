@@ -1,6 +1,6 @@
 # Plan Critique — Sprint 7
 
-Round 2. The same kind of read-only reviewer checked the plans at `7321a41` against its round-1 concerns ([critique-round1.md](critique-round1.md)) and screened what the revision changed. Its concerns are given as it wrote them; the responses are at the end. The verdict was `block`, so the plans were revised and reviewed again ([critique.md](critique.md)).
+Round 2. The same kind of read-only reviewer checked the plans at `7321a41` against its round-1 concerns ([critique-round1.md](critique-round1.md)) and screened what the revision changed. Its concerns are given as it wrote them; the responses are at the end. The verdict was `block`, so the plans were revised and reviewed a third time ([critique.md](critique.md)).
 
 ## Concerns
 

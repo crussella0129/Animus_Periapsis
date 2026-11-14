@@ -6,7 +6,7 @@ The owner approved this plan's outline on 2026-11-14. Four decisions were made w
 - after two commands at once in one workspace, the next command continues from one change and keeps the other;
 - during Test, `dev` is pushed, the PR is opened, and every job of the tested head is re-run twice.
 
-The plans were then revised after the first and second plan critiques ([critique-round1.md](critique-round1.md), [critique-round2.md](critique-round2.md)). The tasks run in the order they appear below: T-001, T-002, T-003, T-004, T-006, T-005, T-007, T-008, T-009, T-010. T-006 comes before T-005 because scoped `undo` and `restore` are tested with lanes. Every task's commit passes `cargo ci` on Windows.
+The plans were then revised after the three plan critiques ([critique-round1.md](critique-round1.md), [critique-round2.md](critique-round2.md), [critique.md](critique.md)). The tasks run in the order they appear below: T-001, T-002, T-003, T-004, T-006, T-005, T-007, T-008, T-009, T-010. T-006 comes before T-005 because scoped `undo` and `restore` are tested with lanes. Every task's commit passes `cargo ci` on Windows.
 
 ## Intents
 - [INT-0010](../../../intents/INT-0010-lock-free-concurrency.md) — state: planned; acceptance criteria covered:
@@ -199,7 +199,7 @@ The plans were then revised after the first and second plan critiques ([critique
     - each object **SHALL** be one file;
     - each lane's entry **SHALL** hold its last command's state;
     - each lane's files **SHALL** equal its working-copy change.
-  - **WHEN** this task adds an error kind, **THEN** the kind **SHALL** have a hint in the table, and both `messages_say_only_what_is_wrong` tests, the workspace crate's and `praps`'s, **SHALL** fix its text. T-007 prints each through the binary.
+  - **WHEN** this task adds an error kind, **THEN** the kind **SHALL** have a hint in the table, and the workspace crate's `messages_say_only_what_is_wrong` **SHALL** fix its text. That test's check that a text gives no advice **SHALL** look for a command (`praps ` or `` `praps``) rather than the bare word, so that a text may name `.praps/workspace`. T-007 prints each kind through the binary.
   - **WHEN** the suite runs at this task's commit, **THEN** the five matrices **SHALL** keep their cell counts and digests.
 - **Notes:**
   - Before `.praps/workspace` is in place, DIR holds at most an empty `.praps` or a temporary file, and nothing in the store names it: it is no repository. A command there says so, as in any directory, with the same hint, and INT-0014 records why that hint stays. Making the lane again at DIR finishes it, because DIR counts as free.
@@ -230,7 +230,7 @@ The plans were then revised after the first and second plan critiques ([critique
   - **WHEN** `undo` succeeds, **THEN** it **SHALL** report the operations it went back to, the parents of the writers it undid. With one parent it **SHALL** print today's line; with several, `undid the last op: the working copy is back to ops X, Y`, every parent in id order.
   - **WHEN** a repository has one workspace and the target is one operation's own view, **THEN** `undo` and `restore` **SHALL** name that view rather than write it again, and so leave the same view object as before this task. The history tests' assertions on view ids stand unchanged. **WHEN** the target is the merge of several operations' views, **THEN** the command **SHALL** write it as a new view.
   - **WHEN** two lanes run 200 seeded interleavings of edits, `describe`, `new`, `undo` and `restore`, **THEN**, after each `undo` or `restore` by one lane, every entry the other owns **SHALL** equal what the merge gave just before, and its files **SHALL** be as they were (AC-6).
-  - **WHEN** this task adds an error kind or changes a text, **THEN** the kind **SHALL** have a hint in the table, and both `messages_say_only_what_is_wrong` tests, the workspace crate's and `praps`'s, **SHALL** fix its text. T-007 prints the new kind through the binary.
+  - **WHEN** this task adds an error kind or changes a text, **THEN** the kind **SHALL** have a hint in the table, and the workspace crate's `messages_say_only_what_is_wrong` **SHALL** fix its text. T-007 prints the new kind through the binary.
   - **WHEN** the suite runs at this task's commit, **THEN** the five matrices **SHALL** keep their cell counts and digests.
 - **Notes:**
   - "The last operation this workspace made" is its writers, the same notion the merge uses.
@@ -264,7 +264,8 @@ The plans were then revised after the first and second plan critiques ([critique
     - `lanes` **SHALL** be marked idempotent and declare no flag;
     - the README's command table **SHALL** equal the list.
   - **WHEN** any refusal this sprint added is printed (the two commands', `restore` of an operation with no entry for this workspace, the interrupted lane, the lane whose store is gone, an unreadable `.praps/workspace`, `init` in a lane), **THEN** `every_refusal_prints_one_hint` **SHALL** reach it through the binary, and it **SHALL** end with one hint naming only registry commands. The interrupted lane's hint **SHALL** become a `Run` of `praps lane DIR`.
-  - **WHEN** `praps lanes`, or `praps lane DIR` with DIR given relative to where it runs, is run at a working copy's top and from below it, **THEN** each **SHALL** print and leave the same (INT-0037 AC-3).
+  - **WHEN** `praps lanes` is run at a working copy's top and from below it, **THEN** it **SHALL** print and leave the same, byte for byte (INT-0037 AC-3).
+  - **WHEN** `praps lane DIR` is run at a working copy's top and from below it, with DIR given relative to each place, **THEN** the two runs **SHALL** agree as two `new` runs do: the printed line the same once the change ID and DIR are masked, and the same exit code, number of operations, files outside `.praps`, files in the lane, and output of the `praps lanes` that follows. The change ID is drawn at random, so the operation's bytes differ (INT-0037 AC-3).
   - **WHEN** the suite runs at this task's commit, **THEN** the five matrices **SHALL** keep their cell counts and digests.
 - **Notes:**
   - "Working together" is the purpose INT-0037's table gives these names.
