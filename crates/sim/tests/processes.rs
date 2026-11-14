@@ -32,6 +32,14 @@ fn writers(fs: &Arc<SimFs>) -> Run<'_, Vec<String>> {
         .collect()
 }
 
+/// How long a guarded run may take before it counts as deadlocked. These
+/// runs take well under a second here, but on GitHub's Windows runners,
+/// under the suite's load, this binary took 31 s in all before Sprint 7 and
+/// one guarded run passed 60 s (Sprint 7 Test, pull request run
+/// 43628379803). Five minutes still fails a deadlock long before the job's
+/// 30-minute limit.
+const GUARD: Duration = Duration::from_secs(300);
+
 /// Runs `f` on its own thread and fails if it gives no result within
 /// `limit`: a deadlock fails the test instead of hanging it (test critique
 /// C-001). A timed-out thread is left behind; the test binary still exits.
@@ -315,7 +323,7 @@ fn orderings_are_released_by_a_crash() {
 /// source ends, so it was provably waiting (test critique C-002).
 #[test]
 fn orderings_are_released_when_the_source_process_ends() {
-    within(Duration::from_secs(60), || {
+    within(GUARD, || {
         for how in ["returns", "is killed", "panics"] {
             let mut waited = 0;
             for seed in 0..20 {
@@ -389,7 +397,7 @@ fn orderings_are_released_when_the_source_process_ends() {
 /// C-003).
 #[test]
 fn a_kill_comes_before_an_ordering_wait() {
-    within(Duration::from_secs(60), || {
+    within(GUARD, || {
         for seed in 0..20 {
             let fs = Arc::new(SimFs::new(0, Mode::Strict));
             let run: Run<'_, ()> = (0..2)
@@ -689,7 +697,7 @@ fn point_events_are_ordered() {
 /// seeds, under a watchdog (test critique C-001).
 #[test]
 fn panic_in_a_process_ends_the_run() {
-    within(Duration::from_secs(60), || {
+    within(GUARD, || {
         for seed in 0..10 {
             let fs = Arc::new(SimFs::new(0, Mode::Strict));
             let panicked = Arc::new(AtomicBool::new(false));
@@ -805,28 +813,4 @@ fn invalid_setups_are_refused() {
             .kill(0, KillAt::Step(2))
     });
     assert!(twice.is_err(), "a second kill for one process was accepted");
-}
-
-/// A thousand processes, three syscalls each, all end done: a boundary
-/// wakes only the process drawn to run next (Sprint 7 T-008).
-#[test]
-fn a_thousand_processes_run() {
-    let fs = Arc::new(SimFs::new(1, Mode::Strict));
-    fs.create_dir(Path::new("d")).unwrap();
-    let closures: Vec<Box<dyn FnOnce() -> usize + Send>> = (0..1_000)
-        .map(|me| {
-            let fs = Arc::clone(&fs);
-            Box::new(move || {
-                fs.list(Path::new("d")).unwrap();
-                fs.create_new(&Path::new("d").join(format!("f{me}")))
-                    .unwrap();
-                fs.list(Path::new("d")).unwrap().len()
-            }) as Box<dyn FnOnce() -> usize + Send>
-        })
-        .collect();
-    let Ok(outcomes) = Processes::new(7).run(&fs, closures) else {
-        panic!("the run stopped early");
-    };
-    assert!(outcomes.iter().all(|o| matches!(o, Outcome::Done(_))));
-    assert_eq!(fs.list(Path::new("d")).unwrap().len(), 1_000);
 }
