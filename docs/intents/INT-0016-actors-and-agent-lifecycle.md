@@ -2,8 +2,8 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0016
-- **State:** proposed
-- **Work evidence:** none
+- **State:** planned
+- **Work evidence:** [Sprint 7 T-001 build plan](../sprints/s7/sprint-plans/build-plan.md#t-001-record-sprint-6s-last-runs-the-dependency-update-and-the-owners-two-sign-offs), [Sprint 7 T-003 build plan](../sprints/s7/sprint-plans/build-plan.md#t-003-the-canonical-merge-of-op-heads)
 - **Completion evidence:** none
 - **Code evidence:** none
 - **Test evidence:** none
@@ -106,7 +106,21 @@ signed later counts".
 - Ownership needs the view's entries to say whom they were made for, so the
   view's format carries it ([INT-0006](INT-0006-format-v1.md), backlog
   T-012).
+- From Sprint 7 the first class of owner is built, and the owner approved
+  it on 2026-11-14 (AC-8, for this class only): a workspace's entry, its
+  working-copy pointer and its heads, is written only by operations that
+  name that workspace, and a merge takes it only from them
+  ([INT-0010](INT-0010-lock-free-concurrency.md)). The public line and the
+  Book's records are classes still to come.
+- Until operations are signed, the workspace an operation names is not
+  proved: a process can name another. The rule therefore stops mistakes,
+  not a hostile agent, and AC-7 waits for signatures. A refused effect is
+  not reported yet either: finding one means computing the state every
+  operation started from.
+- The entry is keyed by the workspace's name; the actor the workspace was
+  made for is not yet recorded (backlog T-012).
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from the Biblio report §3–4 and Master Report v6 II §3.4 as slimmed by R3).
 - 2026-11-10: revised while `proposed` (Sprint 6 Plan, on owner direction of 2026-11-09 for thousands of agents): signatures said who made an operation but nothing said what an actor may change. The Intent adds ownership of view entries, applied when operations are merged, so a faulty agent can change only its own work. AC-7 and AC-8 are added. Consequences record delegated birth signing, what "registered at that point" means on a log with many heads, and the format's part.
+- 2026-11-14: `proposed` → `planned` (Sprint 7 build plan T-001 and T-003, approved by the owner on 2026-11-14: the workspace as the first class of owner, applied when op heads are merged; AC-8 for that class. AC-1 to AC-7 wait for signed operations). Consequences record what is built, what is not proved without signatures, and what is not yet reported.
