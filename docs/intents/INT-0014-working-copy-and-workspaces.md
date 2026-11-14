@@ -146,9 +146,12 @@ Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
   and `init` refuses to make a repository inside one (T-008). Without that,
   `praps status` in a subdirectory said the directory was not a repository
   and suggested `praps init`, which would have nested one.
-- The top of a working copy is the directory that holds `.praps/store`. A
-  directory named `.praps` below the top that holds no store is tracked like
-  any other directory. One that holds a store is the top of a repository of
+- The top of a working copy is the directory that holds `.praps/store`,
+  or, from Sprint 7, a readable `.praps/workspace`: the top of a lane. A
+  `.praps/workspace` that exists but cannot be read or does not parse stops
+  the search with an error naming it, as any failure other than absence
+  does. A directory named `.praps` below the top that holds neither is
+  tracked like any other directory. One that holds a store is the top of a repository of
   its own: commands run inside it act on it, and the working copy around it
   still tracks its files as content. What should happen there is not decided
   (backlog T-031).
@@ -173,15 +176,45 @@ Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
   store. Its `.praps/workspace` names the workspace and the store, by the
   store's full path, as a linked Git worktree names its repository. Its
   `.praps` holds no store, so a lane is no clone.
+- A lane's first change is made on the parent of the working-copy change of
+  the workspace it was made from, which that workspace's commands do not
+  rewrite. Made on the working-copy change itself, the lane would sit on a
+  version its workspace replaces at the next snapshot, and the change would
+  diverge ([INT-0011](INT-0011-change-identity-and-rewriting.md)). Edits in
+  progress there are therefore not in the new lane. With no parent, the
+  lane starts from the empty tree (Sprint 7 plan critique, round 1, C-014).
+- A lane is a checkout: making one writes every file into DIR. The cheap
+  workspace this chapter's Intent describes, one view entry and no file
+  (AC-4), is still to come.
+- A lane may not be made inside any working copy, and `init` is refused at
+  a lane's top and below it: the working copy around it would track the
+  lane's files and its `.praps` as content (C-009). `lanes` snapshots like
+  every other command.
+- Two cases are left open in Sprint 7 (C-007, C-008):
+  - Two commands that write one working copy's files at the same moment
+    (`undo`, `restore`) can interfere through the record and the files. One
+    working copy is one agent's, and agents that work at once take a lane
+    each. The race rule below covers the commands that move the pointer
+    without writing files. Per-process records or a lock would close the
+    gap; Jujutsu's working copy, which knows the operation it was last
+    brought up to, is the starting point.
+  - Two `praps lane` commands started at the same moment with one name both
+    pass the check, and both directories then share one entry. Lanes are
+    made one at a time by whoever sets them up. Detecting the collision
+    needs each lane to know the operation that made it.
+
+  Both are in the backlog.
 - The race rule (the owner's decision of 2026-11-14): when two commands in one
   workspace run at once, its working-copy pointer holds both changes. The
   next command there continues from the one with the smallest id, keeps
   the other visible and restorable, and says so. No command fails.
 - A write of the working copy names in its record the working-copy change
-  it started from, since a merged state has no single operation. Resume
-  finishes the write while its operation is still its workspace's latest,
-  and leaves the files with a note once another operation of that
-  workspace has followed it or stands beside it.
+  it started from, since a merged state has no single operation, or `empty`
+  for a lane's first write. Resume finishes the write while its operation
+  is still its workspace's latest, and leaves the files with a note once
+  another operation of that workspace has followed it or stands beside it.
+  A lane whose operation never landed is refused at its next command, and
+  `praps lane` makes it again at the same directory (C-006).
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §4 Phase 1 and R5 §C.1).
@@ -201,3 +234,4 @@ Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
 - 2026-11-10: revised while `active` (Sprint 6 plan critique, round 3, C-001; `semantic`): the exception to leaving a directory covers a file due at a path above it as well as at the path itself.
 - 2026-11-10: kept `active` at the close of Sprint 6. AC-1 is kept through one read of the op log for each command, the check of the log before resume, one scan for `undo` and `restore`, `describe`, the search for the working copy, and a write that leaves a directory it cannot remove. Its other criteria are as they were: several workspaces and the stat cache are not built.
 - 2026-11-14: revised while `active` (Sprint 7 Plan; `editorial`: no criterion changes): Consequences record lanes and how a working copy finds its store, the race rule the owner chose, and what the record of a write names after a merge. Work evidence names Sprint 7's T-002, T-004, T-006, T-007, T-009 and T-010.
+- 2026-11-14: revised while `active` (Sprint 7 plan critique, round 1, C-006, C-007, C-008, C-009 and C-014; `editorial`: no criterion changes): Consequences define a lane's top and what stops the search, record that a lane starts from the parent of the working-copy change and why, that a lane is a checkout and the cheap workspace is still to come, where lanes and `init` are refused, the record's `empty` form and the interrupted lane, and the two cases Sprint 7 leaves open.

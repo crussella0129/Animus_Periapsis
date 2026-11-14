@@ -126,10 +126,27 @@ Three rules hold the merge to [INT-0035](INT-0035-scale-and-asynchrony.md):
   values, yet differs from the base. Taking an entry only from its owner's
   operations leaves those copies out, which is what the ownership rule
   asks.
-- The known limit of that merge: with three or more concurrent writers of
-  one entry whose ancestry is nested, a value set back to an earlier one can
-  add a spurious member to a pointer. No value is lost. AC-3 is therefore
-  shown for writers that diverge from one base, as R1-E12 tested it.
+- The known limit of that merge: a value set back to an earlier one reads
+  as no change against an older base. Two cases show it, and Sprint 7's
+  T-003 pins both with their values:
+  - A head that carries a merged copy of an entry. Lane Y's operation is
+    made over two of W's writers, so it carries W as {a1, a2}; W then
+    replaces a1 with a3. For the heads W's last operation and Y, the merge
+    gives {a2, a3}, and the classic three-way merge of the two views gives
+    {a1, a2, a3} (Sprint 7 plan critique, round 1, C-001).
+  - Writers of one entry whose ancestry nests, one of which sets the value
+    back. The merge can keep a value the owner moved away from, or gain a
+    spurious member.
+
+  Matching the classic merge in those cases would mean grouping the writers
+  by the heads that reach them. An operation of another workspace over the
+  same heads would then change this entry, which the ownership rule
+  forbids. Every value stays in the operations that set it, and `restore`
+  returns to any of them. AC-2 is therefore shown for two heads neither of
+  which carries a merged copy. AC-3 is shown for writers that diverge from
+  one base whose pointer holds one changeset, as R1-E12 tested it: with a
+  base that is itself a conflict, two writers that resolve it both ways
+  merge back to the base and read as unchanged.
 - A working-copy pointer that two commands of one workspace moved at once is
   resolved by that workspace's next command, by the rule
   [INT-0014](INT-0014-working-copy-and-workspaces.md) records. No other
@@ -137,9 +154,16 @@ Three rules hold the merge to [INT-0035](INT-0035-scale-and-asynchrony.md):
 - In Sprint 7 replicas are two stores in one simulated filesystem that copy
   what each lacks (AC-5). Sync proper is
   [INT-0024](INT-0024-staged-sync.md)'s.
+- Those replicas exchange every operation, because operations carry no scope
+  yet ([INT-0009](INT-0009-reversible-by-default.md)). Once local operations
+  stay on their replica, an entry whose owner's operations a replica lacks
+  is absent there, by this merge's rule. A view shared between replicas then
+  needs each owner's shared operations; the backlog carries this with the
+  scope fields (backlog T-012).
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §3.3, R1-E12, R4 and R5 §A.7).
 - 2026-11-07: revised while `proposed` (Sprint 2 plan critique, round 1): Consequences record the interim several-heads stop and that it contradicts this Intent until the canonical merge lands.
 - 2026-11-10: revised while `proposed` (Sprint 6 Plan, on owner direction of 2026-11-09 for thousands of agents): the Intent says a merge of op heads is computed and never committed as an operation, and holds the merge to three rules of [INT-0035](INT-0035-scale-and-asynchrony.md): cost, ownership and scope. AC-7 to AC-9 are added. Consequences record Sprint 6's measurement of the several-heads stop, why a stored merge would not settle, and what Jujutsu's documentation leaves open.
 - 2026-11-14: `proposed` → `planned` (Sprint 7 build plan T-002 to T-005, T-009 and T-010, approved by the owner on 2026-11-14: the canonical merge, commands over merged states, scoped history and the Concurrency scenario; AC-1 to AC-7, with AC-3 for writers diverging from one base and AC-5 over simulated replicas. AC-8 and AC-9 wait for cost and scale). Revised in the same Plan (`semantic`): the Intent states that each entry is merged over its owner's operations, which the ownership rule already implied; Consequences record why, the merge's known limit, and who resolves a working-copy pointer.
+- 2026-11-14: revised while `planned` (Sprint 7 plan critique, round 1, C-001 and C-015; `editorial`: no criterion changes): Consequences give the known limit's two cases with their values, the scopes in which AC-2 and AC-3 are shown, and why the merge does not group writers by heads; they record that Sprint 7's simulated replicas exchange every operation.

@@ -116,7 +116,15 @@ With many writers, three rules keep this true
   made in that workspace, as they stand before `undo`'s own snapshot.
   `undo` returns the workspace's entry to its value just before them, and
   `restore OP` sets only that entry, to its value at OP. With one workspace
-  both leave the same view objects as before.
+  both leave the same view objects as before. When the value they set has a
+  working-copy pointer of several changesets, the race rule of
+  [INT-0014](INT-0014-working-copy-and-workspaces.md) applies to it: the
+  smallest is written and kept as the pointer, and the others stay among
+  the heads. AC-6 is checked over 200 seeded interleavings of two lanes
+  (Sprint 7 plan critique, round 1, C-005 and C-010).
+- Sprint 7's simulated replicas exchange every operation, local ones
+  included, because operations carry no scope yet. AC-7 waits for that
+  scope ([INT-0010](INT-0010-lock-free-concurrency.md) Consequences).
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 III §2 as corrected by R1 and R3).
@@ -129,3 +137,4 @@ With many writers, three rules keep this true
 - 2026-11-10: evidence while `active` (Sprint 6 plan critique, round 2, C-005 and C-009): Work evidence names Sprint 6's T-012. A write that cannot remove a directory it emptied leaves it ([INT-0014](INT-0014-working-copy-and-workspaces.md)); AC-3's "exact earlier state" is of tracked files, and directories are not tracked.
 - 2026-11-10: kept `active` at the close of Sprint 6. AC-1 to AC-3 are kept, with `describe` among the operations `undo` and `restore` reverse. The scoping of `undo` to what an actor owns waits for the canonical merge (backlog T-029).
 - 2026-11-14: revised while `active` (Sprint 7 Plan; `editorial`: no criterion changes): Consequences record how scoped `undo` finds the last operation its workspace made. Work evidence names Sprint 7's T-005.
+- 2026-11-14: revised while `active` (Sprint 7 plan critique, round 1, C-005, C-010 and C-015; `editorial`: no criterion changes): Consequences record that the race rule applies to the value `undo` and `restore` set, that AC-6 is checked over 200 seeded interleavings, and that Sprint 7's simulated replicas exchange local operations too.

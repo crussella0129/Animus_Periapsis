@@ -6,20 +6,23 @@ The owner approved this plan's outline on 2026-11-14. Four decisions were made w
 - after two commands at once in one workspace, the next command continues from one change and keeps the other;
 - during Test, `dev` is pushed, the PR is opened, and every job of the tested head is re-run twice.
 
+The plans were then revised after the first plan critique ([critique-round1.md](critique-round1.md)). The tasks run in the order they appear below: T-001, T-002, T-003, T-004, T-006, T-005, T-007, T-008, T-009, T-010. T-006 comes before T-005 because scoped `undo` and `restore` are tested with lanes. Every task's commit passes `cargo ci` on Windows.
+
 ## Intents
 - [INT-0010](../../../intents/INT-0010-lock-free-concurrency.md) — state: planned; acceptance criteria covered:
-  - AC-1 (convergence), AC-2 (two heads equal the three-way merge), AC-4 (criss-cross histories), AC-6 (wrong merges rejected) and AC-7 (readers add nothing), in T-003, T-004 and T-009;
-  - AC-3 (grouping), for writers that diverge from one base, as R1-E12 tested it; the limit is recorded in the chapter;
-  - AC-5 (8 writers on 2 replicas), with replicas simulated as two stores that exchange their files, in T-009.
+  - AC-1 (convergence), over every generated history; AC-4 (criss-cross histories); AC-6 (wrong merges rejected); AC-7 (readers add nothing). In T-003, T-004 and T-009.
+  - AC-2 (two heads equal the three-way merge), for two heads neither of which carries a merged copy;
+  - AC-3 (grouping), for writers that diverge from one base whose pointer holds one changeset. Both limits are recorded in the chapter with their values (T-003).
+  - AC-5 (8 writers on 2 replicas, no lost work), with replicas simulated as two stores that exchange every operation, and a reachability oracle, in T-009.
 
   Not AC-8 (1,000 writers on 100 replicas) and not AC-9 (merge cost); backlog.
-- [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md) — state: active; acceptance criteria covered: AC-3 (at least 8 workspaces over one repository, in T-006 and T-009, and through the binary in T-010); AC-1 kept.
-- [INT-0009](../../../intents/INT-0009-reversible-by-default.md) — state: active; acceptance criteria covered: AC-1 to AC-3 kept, with `undo` and `restore` scoped to the workspace that runs them (T-005).
+- [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md) — state: active; acceptance criteria covered: AC-3 (at least 8 workspaces at once over one store), from T-009's one-store run, with T-006 showing them in turn and T-010 through the binary; AC-1 kept.
+- [INT-0009](../../../intents/INT-0009-reversible-by-default.md) — state: active; acceptance criteria covered: AC-6 (undo is scoped), over 200 seeded interleavings of two lanes (T-005); AC-1 to AC-3 kept.
 - [INT-0006](../../../intents/INT-0006-format-v1.md) — state: active; acceptance criteria covered: AC-1 for the two changed provisional bodies; AC-6, the owner asked to sign off the change (T-002).
 - [INT-0016](../../../intents/INT-0016-actors-and-agent-lifecycle.md) — state: planned; acceptance criteria covered: AC-8 for one class of owner, the workspace (T-001). Its ownership rule is applied when heads are merged (T-003). AC-7 needs signed operations and is not covered.
-- [INT-0037](../../../intents/INT-0037-command-set.md) — state: active; acceptance criteria covered: AC-1 to AC-5 for `lane` and `lanes` (T-007); AC-8 for those two names (T-001).
+- [INT-0037](../../../intents/INT-0037-command-set.md) — state: active; acceptance criteria covered: AC-1 to AC-5 for `lane` and `lanes`, and AC-4 for every refusal this sprint adds (T-005 to T-007); AC-8 for those two names (T-001).
 - [INT-0022](../../../intents/INT-0022-agent-and-human-interfaces.md) — state: active; acceptance criteria covered: AC-8, AC-9 and AC-11 kept for the two new commands (T-007).
-- [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md) — state: active; acceptance criteria covered: AC-1 to AC-3 and AC-6 for the new Concurrency scenario (T-009); the five existing matrices kept (T-002, T-008).
+- [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md) — state: active; acceptance criteria covered: AC-1, AC-3 and AC-6 for the new Concurrency scenario (T-009); AC-1 and AC-2 for making a lane, with a crash at every syscall in both modes (T-006); the five existing matrices kept (T-002, T-004 to T-008).
 - [INT-0003](../../../intents/INT-0003-engineering-baseline.md), [INT-0004](../../../intents/INT-0004-windows-and-linux.md) — state: active; acceptance criteria covered: INT-0003 AC-2 to AC-4 and INT-0004 AC-1 for Sprint 6's last runs (T-001); INT-0003 AC-5 and AC-10 (T-010); INT-0003 AC-11's three samples, in Test.
 
 ## Schema Tree
@@ -31,10 +34,11 @@ The owner approved this plan's outline on 2026-11-14. Four decisions were made w
   - Merge
     - T-003: The canonical merge of op heads
     - T-004: Commands work from merged states
-  - History
-    - T-005: Undo and restore are scoped to their workspace
   - Workspaces
     - T-006: Workspaces over one store, in the library
+  - History
+    - T-005: Undo and restore are scoped to their workspace
+  - Commands
     - T-007: `praps lane DIR` and `praps lanes`
   - Simulation
     - T-008: The scheduler wakes only the process it chose
@@ -46,8 +50,10 @@ The owner approved this plan's outline on 2026-11-14. Four decisions were made w
 - **Ownership against forged operations, and reporting refused effects** (INT-0016 AC-7; INT-0035 AC-6). Without signatures a process can name any workspace, so the merge's ownership rule stops honest mistakes, not a hostile agent. A refused effect is not reported yet either: finding one means recomputing every operation's parents, a cost this sprint does not take on. Signed operations are the actors' sprint.
 - **A view whose size follows the change** (INT-0006 AC-8, AC-9; INT-0035 AC-4). Every operation still writes every entry. Backlog T-030.
 - **Merge cost and scale** (INT-0010 AC-8, AC-9; INT-0035 AC-1 to AC-3, AC-5). Every command still reads the whole op log, and a merge walks it again. Backlog T-030 and T-032.
-- **Real replicas** (INT-0024). Two stores in one simulated filesystem exchange their files. That is enough to show that replicas holding the same operations compute one view. It is not a sync protocol.
+- **Real replicas** (INT-0024). Two stores in one simulated filesystem exchange their files. That is enough to show that replicas holding the same operations compute one view. It is not a sync protocol, and it exchanges every operation, because operations carry no scope yet (INT-0009, INT-0010).
 - **Merging file contents** (INT-0012). A pointer two commands moved at once is resolved by the race rule. Two versions of one change both stay visible; their policy is INT-0011's.
+- **Two commands that write one working copy's files at once** (critique C-007). `undo` and `restore` run at the same moment in one directory can interfere through the record and the files. One working copy is one agent's; agents that work at once take a lane each. Per-process records or a lock would close it. INT-0014 records it.
+- **Two lanes made at once with one name** (critique C-008). Both pass the check, and both directories then share one entry. Lanes are made one at a time by whoever sets them up; detecting the collision needs each lane to know the operation that made it. INT-0014 records it.
 - **The `init` that hides a lost history** (backlog T-036, first item): unrelated to the merge.
 
 ## Execution Sequence
@@ -105,9 +111,9 @@ The owner approved this plan's outline on 2026-11-14. Four decisions were made w
 
 ### T-003: The canonical merge of op heads
 - **Intent:** [INT-0010](../../../intents/INT-0010-lock-free-concurrency.md), [INT-0016](../../../intents/INT-0016-actors-and-agent-lifecycle.md)
-- **Touches:** crates/workspace/src/merge.rs (new), crates/workspace/src/lib.rs, crates/workspace/src/points.rs, crates/workspace/tests/merge.rs (new)
+- **Touches:** crates/workspace/src/merge.rs (new), crates/workspace/src/lib.rs, crates/workspace/tests/merge.rs (new)
 - **Depends on:** T-002
-- **Acceptance criterion:** INT-0010 AC-1, AC-2, AC-3 (writers diverging from one base), AC-4 and AC-6; INT-0016's ownership rule, applied when heads are merged.
+- **Acceptance criterion:** INT-0010 AC-1; AC-2 for two heads neither of which carries a merged copy; AC-3 for writers that diverge from one base whose pointer holds one changeset; AC-4 and AC-6. INT-0016's ownership rule, applied when heads are merged.
 - **Success criterion (EARS):**
   - **WHEN** the merge is given one head, **THEN** it **SHALL** return that head's view.
   - **WHEN** it is given several heads, **THEN** it **SHALL**, for each workspace name, find that workspace's writers: the operations made in that workspace, among the heads and their ancestors, that no other operation made there follows. The merged entry **SHALL** be:
@@ -117,120 +123,149 @@ The owner approved this plan's outline on 2026-11-14. Four decisions were made w
   - **WHEN** entries are merged against a base, **THEN**:
     - the `working_copy` **SHALL** be the base's when no writer changed it, and otherwise the union of the changed writers' sets;
     - a changeset **SHALL** be among the `heads` when it is in the base and every writer kept it, or is not in the base and some writer has it.
-  - **WHEN** the heads given are permuted or repeated, **THEN** the merged view **SHALL** be the same (AC-1).
-  - **WHEN** two heads with one latest common ancestor are merged, **THEN** each entry **SHALL** equal the classic three-way merge of the two head views against that ancestor's view, a conflict shown as the union of the two sides (AC-2).
-  - **WHEN** some heads are first merged by an operation that changes nothing else, **THEN** merging the others with that operation **SHALL** give the flat merge (AC-3). This holds in histories where each workspace's concurrent writers diverge from one base.
+  - **WHEN** the heads given are permuted or repeated, **THEN** the merged view **SHALL** be the same, in every generated history (AC-1).
+  - **WHEN** two heads with one latest common ancestor are merged, and neither carries a merged copy (in each head's own history every workspace has one latest operation), **THEN** each entry **SHALL** equal the classic three-way merge of the two head views against that ancestor's view, a conflict shown as the union of the two sides (AC-2).
+  - **WHEN** some heads are first merged by an operation that changes nothing else, **THEN** merging the others with that operation **SHALL** give the flat merge (AC-3). This holds in histories where each workspace's concurrent writers diverge from one base whose pointer holds one changeset.
   - **WHEN** at least 4,000 random criss-cross histories are merged, **THEN** each result **SHALL** equal a slow recursive reference merge written apart from it, and an entry its owner resolved after seeing both sides **SHALL** stay resolved (AC-4).
   - **WHEN** another workspace's operation carries an older copy of an entry, **THEN** that copy **SHALL** not change the merged entry (ownership).
-  - **WHEN** each registered wrong merge (pairwise fold, the first-equals-last fast path, always-base, first-side-wins, keep-duplicates) is run through the AC-1 and AC-2 property tests, **THEN** each **SHALL** fail at least one of them. The wrong merge that takes one arbitrary common ancestor **SHALL** fail the AC-4 test (AC-6).
-  - **WHEN** a merge of several heads is computed, **THEN** it **SHALL** mark the point `workspace.merge.computed`, registered for unit `workspace::merge` in Sprint 7.
+  - **WHEN** the cases of the known limit are merged, **THEN** the merge **SHALL** give the values INT-0010 records for them, pinned by hand: a head that carries a merged copy, and nested writers with a value set back.
+  - **WHEN** each registered wrong merge is run through the AC-1 and AC-2 property tests, **THEN** each **SHALL** fail at least one of them:
+    - pairwise fold and the first-equals-last fast path **SHALL** fail AC-1 and pass AC-2;
+    - always-base and union of heads **SHALL** fail AC-2 and pass AC-1;
+    - first-side-wins **SHALL** fail both.
+
+    The wrong merge that takes one arbitrary common ancestor **SHALL** fail the AC-4 test (AC-6).
 - **Notes:**
-  - A pure function over the op log and a way to read views; it writes nothing.
+  - A pure function over the op log and a way to read views. It writes nothing, and no command calls it until T-004.
   - Only the entry's own workspace writes it, so another workspace's stale copy is never a "change". This is why a single base for all heads is not used: research and Plan found that it gives spurious conflicts whenever an agent that loaded early still has a head.
-  - The known limit: with three or more concurrent writers in one workspace whose ancestry is nested, a value set back to an earlier one can add a spurious member to a pointer. Nothing is lost. INT-0010 records it.
+  - The known limit: a value set back to an earlier one reads as no change against an older base. With a head that carries a merged copy, or writers whose ancestry nests, the merge can then differ from the classic three-way merge. Matching the classic merge there would mean grouping the writers by the heads, and then a commit by another workspace over the same heads would change this entry, which ownership forbids.
+  - The first draft registered "keep-duplicates". Writers are a set, and both rules ask "every writer" or "some writer", so a repeated head cannot change a result: that wrong merge cannot be told apart from the merge. "Union of heads", in which a head one writer removed stays because another kept it, takes its place.
   - First-side-wins is the rule research found in Jujutsu for a working-copy commit both sides moved.
-  - The point is a scheduling boundary in simulation; T-009's scenario reaches it.
 
 ### T-004: Commands work from merged states
 - **Intent:** [INT-0010](../../../intents/INT-0010-lock-free-concurrency.md), [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md), [INT-0037](../../../intents/INT-0037-command-set.md)
-- **Touches:** crates/workspace/src/lib.rs, crates/workspace/src/record.rs, crates/workspace/tests/workspace.rs, crates/workspace/tests/materialise.rs, crates/workspace/tests/history.rs, crates/praps/src/hint.rs, crates/praps/src/commands.rs, crates/praps/tests/cli.rs, docs/spec/working-copy.md
+- **Touches:** crates/workspace/src/lib.rs, crates/workspace/src/record.rs, crates/workspace/tests/workspace.rs, crates/workspace/tests/materialise.rs, crates/workspace/tests/materialise_crash.rs, crates/workspace/tests/history.rs, crates/praps/src/hint.rs, crates/praps/src/commands.rs, crates/praps/tests/cli.rs, docs/spec/working-copy.md
 - **Depends on:** T-003
 - **Acceptance criterion:** INT-0010's Intent (no command fails because of another writer) and AC-7 at 2 and 8 readers; INT-0014 AC-1 kept; INT-0037 AC-4 kept.
 - **Success criterion (EARS):**
   - **WHEN** a command loads a store with several op heads, **THEN** it **SHALL** work from their canonical merge, computed in memory, and **SHALL NOT** fail because there are several.
   - **WHEN** such a command changes nothing (`status` with no edit, `log`, `ops`, `describe` with the text the change has), **THEN** the set of stored operations **SHALL** be exactly what it was. This is checked with 2 and with 8 reader processes on the simulator.
-  - **WHEN** such a command changes something, **THEN** it **SHALL** commit one operation made in its own workspace, whose parents are every head it merged and whose view is the merged view with only its own entry changed.
+  - **WHEN** such a command changes something, **THEN** it **SHALL** commit one operation made in its own workspace, whose parents are every head it merged and whose view is the merged view with only its own entry changed. That entry's pointer **SHALL** hold one changeset.
   - **WHEN** its own workspace's working-copy pointer holds several changesets, **THEN** the command:
     - **SHALL** continue from the one with the smallest id;
     - **SHALL** keep the others among its entry's heads;
     - **SHALL** print one note that names every one of them.
-
-    Once it commits, the pointer **SHALL** hold one changeset.
-  - **WHEN** a write of the working copy begins, **THEN** its record **SHALL** name the working-copy changeset it starts from, and its target operation. At the next command:
+  - **WHEN** a write of the working copy begins, **THEN** its record **SHALL** name what the write starts from, and its target operation. The record has two forms, both specified and tested: `from <changeset>`, the working-copy changeset; and `from empty`, the empty tree, which T-006 is the first to write. At the next command:
     - **WHEN** resume finds the target present, and still its workspace's only writer, **THEN** it **SHALL** finish the write;
     - **WHEN** another operation of that workspace has followed it or stands beside it, **THEN** resume **SHALL** remove the write's temporary names, drop the record, leave every other file and add a note;
     - **WHEN** the target is absent, **THEN** resume **SHALL** drop the record and touch no file.
   - **WHEN** the task is done, **THEN** no error of the `workspace` crate **SHALL** concern several heads, and the hint table **SHALL** no longer hold one.
   - **WHEN** eight `praps new` run at once in one working copy, as real processes, **THEN** each **SHALL** exit 0, and the next `praps status` **SHALL** exit 0.
+  - **WHEN** the suite runs at this task's commit, **THEN** the store, four-writer, Snapshot and Describe matrices **SHALL** keep their cell counts and digests. The Materialise matrix's digest **SHALL** move, because a record a crash leaves names a changeset. Its cell count may move too, because resume reads the `from` change without an operation's view, and the matrix crashes recovery at every syscall. The task's evidence **SHALL** record the new literals and that reason.
 - **Notes:**
   - `Loaded` holds the set of heads merged in place of one head.
   - The record's `from` changes meaning, from an operation to a changeset, because a merged state has no single operation. The tree it names is the same F as before.
-  - The last clause is the measurement that motivated the sprint. Research found 3 of 8 succeeding at `855eb67`.
-
-### T-005: Undo and restore are scoped to their workspace
-- **Intent:** [INT-0009](../../../intents/INT-0009-reversible-by-default.md)
-- **Touches:** crates/workspace/src/lib.rs, crates/workspace/tests/history.rs, crates/workspace/tests/materialise.rs, docs/spec/working-copy.md
-- **Depends on:** T-004
-- **Acceptance criterion:** INT-0009's rule "Undo is scoped", with AC-1 to AC-3 kept.
-- **Success criterion (EARS):**
-  - **WHEN** `undo` runs in workspace W, **THEN** it **SHALL**:
-    - take W's writers as they were when it started, before its own snapshot;
-    - return W's entry to its value just before them: the merge of their parents.
-
-    No other entry **SHALL** change.
-  - **WHEN** `undo` runs twice in a row, **THEN** W's entry **SHALL** return to its value before the first.
-  - **WHEN** W's writer is the operation that made W, or the root, **THEN** `undo` **SHALL** fail with nothing to undo, having written only its snapshot.
-  - **WHEN** `restore OP` runs in W, **THEN** W's entry **SHALL** become its value in OP's view, and no other entry **SHALL** change.
-  - **WHEN** OP's view has no entry for W, **THEN** `restore` **SHALL** refuse, with nothing written but its snapshot.
-  - **WHEN** a repository has one workspace, **THEN** every `undo` and `restore` **SHALL** leave the same view object as before this task. The history tests' assertions on view ids stand unchanged.
-  - **WHEN** two workspaces each have history, **THEN** `undo` and `restore` in one **SHALL** leave the other's entry and files as they were.
-- **Notes:**
-  - "The last operation this workspace made" is its writers, the same notion the merge uses.
-  - With one workspace the new view is the old target view byte for byte, so the old assertions are the check that nothing else moved.
+  - The seventh clause is the measurement that motivated the sprint. Research found 3 of 8 succeeding at `855eb67`.
 
 ### T-006: Workspaces over one store, in the library
-- **Intent:** [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md)
-- **Touches:** crates/workspace/src/lane.rs (new), crates/workspace/src/lib.rs, crates/workspace/src/record.rs, crates/workspace/src/points.rs, crates/workspace/tests/lanes.rs (new), docs/spec/working-copy.md
-- **Depends on:** T-005
-- **Acceptance criterion:** INT-0014 AC-3 (at least 8 workspaces over one repository with no clones, no duplicated objects and no lost operations), and AC-1 kept.
+- **Intent:** [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md), [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0037](../../../intents/INT-0037-command-set.md)
+- **Touches:** crates/workspace/src/lane.rs (new), crates/workspace/src/lib.rs, crates/workspace/src/record.rs, crates/workspace/tests/lanes.rs (new), crates/workspace/tests/lane_crash.rs (new), crates/praps/src/hint.rs, crates/praps/tests/cli.rs, docs/spec/working-copy.md
+- **Depends on:** T-004
+- **Acceptance criterion:** INT-0014 AC-3 in part (8 workspaces over one store in turn, with no clone and one file per object; at once in T-009) and AC-1 kept; INT-0005 AC-1 and AC-2 for making a lane.
 - **Success criterion (EARS):**
-  - **WHEN** a lane NAME is made at DIR from workspace W, **THEN** the library **SHALL**:
-    1. record W first;
-    2. start a new empty change on top of W's working-copy change;
-    3. write `DIR/.praps/workspace`, naming NAME and the store, durably;
-    4. write a record whose `from` is the empty tree;
-    5. commit one operation made in NAME, whose view adds NAME's entry;
-    6. write the change's files into DIR;
-    7. drop the record.
-  - **WHEN** `Workspace::open` is given a directory holding `.praps/workspace`, **THEN** it **SHALL** open the store that file names, as workspace NAME.
-  - **WHEN** NAME is already a workspace, or DIR exists and is not empty, **THEN** making the lane **SHALL** refuse, having written nothing but W's snapshot.
-  - **WHEN** the system crashes at any syscall of making a lane, **THEN**, at the next command in DIR:
+  - **WHEN** a lane NAME is made at DIR from workspace W, **THEN** the library **SHALL**, in order:
+    1. snapshot W;
+    2. refuse unless NAME is no workspace yet and DIR is free (see below);
+    3. form the lane's first change: no changes, and as its only parent the parent of W's working-copy change, or no parent when that change has none;
+    4. make DIR and `DIR/.praps` durable, then write `DIR/.praps/workspace`, naming NAME and the store, through a temporary name and a rename, durably;
+    5. write a record whose `from` is `empty` and whose target is the lane's operation;
+    6. commit that operation, made in NAME over every head, whose view adds NAME's entry: the new change as pointer and as head;
+    7. write the change's files into DIR;
+    8. drop the record.
+  - **WHEN** DIR is absent, empty, or holds nothing but a `.praps` an interrupted making left, **THEN** DIR **SHALL** count as free. Such a `.praps` holds no `workspace` file, or one naming a workspace no operation made, and at most its temporary name and a record beside it.
+  - **WHEN** NAME is already a workspace, or DIR is not free, **THEN** making the lane **SHALL** refuse, having written nothing but W's snapshot.
+  - **WHEN** `Workspace::open` is given a directory with no `.praps/store` but with `.praps/workspace`, **THEN** it **SHALL** open the store that file names, as workspace NAME. Where `.praps/store` is present, `open` **SHALL** make the syscalls it makes today and no more.
+  - **WHEN** a lane is opened whose `.praps/workspace` names a workspace that no operation made, **THEN** the command **SHALL** drop the record if one is left, as resume drops one whose target is absent, and refuse with its own error naming the lane. Nothing else **SHALL** be written. Its hint **SHALL** say to make the lane again at DIR.
+  - **WHEN** the store `.praps/workspace` names does not open, or the file cannot be read or does not parse, **THEN** the command **SHALL** refuse with an error of its own for each. Neither hint **SHALL** offer `init`.
+  - **WHEN** the system crashes at any syscall of making a lane, in the lenient and the strict mode, **THEN**, at the next command in DIR:
     - if the operation landed, the lane's files **SHALL** be finished;
-    - if not, the command **SHALL** refuse, naming the interrupted lane, with nothing more written.
+    - if not, the command **SHALL** refuse as above, or, before `.praps/workspace` is in place, find no repository at DIR;
+    - and making the lane at DIR again **SHALL** succeed.
+
+    Two runs **SHALL** give every cell the same trace and state, and the cell count and digest **SHALL** be asserted as literals.
   - **WHEN** 8 lanes over one store run commands in turn, **THEN**:
     - every operation **SHALL** be in that one store, and no lane **SHALL** hold a store of its own;
     - each object **SHALL** be one file;
     - each lane's entry **SHALL** hold its last command's state;
     - each lane's files **SHALL** equal its working-copy change.
-  - **WHEN** a lane is made, **THEN** the point `workspace.lane.made`, registered for unit `workspace::lane` in Sprint 7, **SHALL** be marked.
+  - **WHEN** this task adds an error kind, **THEN** the kind **SHALL** have a hint in the table, and `messages_say_only_what_is_wrong` **SHALL** fix its text. T-007 prints each through the binary.
+  - **WHEN** the suite runs at this task's commit, **THEN** the five matrices **SHALL** keep their cell counts and digests.
 - **Notes:**
   - `.praps/workspace` holds two lines, `name NAME` and `store PATH`. `praps` writes the store's full path, as a linked Git worktree does; the simulator uses paths from its root.
   - A lane's `.praps` holds no store, so it is no clone.
+  - The lane starts from the parent of W's working-copy change because W rewrites that change at every snapshot and `describe`. A lane made on it would sit on a version W has already replaced, and the change would diverge (INT-0011). W's edits in progress are therefore not in the lane.
+  - A lane is a checkout: every file is written into DIR. The cheap, API-only workspace (INT-0014 AC-4) is still to come.
+
+### T-005: Undo and restore are scoped to their workspace
+- **Intent:** [INT-0009](../../../intents/INT-0009-reversible-by-default.md), [INT-0037](../../../intents/INT-0037-command-set.md)
+- **Touches:** crates/workspace/src/lib.rs, crates/workspace/tests/history.rs, crates/workspace/tests/materialise.rs, crates/workspace/tests/scoped.rs (new), crates/praps/src/hint.rs, crates/praps/src/commands.rs, crates/praps/tests/cli.rs, docs/spec/working-copy.md
+- **Depends on:** T-006
+- **Acceptance criterion:** INT-0009 AC-6 (undo is scoped), over 200 seeded interleavings of two lanes; AC-1 to AC-3 kept.
+- **Success criterion (EARS):**
+  - **WHEN** `undo` runs in workspace W, **THEN** it **SHALL**:
+    - take W's writers as they were when it started, before its own snapshot;
+    - return W's entry to its value just before them: W's entry in the merge of their parents.
+
+    No other entry **SHALL** change.
+  - **WHEN** `undo` runs twice in a row, **THEN** W's entry **SHALL** return to its value before the first.
+  - **WHEN** W's writer is the operation that made W, or the root, **THEN** `undo` **SHALL** fail with nothing to undo, having written only its snapshot.
+  - **WHEN** `restore OP` runs in W, **THEN** W's entry **SHALL** become its value in OP's view, and no other entry **SHALL** change.
+  - **WHEN** OP's view has no entry for W, **THEN** `restore` **SHALL** refuse with an error of its own, with nothing written but its snapshot.
+  - **WHEN** the entry `undo` or `restore` would set has a pointer of several changesets, **THEN** the command **SHALL**:
+    - write the smallest, and commit it alone as the pointer;
+    - keep the others among the heads;
+    - print the race note.
+  - **WHEN** `undo` succeeds, **THEN** it **SHALL** report the operations it went back to, the parents of the writers it undid. With one writer over one parent this is the line it prints today.
+  - **WHEN** a repository has one workspace, **THEN** every `undo` and `restore` **SHALL** leave the same view object as before this task, naming the target's view rather than writing it again. The history tests' assertions on view ids stand unchanged.
+  - **WHEN** two lanes run 200 seeded interleavings of edits, `describe`, `new`, `undo` and `restore`, **THEN**, after each `undo` or `restore` by one lane, every entry the other owns **SHALL** equal what the merge gave just before, and its files **SHALL** be as they were (AC-6).
+  - **WHEN** this task adds an error kind, **THEN** the kind **SHALL** have a hint in the table, and `messages_say_only_what_is_wrong` **SHALL** fix its text. T-007 prints it through the binary.
+  - **WHEN** the suite runs at this task's commit, **THEN** the five matrices **SHALL** keep their cell counts and digests.
+- **Notes:**
+  - "The last operation this workspace made" is its writers, the same notion the merge uses.
+  - With one workspace the new view is the old target view byte for byte. The command names that view instead of writing it again, so it makes no new syscall, and the old assertions are the check that nothing else moved.
 
 ### T-007: `praps lane DIR` and `praps lanes`
 - **Intent:** [INT-0037](../../../intents/INT-0037-command-set.md), [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md), [INT-0022](../../../intents/INT-0022-agent-and-human-interfaces.md)
-- **Touches:** crates/praps/src/registry.rs, crates/praps/src/help.rs, crates/praps/src/hint.rs, crates/praps/src/place.rs, crates/praps/src/commands.rs, crates/praps/src/main.rs, crates/praps/tests/cli.rs, README.md, docs/spec/working-copy.md
-- **Depends on:** T-006
-- **Acceptance criterion:** INT-0037 AC-1 to AC-5 for the two commands; INT-0022 AC-8, AC-9 and AC-11 kept.
+- **Touches:** crates/workspace/src/lib.rs, crates/workspace/src/lane.rs, crates/praps/src/registry.rs, crates/praps/src/help.rs, crates/praps/src/hint.rs, crates/praps/src/place.rs, crates/praps/src/commands.rs, crates/praps/src/main.rs, crates/praps/tests/cli.rs, README.md, docs/spec/working-copy.md
+- **Depends on:** T-005
+- **Acceptance criterion:** INT-0037 AC-1 to AC-5 for the two commands, and AC-4 for every refusal T-005 and T-006 added; INT-0022 AC-8, AC-9 and AC-11 kept.
 - **Success criterion (EARS):**
   - **WHEN** `praps lane DIR` runs in a working copy, **THEN** it **SHALL** make workspace NAME, the last component of DIR, at DIR, over this repository's store named by its full path. It **SHALL** print one line naming NAME, DIR and the new change.
   - **WHEN** any of these holds, **THEN** `praps lane` **SHALL** exit 1, write nothing but the snapshot, and end with one hint:
-    - DIR lies inside this working copy;
+    - DIR lies inside a working copy, this one or another, found by searching up from DIR with the top rule below;
     - NAME is empty, `.`, `..`, or not UTF-8;
     - NAME is already a workspace;
-    - DIR is not empty.
-  - **WHEN** `praps lanes` runs, **THEN** it **SHALL** list every workspace in name order, one line each: `*` for this one, the name, the change ID of its working copy, the number of paths that change changes, and the other changes of a pointer in conflict. It **SHALL** write nothing and repeat exactly.
-  - **WHEN** any command runs in a lane, at its top or below it, **THEN** it **SHALL** act on that lane over the shared store. A top **SHALL** be a directory whose `.praps/store` lists or whose `.praps/workspace` reads. `init` **SHALL** be refused inside a lane.
-  - **WHEN** `praps ops` lists operations, **THEN** each line **SHALL** name the workspace that made the operation.
+    - DIR is not free.
+  - **WHEN** `praps lanes` runs, **THEN** it **SHALL** snapshot like every command, then list every workspace in name order, one line each:
+    - `*` for this one;
+    - the name;
+    - the change ID of its working copy, and the number of paths that change changes;
+    - the other changes of a pointer in conflict.
+
+    With no edit it **SHALL** write nothing and repeat exactly.
+  - **WHEN** any command runs in a lane, at its top or below it, **THEN** it **SHALL** act on that lane over the shared store. A top **SHALL** be a directory whose `.praps/store` lists or whose `.praps/workspace` reads. A `.praps/workspace` that exists but cannot be read or does not parse **SHALL** stop the search with its error.
+  - **WHEN** `praps init` runs at a lane's top or below it, **THEN** it **SHALL** refuse.
+  - **WHEN** `praps ops` lists operations, **THEN** each line **SHALL** name the workspace that made the operation and show that workspace's change in the operation's view, the smallest when its pointer holds several.
   - **WHEN** the registry is read, **THEN**:
     - `lane` and `lanes` **SHALL** be in a group headed "Working together";
     - the everyday group **SHALL** still hold at most ten;
     - `lanes` **SHALL** be marked idempotent and declare no flag;
     - the README's command table **SHALL** equal the list.
-  - **WHEN** a refusal of either command is printed, **THEN** it **SHALL** end with one hint naming only registry commands, and the hint table **SHALL** hold each new kind.
+  - **WHEN** any refusal this sprint added is printed (the two commands', `restore` of an operation with no entry for this workspace, the interrupted lane, the lane whose store is gone, an unreadable `.praps/workspace`, `init` in a lane), **THEN** `every_refusal_prints_one_hint` **SHALL** reach it through the binary, and it **SHALL** end with one hint naming only registry commands.
+  - **WHEN** the suite runs at this task's commit, **THEN** the five matrices **SHALL** keep their cell counts and digests.
 - **Notes:**
   - "Working together" is the purpose INT-0037's table gives these names.
-  - A lane inside the working copy would have its files snapshotted by that working copy, hence the refusal.
+  - A lane inside a working copy would have its files snapshotted by that working copy, and its `.praps` tracked as content; hence the refusal anywhere inside one.
 
 ### T-008: The scheduler wakes only the process it chose
 - **Intent:** [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md)
@@ -244,29 +279,36 @@ The owner approved this plan's outline on 2026-11-14. Four decisions were made w
 
 ### T-009: The Concurrency scenario
 - **Intent:** [INT-0010](../../../intents/INT-0010-lock-free-concurrency.md), [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md), [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md)
-- **Touches:** crates/workspace/tests/concurrency.rs (new), crates/workspace/src/variant.rs, crates/workspace/src/lib.rs, crates/xtask/src/reach.rs, docs/reach.md, docs/spec/simulation.md
-- **Depends on:** T-006, T-008
-- **Acceptance criterion:** INT-0010 AC-5 (8 writers on 2 replicas, no lost work) and AC-7 (readers add nothing at 2, 8 and 1,000); INT-0014 AC-3; INT-0005 AC-1 to AC-3 and AC-6.
+- **Touches:** crates/workspace/tests/concurrency.rs (new), crates/workspace/src/variant.rs, crates/workspace/src/lib.rs, crates/workspace/src/lane.rs, crates/workspace/src/points.rs, crates/xtask/src/reach.rs, docs/reach.md, docs/spec/simulation.md
+- **Depends on:** T-005, T-008
+- **Acceptance criterion:** INT-0010 AC-5 (8 writers on 2 replicas, no lost work) and AC-7 (readers add nothing at 2, 8 and 1,000); INT-0014 AC-3 (8 workspaces at once over one store); INT-0005 AC-1, AC-3 and AC-6.
 - **Success criterion (EARS):**
-  - **WHEN** 8 lane processes run at once, four on each of two stores, under the seeded scheduler for 40 seeds, **AND** one process is killed and the system crashes at seeded steps, **THEN**, after recovery and after the two stores exchange their operations and objects:
+  - **WHEN** 8 lane processes run at once over one store, under the seeded scheduler for 40 seeds, **AND** one process is killed and the system crashes at seeded steps, **THEN**, after recovery:
     - no command that started before the crash, and was not killed, **SHALL** have failed;
-    - every acknowledged operation **SHALL** be on both stores;
-    - both stores **SHALL** check clean;
+    - every acknowledged operation **SHALL** be in the store;
+    - each object **SHALL** be one file, and the store **SHALL** check clean;
     - each lane's writer **SHALL** be its last acknowledged operation, or an operation of the command in flight that follows it;
-    - every lane, on either store, **SHALL** compute the same view;
-    - every lane **SHALL** then run one more command.
+    - every lane **SHALL** compute the same view, and then run one more command.
+  - **WHEN** 8 lane processes run at once, four on each of two stores, under the same conditions, **THEN**, after recovery and after the two stores exchange their operations and objects:
+    - every acknowledged operation **SHALL** be on both stores, and both stores **SHALL** check clean;
+    - each lane's writer **SHALL** be as above;
+    - every changeset in each lane's last acknowledged entry, pointer and heads, **SHALL** be in the merged view on both stores, with everything it follows present;
+    - every lane, on either store, **SHALL** compute the same view, and then run one more command.
 
     Each process runs a fixed script: edits recorded by `status`, `describe`, `new`, and `undo`.
-  - **WHEN** the scenario runs twice, **THEN** every cell's trace and state **SHALL** be equal, and its cell count and digest **SHALL** be asserted as literals.
+  - **WHEN** a run is repeated, **THEN** every cell's trace and state **SHALL** be equal, and each run's cell count and digest **SHALL** be asserted as literals.
   - **WHEN** each of these runs the scenario, **THEN** each **SHALL** produce at least one violation:
     - the workspace variant `FirstHeadOnly`, which loads only its first head;
     - the variant `MergeOnRead`, which commits a merge when it loads several heads;
     - the store's `UnsyncedObjects`.
   - **WHEN** 2, 8 and 1,000 reader processes load a store with several heads and run only commands that change nothing, **THEN** the stored operations **SHALL** be exactly as before, and every reader **SHALL** compute the same view. `MergeOnRead` **SHALL** fail this.
-  - **WHEN** the reach table is generated, **THEN** the scenario Concurrency, added in Sprint 7, **SHALL** reach `workspace.merge.computed` and `workspace.lane.made`, and `docs/reach.md` **SHALL** show it.
+  - **WHEN** a command merges several heads, **THEN** it **SHALL** mark `workspace.merge.computed`; **WHEN** a lane is made, **THEN** it **SHALL** mark `workspace.lane.made`. Both **SHALL** be registered in Sprint 7, for units `workspace::merge` and `workspace::lane`.
+  - **WHEN** the reach table is generated, **THEN** the scenario Concurrency, added in Sprint 7, **SHALL** reach both points, and `docs/reach.md` **SHALL** show them.
 - **Notes:**
-  - Two stores in one simulated filesystem stand in for two replicas. Their exchange copies what each lacks through the store's own `put_object` and `commit_op`, parents and references first.
+  - Two stores in one simulated filesystem stand in for two replicas. Their exchange copies what each lacks through the store's own `put_object` and `commit_op`, parents and references first. It exchanges every operation, because operations carry no scope yet.
   - A system crash stops every process, so commands after it fail with the crash and are not counted.
+  - The points are added here, with the scenario that reaches them, so that the reach step passes at every task's commit. Under several processes a point is a scheduling boundary; no earlier matrix merges heads or makes a lane, so none moves.
+  - INT-0005 AC-2 (a crash at every syscall) is claimed for making a lane (T-006), not for this scenario's seeded crash steps.
 
 ### T-010: Lanes at once through the binary; spec, README, credits and backlog
 - **Intent:** [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md), [INT-0037](../../../intents/INT-0037-command-set.md), [INT-0010](../../../intents/INT-0010-lock-free-concurrency.md), [INT-0003](../../../intents/INT-0003-engineering-baseline.md)
@@ -274,9 +316,9 @@ The owner approved this plan's outline on 2026-11-14. Four decisions were made w
 - **Depends on:** T-007, T-009
 - **Acceptance criterion:** INT-0014 AC-3 through the binary on NTFS and ext4; INT-0037 AC-2 and AC-3 for a lane session; INT-0003 AC-5 and AC-10.
 - **Success criterion (EARS):**
-  - **WHEN** 8 lanes are made with `praps lane`, and 8 real processes run `status`, `describe` and `new` in them at once, **THEN**:
+  - **WHEN** 8 lanes are made with `praps lane`, one at a time, and 8 real processes then run `status`, `describe` and `new` in them at once, **THEN**:
     - every command **SHALL** exit 0;
-    - `praps lanes` **SHALL** then print the same lines from every lane;
+    - `praps lanes` **SHALL** then print the same lines in every lane, apart from the `*`, which marks each lane's own line;
     - each lane's change **SHALL** carry its own description;
     - `praps verify` **SHALL** print `clean`.
   - **WHEN** a session uses only words `praps` printed (`lane`, `lanes`, `status`, `describe`, `new`, `log`, `ops`, `undo`, `restore`, `verify`), **THEN** every command **SHALL** exit 0 and print what its step names. `undo` in one lane **SHALL** leave the other's files and entry as they were.
@@ -287,7 +329,7 @@ The owner approved this plan's outline on 2026-11-14. Four decisions were made w
     - the race rule;
     - scoped `undo` and `restore`;
     - lanes and `.praps/workspace`;
-    - the record's `from`;
+    - the record's two forms;
     - resume's rule.
 
     No section **SHALL** still say that several heads stop a command.
@@ -297,5 +339,7 @@ The owner approved this plan's outline on 2026-11-14. Four decisions were made w
     - a view whose size follows the change (INT-0006 AC-8, AC-9; INT-0035 AC-4);
     - merge cost (INT-0010 AC-9);
     - 1,000 writers on 100 replicas (INT-0010 AC-8);
-    - the merge's known limit for nested writers.
+    - the merge's known limit (INT-0010 AC-2 and AC-3);
+    - two commands that write one working copy's files at once, and two lanes made at once with one name (INT-0014);
+    - what the ownership rule implies once local operations stay on their replica (INT-0009, INT-0010).
 - **Notes:** The real-process test has no fixed interleaving; what it asserts holds under any interleaving.
