@@ -17,6 +17,7 @@
 pub mod hazard;
 mod ignore;
 pub mod materialise;
+pub mod merge;
 pub mod points;
 pub mod record;
 pub mod tree;

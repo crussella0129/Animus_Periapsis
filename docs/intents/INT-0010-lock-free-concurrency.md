@@ -2,7 +2,7 @@
 
 <!-- sprint-loop-intent-v2 -->
 - **Intent ID:** INT-0010
-- **State:** planned
+- **State:** active
 - **Work evidence:** [Sprint 7 T-002 build plan](../sprints/s7/sprint-plans/build-plan.md#t-002-an-operation-names-its-workspace-and-a-view-holds-one-entry-per-workspace), [Sprint 7 T-003 build plan](../sprints/s7/sprint-plans/build-plan.md#t-003-the-canonical-merge-of-op-heads), [Sprint 7 T-004 build plan](../sprints/s7/sprint-plans/build-plan.md#t-004-commands-work-from-merged-states), [Sprint 7 T-005 build plan](../sprints/s7/sprint-plans/build-plan.md#t-005-undo-and-restore-are-scoped-to-their-workspace), [Sprint 7 T-009 build plan](../sprints/s7/sprint-plans/build-plan.md#t-009-the-concurrency-scenario), [Sprint 7 T-010 build plan](../sprints/s7/sprint-plans/build-plan.md#t-010-lanes-at-once-through-the-binary-spec-readme-credits-and-backlog)
 - **Completion evidence:** none
 - **Code evidence:** none
@@ -175,3 +175,4 @@ Three rules hold the merge to [INT-0035](INT-0035-scale-and-asynchrony.md):
 - 2026-11-14: `proposed` → `planned` (Sprint 7 build plan T-002 to T-005, T-009 and T-010, approved by the owner on 2026-11-14: the canonical merge, commands over merged states, scoped history and the Concurrency scenario; AC-1 to AC-7, with AC-3 for writers diverging from one base and AC-5 over simulated replicas. AC-8 and AC-9 wait for cost and scale). Revised in the same Plan (`semantic`): the Intent states that each entry is merged over its owner's operations, which the ownership rule already implied; Consequences record why, the merge's known limit, and who resolves a working-copy pointer.
 - 2026-11-14: revised while `planned` (Sprint 7 plan critique, round 1, C-001 and C-015; `editorial`: no criterion changes): Consequences give the known limit's two cases with their values, the scopes in which AC-2 and AC-3 are shown, and why the merge does not group writers by heads; they record that Sprint 7's simulated replicas exchange every operation.
 - 2026-11-14: revised while `planned` (Sprint 7 plan critique, round 2, C-007; `editorial`: no criterion changes): the known limit's nested case is given with its history and both pairs of values.
+- 2026-11-14: `planned` → `active` (Sprint 7 build, T-003 starts: the canonical merge of op heads).
