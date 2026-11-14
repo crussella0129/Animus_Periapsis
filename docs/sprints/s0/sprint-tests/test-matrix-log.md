@@ -250,7 +250,7 @@ markdown-it-py 4.0.0
 | Project_Lagoon | port | 8 | 64 | 64 | 0 | 0 | none |
 | Thread-Signal-Website | port | 2 | 11 | 11 | 0 | 0 | none |
 | Tome | port | 25 | 106 | 106 | 0 | 0 | none |
-| WordCrack | port | 6 | 41 | 41 | 0 | 0 | none |
+| LEXPLOIT | port | 6 | 41 | 41 | 0 | 0 | none |
 | beamsplitter | port | 3 | 16 | 16 | 0 | 0 | none |
 | contrapunctus | port | 3 | 15 | 15 | 0 | 0 | none |
 | diver | port | 26 | 147 | 147 | 0 | 0 | none |
@@ -275,7 +275,7 @@ port_corpus exit 0
   Project_Lagoon: 0b617e3, docs/intents uncommitted: 0
   Thread-Signal-Website: 7b4bf53, docs/intents uncommitted: 0
   Tome: df10abd, docs/intents uncommitted: 0
-  WordCrack: bd7af52, docs/intents uncommitted: 0
+  LEXPLOIT: bd7af52, docs/intents uncommitted: 0
   beamsplitter: d1580d0, docs/intents uncommitted: 0
   contrapunctus: 1a9b00b, docs/intents uncommitted: 0
   diver: 2ae10f9, docs/intents uncommitted: 0
@@ -916,3 +916,5 @@ def main() -> int:
 if __name__ == "__main__":
     sys.exit(main())
 ````
+
+Note (2026-11-14): one project in this log was renamed after the run. Lines 253 and 278 show its current name, LEXPLOIT; the run read that Book from the project's folder under its earlier name. Nothing else in the log changed.

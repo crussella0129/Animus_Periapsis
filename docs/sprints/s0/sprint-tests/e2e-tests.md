@@ -67,7 +67,7 @@
 | Project_Lagoon | port | 8 | 64 | 64 | 0 | 0 |
 | Thread-Signal-Website | port | 2 | 11 | 11 | 0 | 0 |
 | Tome | port | 25 | 106 | 106 | 0 | 0 |
-| WordCrack | port | 6 | 41 | 41 | 0 | 0 |
+| LEXPLOIT | port | 6 | 41 | 41 | 0 | 0 |
 | beamsplitter | port | 3 | 16 | 16 | 0 | 0 |
 | contrapunctus | port | 3 | 15 | 15 | 0 | 0 |
 | diver | port | 26 | 147 | 147 | 0 | 0 |
@@ -78,7 +78,7 @@
 | **Total** | | **360** | **2,653** | **2,653** | **0** | |
 
 - **Inputs pinned:** each Book's commit is listed in [test-matrix-log.md](test-matrix-log.md). Both counts read the same working files. Only Feel_of_the_Wheel had uncommitted changes under `docs/intents` (2 paths), and its counts agree as well.
-- **Notes:** in three chapters, both counts are 0: Gnash_Equilibrium's INT-0006, whose section is a single paragraph, and Feel_of_the_Wheel's INT-0011 and INT-0012, whose heading reads "Acceptance criteria (for the future build sprint)". Under the port rule, criteria are list items in a section with exactly that title, so these read as having no criteria. That is consistent with CommonMark.
+- **Notes:** in three chapters, both counts are 0: Gnash_Equilibrium's INT-0006, whose section is a single paragraph, and Feel_of_the_Wheel's INT-0011 and INT-0012, whose heading reads "Acceptance criteria (for the future build sprint)". Under the port rule, criteria are list items in a section with exactly that title, so these read as having no criteria. That is consistent with CommonMark. (Note of 2026-11-14: one project was renamed after the run. Its row shows its current name, LEXPLOIT; the run read that Book from the project's folder under its earlier name, and its counts and pinned commit are unchanged.)
 - **Result:** pass
 
 ## Carried forward
