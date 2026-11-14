@@ -215,6 +215,19 @@ Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
   another operation of that workspace has followed it or stands beside it.
   A lane whose operation never landed is refused at its next command, and
   `praps lane` makes it again at the same directory (C-006).
+- `praps lane DIR` looks for a working copy around DIR from DIR's parent
+  up. DIR itself only has to be free: absent, empty, or holding what an
+  interrupted making left, both temporary names and the record included.
+  So a lane made over an interrupted one finishes it (Sprint 7 plan
+  critique, round 2, C-002 and C-003).
+- Before `.praps/workspace` is in place, an interrupted making leaves DIR
+  holding at most an empty `.praps` or a temporary file, and nothing in the
+  store names it. DIR is then no repository, and a command there says so
+  with the hint every such directory gets, `praps init`. That hint stays:
+  the directory cannot be told from one an interrupted `init` left, for
+  which it is right. Making the lane again at DIR finishes the lane;
+  running `praps init` there instead makes DIR a repository of its own,
+  which is what that command says it does.
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §4 Phase 1 and R5 §C.1).
@@ -235,3 +248,4 @@ Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
 - 2026-11-10: kept `active` at the close of Sprint 6. AC-1 is kept through one read of the op log for each command, the check of the log before resume, one scan for `undo` and `restore`, `describe`, the search for the working copy, and a write that leaves a directory it cannot remove. Its other criteria are as they were: several workspaces and the stat cache are not built.
 - 2026-11-14: revised while `active` (Sprint 7 Plan; `editorial`: no criterion changes): Consequences record lanes and how a working copy finds its store, the race rule the owner chose, and what the record of a write names after a merge. Work evidence names Sprint 7's T-002, T-004, T-006, T-007, T-009 and T-010.
 - 2026-11-14: revised while `active` (Sprint 7 plan critique, round 1, C-006, C-007, C-008, C-009 and C-014; `editorial`: no criterion changes): Consequences define a lane's top and what stops the search, record that a lane starts from the parent of the working-copy change and why, that a lane is a checkout and the cheap workspace is still to come, where lanes and `init` are refused, the record's `empty` form and the interrupted lane, and the two cases Sprint 7 leaves open.
+- 2026-11-14: revised while `active` (Sprint 7 plan critique, round 2, C-002 and C-003; `editorial`: no criterion changes): Consequences say where `praps lane` looks for an enclosing working copy, what a free DIR may hold, and why the hint before `.praps/workspace` exists stays `praps init`.

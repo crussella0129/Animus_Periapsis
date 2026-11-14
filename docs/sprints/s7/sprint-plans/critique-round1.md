@@ -1,6 +1,6 @@
 # Plan Critique — Sprint 7
 
-Round 1. A read-only subagent reviewer critiqued the plans at `9b2734e` against the Book and the code. Its concerns are given as it wrote them; the responses are at the end. The verdict was `block`, so the plans were revised and reviewed again ([critique.md](critique.md)).
+Round 1. A read-only subagent reviewer critiqued the plans at `9b2734e` against the Book and the code. Its concerns are given as it wrote them; the responses are at the end. The verdict was `block`, so the plans were revised and reviewed again ([critique-round2.md](critique-round2.md), then [critique.md](critique.md)).
 
 ## Concerns
 

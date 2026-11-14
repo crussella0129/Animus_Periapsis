@@ -126,6 +126,11 @@ filesystem and clock simulation, the crash matrix and the determinism rules.
   T-008); its draws, and so every digest, do not change.
 - The format change of Sprint 7 moves every matrix's digest but no cell
   count: a field adds bytes, not syscalls.
+- `.praps/workspace` is a new durable structure, so Sprint 7 adds the lane
+  matrix: a crash at every syscall of making a lane, over 40 seeds in both
+  modes, with the control `LaneFileInPlace`, which writes the file in place
+  with no temporary name and no sync (T-006; plan critique, round 2,
+  C-004).
 
 ## Transition history
 - 2026-10-31: created as `proposed` (Sprint 0 research; transcribed from Master Report v6 II §2.9 and R2-E23).
@@ -143,3 +148,4 @@ filesystem and clock simulation, the crash matrix and the determinism rules.
 - 2026-11-10: kept `active` at the close of Sprint 6. A fifth scenario, Describe, has its matrix, two controls and a row in the reach table. The findings about the harness itself are backlog T-034.
 - 2026-11-14: revised while `active` (Sprint 7 Plan; `editorial`: no criterion changes): Consequences record the Concurrency scenario, the scheduler change and what the format change does to the matrices. Work evidence names Sprint 7's T-002, T-008 and T-009.
 - 2026-11-14: evidence while `active` (Sprint 7 plan critique, round 1): Work evidence names Sprint 7's T-006.
+- 2026-11-14: revised while `active` (Sprint 7 plan critique, round 2, C-004; `editorial`: no criterion changes): Consequences record the lane matrix and its control.

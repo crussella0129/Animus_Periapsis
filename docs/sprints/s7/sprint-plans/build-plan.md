@@ -6,7 +6,7 @@ The owner approved this plan's outline on 2026-11-14. Four decisions were made w
 - after two commands at once in one workspace, the next command continues from one change and keeps the other;
 - during Test, `dev` is pushed, the PR is opened, and every job of the tested head is re-run twice.
 
-The plans were then revised after the first plan critique ([critique-round1.md](critique-round1.md)). The tasks run in the order they appear below: T-001, T-002, T-003, T-004, T-006, T-005, T-007, T-008, T-009, T-010. T-006 comes before T-005 because scoped `undo` and `restore` are tested with lanes. Every task's commit passes `cargo ci` on Windows.
+The plans were then revised after the first and second plan critiques ([critique-round1.md](critique-round1.md), [critique-round2.md](critique-round2.md)). The tasks run in the order they appear below: T-001, T-002, T-003, T-004, T-006, T-005, T-007, T-008, T-009, T-010. T-006 comes before T-005 because scoped `undo` and `restore` are tested with lanes. Every task's commit passes `cargo ci` on Windows.
 
 ## Intents
 - [INT-0010](../../../intents/INT-0010-lock-free-concurrency.md) — state: planned; acceptance criteria covered:
@@ -20,9 +20,9 @@ The plans were then revised after the first plan critique ([critique-round1.md](
 - [INT-0009](../../../intents/INT-0009-reversible-by-default.md) — state: active; acceptance criteria covered: AC-6 (undo is scoped), over 200 seeded interleavings of two lanes (T-005); AC-1 to AC-3 kept.
 - [INT-0006](../../../intents/INT-0006-format-v1.md) — state: active; acceptance criteria covered: AC-1 for the two changed provisional bodies; AC-6, the owner asked to sign off the change (T-002).
 - [INT-0016](../../../intents/INT-0016-actors-and-agent-lifecycle.md) — state: planned; acceptance criteria covered: AC-8 for one class of owner, the workspace (T-001). Its ownership rule is applied when heads are merged (T-003). AC-7 needs signed operations and is not covered.
-- [INT-0037](../../../intents/INT-0037-command-set.md) — state: active; acceptance criteria covered: AC-1 to AC-5 for `lane` and `lanes`, and AC-4 for every refusal this sprint adds (T-005 to T-007); AC-8 for those two names (T-001).
+- [INT-0037](../../../intents/INT-0037-command-set.md) — state: active; acceptance criteria covered: AC-1 to AC-5 for `lane` and `lanes`, AC-3 among them from below, and AC-4 for every refusal this sprint adds (T-005 to T-007); AC-8 for those two names (T-001).
 - [INT-0022](../../../intents/INT-0022-agent-and-human-interfaces.md) — state: active; acceptance criteria covered: AC-8, AC-9 and AC-11 kept for the two new commands (T-007).
-- [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md) — state: active; acceptance criteria covered: AC-1, AC-3 and AC-6 for the new Concurrency scenario (T-009); AC-1 and AC-2 for making a lane, with a crash at every syscall in both modes (T-006); the five existing matrices kept (T-002, T-004 to T-008).
+- [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md) — state: active; acceptance criteria covered: AC-1, AC-3 and AC-6 for the new Concurrency scenario (T-009); AC-1, AC-2 and AC-3 for making a lane, with a crash at every syscall in both modes over 40 seeds and the control `LaneFileInPlace` (T-006); the five existing matrices kept (T-002, T-004 to T-008).
 - [INT-0003](../../../intents/INT-0003-engineering-baseline.md), [INT-0004](../../../intents/INT-0004-windows-and-linux.md) — state: active; acceptance criteria covered: INT-0003 AC-2 to AC-4 and INT-0004 AC-1 for Sprint 6's last runs (T-001); INT-0003 AC-5 and AC-10 (T-010); INT-0003 AC-11's three samples, in Test.
 
 ## Schema Tree
@@ -144,7 +144,7 @@ The plans were then revised after the first plan critique ([critique-round1.md](
 
 ### T-004: Commands work from merged states
 - **Intent:** [INT-0010](../../../intents/INT-0010-lock-free-concurrency.md), [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md), [INT-0037](../../../intents/INT-0037-command-set.md)
-- **Touches:** crates/workspace/src/lib.rs, crates/workspace/src/record.rs, crates/workspace/tests/workspace.rs, crates/workspace/tests/materialise.rs, crates/workspace/tests/materialise_crash.rs, crates/workspace/tests/history.rs, crates/praps/src/hint.rs, crates/praps/src/commands.rs, crates/praps/tests/cli.rs, docs/spec/working-copy.md
+- **Touches:** crates/workspace/src/lib.rs, crates/workspace/src/record.rs, crates/workspace/tests/workspace.rs, crates/workspace/tests/materialise.rs, crates/workspace/tests/materialise_crash.rs, crates/workspace/tests/real_hazards.rs, crates/workspace/tests/history.rs, crates/praps/src/hint.rs, crates/praps/src/commands.rs, crates/praps/tests/cli.rs, docs/spec/working-copy.md
 - **Depends on:** T-003
 - **Acceptance criterion:** INT-0010's Intent (no command fails because of another writer) and AC-7 at 2 and 8 readers; INT-0014 AC-1 kept; INT-0037 AC-4 kept.
 - **Success criterion (EARS):**
@@ -161,7 +161,7 @@ The plans were then revised after the first plan critique ([critique-round1.md](
     - **WHEN** the target is absent, **THEN** resume **SHALL** drop the record and touch no file.
   - **WHEN** the task is done, **THEN** no error of the `workspace` crate **SHALL** concern several heads, and the hint table **SHALL** no longer hold one.
   - **WHEN** eight `praps new` run at once in one working copy, as real processes, **THEN** each **SHALL** exit 0, and the next `praps status` **SHALL** exit 0.
-  - **WHEN** the suite runs at this task's commit, **THEN** the store, four-writer, Snapshot and Describe matrices **SHALL** keep their cell counts and digests. The Materialise matrix's digest **SHALL** move, because a record a crash leaves names a changeset. Its cell count may move too, because resume reads the `from` change without an operation's view, and the matrix crashes recovery at every syscall. The task's evidence **SHALL** record the new literals and that reason.
+  - **WHEN** the suite runs at this task's commit, **THEN** the store, four-writer, Snapshot and Describe matrices **SHALL** keep their cell counts and digests. The Materialise matrix **SHALL** keep its cell count, 34,400, and its digest **SHALL** move, because a record a crash leaves names a changeset. The task's evidence **SHALL** record the new digest and that reason.
 - **Notes:**
   - `Loaded` holds the set of heads merged in place of one head.
   - The record's `from` changes meaning, from an operation to a changeset, because a merged state has no single operation. The tree it names is the same F as before.
@@ -169,9 +169,9 @@ The plans were then revised after the first plan critique ([critique-round1.md](
 
 ### T-006: Workspaces over one store, in the library
 - **Intent:** [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md), [INT-0005](../../../intents/INT-0005-deterministic-simulation-testing.md), [INT-0037](../../../intents/INT-0037-command-set.md)
-- **Touches:** crates/workspace/src/lane.rs (new), crates/workspace/src/lib.rs, crates/workspace/src/record.rs, crates/workspace/tests/lanes.rs (new), crates/workspace/tests/lane_crash.rs (new), crates/praps/src/hint.rs, crates/praps/tests/cli.rs, docs/spec/working-copy.md
+- **Touches:** crates/workspace/src/lane.rs (new), crates/workspace/src/lib.rs, crates/workspace/src/record.rs, crates/workspace/src/variant.rs, crates/workspace/tests/lanes.rs (new), crates/workspace/tests/lane_crash.rs (new), crates/workspace/tests/workspace.rs, crates/praps/src/hint.rs, crates/praps/tests/cli.rs, docs/spec/working-copy.md
 - **Depends on:** T-004
-- **Acceptance criterion:** INT-0014 AC-3 in part (8 workspaces over one store in turn, with no clone and one file per object; at once in T-009) and AC-1 kept; INT-0005 AC-1 and AC-2 for making a lane.
+- **Acceptance criterion:** INT-0014 AC-3 in part (8 workspaces over one store in turn, with no clone and one file per object; at once in T-009) and AC-1 kept; INT-0005 AC-1 to AC-3 for making a lane.
 - **Success criterion (EARS):**
   - **WHEN** a lane NAME is made at DIR from workspace W, **THEN** the library **SHALL**, in order:
     1. snapshot W;
@@ -182,25 +182,27 @@ The plans were then revised after the first plan critique ([critique-round1.md](
     6. commit that operation, made in NAME over every head, whose view adds NAME's entry: the new change as pointer and as head;
     7. write the change's files into DIR;
     8. drop the record.
-  - **WHEN** DIR is absent, empty, or holds nothing but a `.praps` an interrupted making left, **THEN** DIR **SHALL** count as free. Such a `.praps` holds no `workspace` file, or one naming a workspace no operation made, and at most its temporary name and a record beside it.
+  - **WHEN** DIR is absent, empty, or holds nothing but a `.praps` an interrupted making left, **THEN** DIR **SHALL** count as free. Such a `.praps` holds no `workspace` file, or one naming a workspace no operation made. Beside it there may be at most the temporary names of `workspace` and of the record (`working-copy.new`), and the record itself.
   - **WHEN** NAME is already a workspace, or DIR is not free, **THEN** making the lane **SHALL** refuse, having written nothing but W's snapshot.
   - **WHEN** `Workspace::open` is given a directory with no `.praps/store` but with `.praps/workspace`, **THEN** it **SHALL** open the store that file names, as workspace NAME. Where `.praps/store` is present, `open` **SHALL** make the syscalls it makes today and no more.
-  - **WHEN** a lane is opened whose `.praps/workspace` names a workspace that no operation made, **THEN** the command **SHALL** drop the record if one is left, as resume drops one whose target is absent, and refuse with its own error naming the lane. Nothing else **SHALL** be written. Its hint **SHALL** say to make the lane again at DIR.
-  - **WHEN** the store `.praps/workspace` names does not open, or the file cannot be read or does not parse, **THEN** the command **SHALL** refuse with an error of its own for each. Neither hint **SHALL** offer `init`.
-  - **WHEN** the system crashes at any syscall of making a lane, in the lenient and the strict mode, **THEN**, at the next command in DIR:
-    - if the operation landed, the lane's files **SHALL** be finished;
-    - if not, the command **SHALL** refuse as above, or, before `.praps/workspace` is in place, find no repository at DIR;
-    - and making the lane at DIR again **SHALL** succeed.
+  - **WHEN** a lane is opened whose `.praps/workspace` names a workspace that no operation made, **THEN** the command **SHALL** drop the record if one is left, as resume drops one whose target is absent, and refuse with its own error naming the lane. Nothing else **SHALL** be written. Its hint **SHALL** be a `Fix` that names no command: make the lane again at that directory, from the working copy. T-007 makes it a `Run` of `praps lane DIR`.
+  - **WHEN** the store `.praps/workspace` names does not open, **THEN** the command **SHALL** refuse with an error of its own; **WHEN** the file cannot be read or does not parse, **THEN** with another, which gives the reason. Neither hint **SHALL** offer `init`.
+  - **WHEN** this task is done, **THEN** `workspace::Error` **SHALL** have five new kinds, each with a hint: a name in use, a DIR that is not free, an interrupted lane, a store that does not open, and a `.praps/workspace` that cannot be read or does not parse.
+  - **WHEN** the system crashes at any syscall of making a lane, for 40 seeds in the lenient and the strict mode, **THEN**, at the next command in DIR:
+    - if the lane's operation landed, the lane's files **SHALL** be finished, and making the lane again **SHALL** refuse because NAME is in use;
+    - if it did not, the command **SHALL** refuse as an interrupted lane, or, before `.praps/workspace` is in place, find no repository at DIR, and making the lane at DIR again **SHALL** then succeed.
 
-    Two runs **SHALL** give every cell the same trace and state, and the cell count and digest **SHALL** be asserted as literals.
+    In the cell after the last syscall the lane **SHALL** be complete: its operation present, its files written, no record left. Two runs **SHALL** give every cell the same trace and state, and the cell count and digest **SHALL** be asserted as literals.
+  - **WHEN** the variant `LaneFileInPlace`, which writes `.praps/workspace` in place with no temporary name and no sync, runs the same matrix, **THEN** it **SHALL** produce at least one violation.
   - **WHEN** 8 lanes over one store run commands in turn, **THEN**:
     - every operation **SHALL** be in that one store, and no lane **SHALL** hold a store of its own;
     - each object **SHALL** be one file;
     - each lane's entry **SHALL** hold its last command's state;
     - each lane's files **SHALL** equal its working-copy change.
-  - **WHEN** this task adds an error kind, **THEN** the kind **SHALL** have a hint in the table, and `messages_say_only_what_is_wrong` **SHALL** fix its text. T-007 prints each through the binary.
+  - **WHEN** this task adds an error kind, **THEN** the kind **SHALL** have a hint in the table, and both `messages_say_only_what_is_wrong` tests, the workspace crate's and `praps`'s, **SHALL** fix its text. T-007 prints each through the binary.
   - **WHEN** the suite runs at this task's commit, **THEN** the five matrices **SHALL** keep their cell counts and digests.
 - **Notes:**
+  - Before `.praps/workspace` is in place, DIR holds at most an empty `.praps` or a temporary file, and nothing in the store names it: it is no repository. A command there says so, as in any directory, with the same hint, and INT-0014 records why that hint stays. Making the lane again at DIR finishes it, because DIR counts as free.
   - `.praps/workspace` holds two lines, `name NAME` and `store PATH`. `praps` writes the store's full path, as a linked Git worktree does; the simulator uses paths from its root.
   - A lane's `.praps` holds no store, so it is no clone.
   - The lane starts from the parent of W's working-copy change because W rewrites that change at every snapshot and `describe`. A lane made on it would sit on a version W has already replaced, and the change would diverge (INT-0011). W's edits in progress are therefore not in the lane.
@@ -208,7 +210,7 @@ The plans were then revised after the first plan critique ([critique-round1.md](
 
 ### T-005: Undo and restore are scoped to their workspace
 - **Intent:** [INT-0009](../../../intents/INT-0009-reversible-by-default.md), [INT-0037](../../../intents/INT-0037-command-set.md)
-- **Touches:** crates/workspace/src/lib.rs, crates/workspace/tests/history.rs, crates/workspace/tests/materialise.rs, crates/workspace/tests/scoped.rs (new), crates/praps/src/hint.rs, crates/praps/src/commands.rs, crates/praps/tests/cli.rs, docs/spec/working-copy.md
+- **Touches:** crates/workspace/src/lib.rs, crates/workspace/tests/history.rs, crates/workspace/tests/materialise.rs, crates/workspace/tests/scoped.rs (new), crates/workspace/tests/workspace.rs, crates/praps/src/hint.rs, crates/praps/src/commands.rs, crates/praps/tests/cli.rs, docs/spec/working-copy.md
 - **Depends on:** T-006
 - **Acceptance criterion:** INT-0009 AC-6 (undo is scoped), over 200 seeded interleavings of two lanes; AC-1 to AC-3 kept.
 - **Success criterion (EARS):**
@@ -218,17 +220,17 @@ The plans were then revised after the first plan critique ([critique-round1.md](
 
     No other entry **SHALL** change.
   - **WHEN** `undo` runs twice in a row, **THEN** W's entry **SHALL** return to its value before the first.
-  - **WHEN** W's writer is the operation that made W, or the root, **THEN** `undo` **SHALL** fail with nothing to undo, having written only its snapshot.
+  - **WHEN** W's writer is the operation that made W, or the root, **THEN** `undo` **SHALL** fail with nothing to undo, having written only its snapshot. Its text **SHALL** become "nothing to undo: this workspace's last op is the one that made it", which holds for the root, the op that made `default`, and for a lane's first operation.
   - **WHEN** `restore OP` runs in W, **THEN** W's entry **SHALL** become its value in OP's view, and no other entry **SHALL** change.
-  - **WHEN** OP's view has no entry for W, **THEN** `restore` **SHALL** refuse with an error of its own, with nothing written but its snapshot.
+  - **WHEN** OP's view has no entry for W, **THEN** `restore` **SHALL** refuse with an error of its own, with nothing written but its snapshot. It is the one kind this task adds.
   - **WHEN** the entry `undo` or `restore` would set has a pointer of several changesets, **THEN** the command **SHALL**:
     - write the smallest, and commit it alone as the pointer;
     - keep the others among the heads;
     - print the race note.
-  - **WHEN** `undo` succeeds, **THEN** it **SHALL** report the operations it went back to, the parents of the writers it undid. With one writer over one parent this is the line it prints today.
-  - **WHEN** a repository has one workspace, **THEN** every `undo` and `restore` **SHALL** leave the same view object as before this task, naming the target's view rather than writing it again. The history tests' assertions on view ids stand unchanged.
+  - **WHEN** `undo` succeeds, **THEN** it **SHALL** report the operations it went back to, the parents of the writers it undid. With one parent it **SHALL** print today's line; with several, `undid the last op: the working copy is back to ops X, Y`, every parent in id order.
+  - **WHEN** a repository has one workspace and the target is one operation's own view, **THEN** `undo` and `restore` **SHALL** name that view rather than write it again, and so leave the same view object as before this task. The history tests' assertions on view ids stand unchanged. **WHEN** the target is the merge of several operations' views, **THEN** the command **SHALL** write it as a new view.
   - **WHEN** two lanes run 200 seeded interleavings of edits, `describe`, `new`, `undo` and `restore`, **THEN**, after each `undo` or `restore` by one lane, every entry the other owns **SHALL** equal what the merge gave just before, and its files **SHALL** be as they were (AC-6).
-  - **WHEN** this task adds an error kind, **THEN** the kind **SHALL** have a hint in the table, and `messages_say_only_what_is_wrong` **SHALL** fix its text. T-007 prints it through the binary.
+  - **WHEN** this task adds an error kind or changes a text, **THEN** the kind **SHALL** have a hint in the table, and both `messages_say_only_what_is_wrong` tests, the workspace crate's and `praps`'s, **SHALL** fix its text. T-007 prints the new kind through the binary.
   - **WHEN** the suite runs at this task's commit, **THEN** the five matrices **SHALL** keep their cell counts and digests.
 - **Notes:**
   - "The last operation this workspace made" is its writers, the same notion the merge uses.
@@ -238,11 +240,11 @@ The plans were then revised after the first plan critique ([critique-round1.md](
 - **Intent:** [INT-0037](../../../intents/INT-0037-command-set.md), [INT-0014](../../../intents/INT-0014-working-copy-and-workspaces.md), [INT-0022](../../../intents/INT-0022-agent-and-human-interfaces.md)
 - **Touches:** crates/workspace/src/lib.rs, crates/workspace/src/lane.rs, crates/praps/src/registry.rs, crates/praps/src/help.rs, crates/praps/src/hint.rs, crates/praps/src/place.rs, crates/praps/src/commands.rs, crates/praps/src/main.rs, crates/praps/tests/cli.rs, README.md, docs/spec/working-copy.md
 - **Depends on:** T-005
-- **Acceptance criterion:** INT-0037 AC-1 to AC-5 for the two commands, and AC-4 for every refusal T-005 and T-006 added; INT-0022 AC-8, AC-9 and AC-11 kept.
+- **Acceptance criterion:** INT-0037 AC-1 to AC-5 for the two commands, AC-3 among them from below, and AC-4 for every refusal T-005 and T-006 added; INT-0022 AC-8, AC-9 and AC-11 kept.
 - **Success criterion (EARS):**
   - **WHEN** `praps lane DIR` runs in a working copy, **THEN** it **SHALL** make workspace NAME, the last component of DIR, at DIR, over this repository's store named by its full path. It **SHALL** print one line naming NAME, DIR and the new change.
   - **WHEN** any of these holds, **THEN** `praps lane` **SHALL** exit 1, write nothing but the snapshot, and end with one hint:
-    - DIR lies inside a working copy, this one or another, found by searching up from DIR with the top rule below;
+    - DIR lies inside a working copy, this one or another, found by searching up from DIR's parent with the top rule below (DIR itself is judged by T-006's rule for a free DIR, which accepts an interrupted lane);
     - NAME is empty, `.`, `..`, or not UTF-8;
     - NAME is already a workspace;
     - DIR is not free.
@@ -261,7 +263,8 @@ The plans were then revised after the first plan critique ([critique-round1.md](
     - the everyday group **SHALL** still hold at most ten;
     - `lanes` **SHALL** be marked idempotent and declare no flag;
     - the README's command table **SHALL** equal the list.
-  - **WHEN** any refusal this sprint added is printed (the two commands', `restore` of an operation with no entry for this workspace, the interrupted lane, the lane whose store is gone, an unreadable `.praps/workspace`, `init` in a lane), **THEN** `every_refusal_prints_one_hint` **SHALL** reach it through the binary, and it **SHALL** end with one hint naming only registry commands.
+  - **WHEN** any refusal this sprint added is printed (the two commands', `restore` of an operation with no entry for this workspace, the interrupted lane, the lane whose store is gone, an unreadable `.praps/workspace`, `init` in a lane), **THEN** `every_refusal_prints_one_hint` **SHALL** reach it through the binary, and it **SHALL** end with one hint naming only registry commands. The interrupted lane's hint **SHALL** become a `Run` of `praps lane DIR`.
+  - **WHEN** `praps lanes`, or `praps lane DIR` with DIR given relative to where it runs, is run at a working copy's top and from below it, **THEN** each **SHALL** print and leave the same (INT-0037 AC-3).
   - **WHEN** the suite runs at this task's commit, **THEN** the five matrices **SHALL** keep their cell counts and digests.
 - **Notes:**
   - "Working together" is the purpose INT-0037's table gives these names.
@@ -292,7 +295,8 @@ The plans were then revised after the first plan critique ([critique-round1.md](
   - **WHEN** 8 lane processes run at once, four on each of two stores, under the same conditions, **THEN**, after recovery and after the two stores exchange their operations and objects:
     - every acknowledged operation **SHALL** be on both stores, and both stores **SHALL** check clean;
     - each lane's writer **SHALL** be as above;
-    - every changeset in each lane's last acknowledged entry, pointer and heads, **SHALL** be in the merged view on both stores, with everything it follows present;
+    - for each lane whose writer is its last acknowledged operation, every changeset in that entry, pointer and heads, **SHALL** be in the merged view on both stores, with everything it follows present;
+    - for each lane whose command in flight landed an operation, that operation **SHALL** follow the last acknowledged one, and every changeset the last acknowledged entry held **SHALL** still be in the store and named by that entry's view, which the op log keeps, so `restore` can return to it;
     - every lane, on either store, **SHALL** compute the same view, and then run one more command.
 
     Each process runs a fixed script: edits recorded by `status`, `describe`, `new`, and `undo`.
