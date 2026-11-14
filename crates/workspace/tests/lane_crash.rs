@@ -241,7 +241,15 @@ fn lane_matrix_is_reproducible() {
 }
 
 const CELLS: usize = 5_760;
+/// The digest differs between Windows and other systems, and nothing else
+/// does: the lane's `.praps/workspace` names the store's path as the system
+/// spells it (`repo\.praps\store` on Windows, `repo/.praps/store`
+/// elsewhere), and that file is part of every cell's state. Sprint 7's Test
+/// found it; the literal had been taken on Windows only.
+#[cfg(windows)]
 const DIGEST: &str = "blake3:e67e05ecad31d03c26475a742d45eb9e9d40a1f9e2c06f278ffee3ff3b501724";
+#[cfg(not(windows))]
+const DIGEST: &str = "blake3:913e4ba049f5951fbddd5804a6965b2a22c26600c7d1fc4b4f300250a77bc103";
 
 #[test]
 fn lane_matrix_catches_a_file_written_in_place() {

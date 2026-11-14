@@ -66,12 +66,15 @@ acts on that lane.
 
 `praps init` never makes a repository inside another: with a top above the
 directory it is given, or a lane's own `.praps/workspace` in it, it writes
-nothing and names that working copy, whatever the directory holds.
+nothing and names that working copy, whatever the directory holds. A
+`.praps/workspace` there that cannot be read is refused too, naming the
+file: it may be a lane's.
 
 `praps lane DIR` makes lane NAME, DIR's last name, at DIR, from the working
 copy it runs in. DIR is read from where `praps` was started. It is refused
 when DIR lies inside any working copy, found by searching up from DIR's
-parent with the rule above, when its last name is no plain text, when NAME
+parent with the rule above, when its last name is no plain text (one that
+holds a control character, such as a line break, is none), when NAME
 is already a workspace, and when DIR is not free. DIR itself is judged only
 by whether it is free, so a lane made over an interrupted one finishes it.
 `praps lanes` records the working copy, then lists every workspace in name
@@ -195,8 +198,12 @@ it did not make before.
    rewrites its working-copy change at every snapshot and `describe`, so a
    lane made on it would sit on a version W has already replaced. W's edits
    in progress are therefore not in the lane.
-4. DIR and `DIR/.praps` are made durable, then `.praps/workspace` is written
-   as `workspace.new`, synced, renamed, and `.praps` synced.
+4. DIR and `DIR/.praps` are made durable. If writing the change's files
+   would meet a hazard or a path that blocks ([Classifying
+   paths](#classifying-paths)), making the lane is refused here, as `restore`
+   refuses such a write: DIR stays free, and nothing else is written.
+   Otherwise `.praps/workspace` is written as `workspace.new`, synced,
+   renamed, and `.praps` synced.
 5. The record is written in `DIR/.praps`: `from empty`, and the lane's op as
    its target ([The record](#the-record)).
 6. The op is committed: made in NAME, over every head, its view the merge
@@ -541,8 +548,9 @@ mode is kept as described in [The executable bit](#the-executable-bit).
 ### Resume
 
 Every command that opens the working copy (every one but `init`) first
-checks that every file in `ops/` is a whole op, and stops if one is not,
-leaving the record and every file as they are. Resume looks for the record's
+checks that every file in `ops/` is a whole op, and that every parent an op
+names is among them, and stops if not, leaving the record and every file as
+they are; the merge walks every op the heads follow. Resume looks for the record's
 target among the valid ops, so without that check a target whose file was
 damaged would look like a write that never began: the record would be
 dropped, though files might already have been written, and the half-written

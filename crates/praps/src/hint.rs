@@ -162,6 +162,11 @@ pub fn unreadable_directory() -> Hint {
     Hint::Fix("make that directory readable, then run the command again")
 }
 
+/// A file a command must read to know what it acts on, which it could not.
+pub fn unreadable_file() -> Hint {
+    Hint::Fix("make that file readable, then run the command again")
+}
+
 /// A directory above the starting one whose `.praps/store` could not be
 /// listed. The message names only where the search started.
 pub fn unreadable_above() -> Hint {

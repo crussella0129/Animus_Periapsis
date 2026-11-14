@@ -741,6 +741,32 @@ fn invalid_op_files_are_refused() {
     assert!(matches!(error, Error::Corrupt(_)), "{error}");
 }
 
+/// An op that names a parent no file in `ops/` holds stops every command as
+/// corrupt, as a damaged op file does, rather than the merge meeting the gap
+/// as it walks what the heads follow (Sprint 7 code review, finding 3).
+#[test]
+fn a_missing_parent_op_is_refused() {
+    let mut ws = fresh(26);
+    let fs = fs_of(&ws);
+    put(&fs, "f", b"x");
+    let first = ws.snapshot().unwrap().op.unwrap();
+    put(&fs, "f", b"y");
+    let second = ws.snapshot().unwrap().op.unwrap();
+    assert!(ws.store().ops().unwrap()[&second].parents.contains(&first));
+    let op_path = Path::new("repo/.praps/store/ops").join(store::names::file_name(&first));
+    fs.remove_file(&op_path).unwrap();
+    let error = ws.status().unwrap_err();
+    assert!(
+        matches!(&error, Error::Corrupt(what)
+            if *what == format!("op {second} names a missing parent {first}")),
+        "{error}"
+    );
+    let error = Workspace::open(Arc::clone(&fs), Path::new(ROOT), 27)
+        .err()
+        .unwrap();
+    assert!(matches!(error, Error::Corrupt(_)), "{error}");
+}
+
 /// `.praps` and `.git` at the top are ignored whatever their case, as a
 /// case-insensitive filesystem treats them (code review CR-13).
 #[test]

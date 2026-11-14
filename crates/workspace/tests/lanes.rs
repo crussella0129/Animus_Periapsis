@@ -326,3 +326,25 @@ fn eight_lanes_share_one_store() {
         assert_eq!(on_disk[&format!("own-{i}")], name.as_bytes());
     }
 }
+
+/// A lane whose files would need a temporary name that one of its own paths
+/// takes is refused, as `restore` refuses such a write, rather than made
+/// without that path. Nothing names the lane, and no op is written (Sprint 7
+/// code review, finding 1).
+#[test]
+fn a_lane_whose_write_is_blocked_is_refused() {
+    let fs = Arc::new(SimFs::new(19, DirMode::Strict));
+    let mut ws = Workspace::init(Arc::clone(&fs), Path::new(ROOT), 19)
+        .unwrap()
+        .0;
+    // In path order `.praps-tmp-1` comes first and takes the temporary name
+    // `.praps-tmp-0`; `a` would take `.praps-tmp-1`, a path of the change.
+    put(&*fs, ".praps-tmp-1", b"x");
+    put(&*fs, "a", b"1");
+    ws.new_change().unwrap();
+    let ops = ws.store().ops().unwrap().len();
+    let made = ws.make_lane("lane", Path::new("lane"));
+    assert!(matches!(made, Err(Error::Blocked(_))), "{made:?}");
+    assert_eq!(ws.store().ops().unwrap().len(), ops);
+    assert!(!fs.snapshot().contains_key("lane/.praps/workspace"));
+}

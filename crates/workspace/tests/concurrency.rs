@@ -888,20 +888,32 @@ fn concurrency_is_reproducible() {
         let two = scope.spawn(|| matrix(true, CORRECT));
         (one.join().unwrap(), two.join().unwrap())
     });
-    let (cells, digest) = compare(false, one_store(), &one);
-    assert_eq!(cells, ONE_STORE_CELLS);
-    assert_eq!(digest, ONE_STORE_DIGEST);
-    let (cells, digest) = compare(true, two_stores(), &two);
-    assert_eq!(cells, TWO_STORE_CELLS);
-    assert_eq!(digest, TWO_STORE_DIGEST);
+    // Both runs are compared, and both digests printed, before either
+    // literal is asserted.
+    let one = compare(false, one_store(), &one);
+    let two = compare(true, two_stores(), &two);
+    assert_eq!(one, (ONE_STORE_CELLS, ONE_STORE_DIGEST.to_owned()));
+    assert_eq!(two, (TWO_STORE_CELLS, TWO_STORE_DIGEST.to_owned()));
 }
 
 const ONE_STORE_CELLS: usize = 160;
+const TWO_STORE_CELLS: usize = 160;
+// The digests differ between Windows and other systems, and nothing else
+// does: each lane's `.praps/workspace` names the store's path as the system
+// spells it (`repo\.praps\store` on Windows, `repo/.praps/store` elsewhere),
+// and that file is part of every cell's state.
+#[cfg(windows)]
 const ONE_STORE_DIGEST: &str =
     "blake3:588a08e5c6fc02fb9f71d77961a93916b51be0cad0e1ee389872149aa8efe283";
-const TWO_STORE_CELLS: usize = 160;
+#[cfg(windows)]
 const TWO_STORE_DIGEST: &str =
     "blake3:459ab6fd17fe97ed20f0c82520a2366badedfbb601ffec9cf36e5a78e0375473";
+#[cfg(not(windows))]
+const ONE_STORE_DIGEST: &str =
+    "blake3:a6e9c08352e0e4707468e26fa34b412382b9570c9327c3a1d401c911006e1f28";
+#[cfg(not(windows))]
+const TWO_STORE_DIGEST: &str =
+    "blake3:ab960f27cd5085c5456ff6d1575e4fbabde6bbfcc090f2cfb88b236c000be8f7";
 
 /// A negative control: the one-store run's cells and then the two-store
 /// run's, in order, up to the first that breaks the oracle the control is

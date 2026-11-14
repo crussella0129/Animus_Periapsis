@@ -15,8 +15,8 @@ Given in Sprint 7's Plan, before the plan was approved, as answers to separate q
 ## Decisions that are not sign-offs
 
 The same round of questions settled two choices that no criterion asks the owner to sign:
-- **Two commands at once in one workspace.** The answer was "Continue from one, keep both". The next command continues from one change and keeps the other ([INT-0014](../../intents/INT-0014-working-copy-and-workspaces.md) Consequences).
-- **GitHub during Test.** The answer was "Push, PR, and two re-runs": push `dev`, open the pull request, and re-run every job of the tested head twice, for INT-0003 AC-11's three samples.
+- **Two commands at once in one workspace.** The answer was "Continue from one, keep both (Recommended)". The next command continues from one change and keeps the other ([INT-0014](../../intents/INT-0014-working-copy-and-workspaces.md) Consequences).
+- **GitHub during Test.** The answer was "Push, PR, and two re-runs (Recommended)": push `dev`, open the pull request, and re-run every job of the tested head twice, for INT-0003 AC-11's three samples.
 
 ## Still to come in this sprint
 

@@ -107,6 +107,18 @@ fn refuse(command: &str, why: impl Display, hint: &Hint, err: &mut impl Write) -
 /// Prints an error from the working copy at `place`, then the hint for it,
 /// and returns exit code 1.
 fn fail(command: &str, place: &str, error: &workspace::Error, err: &mut impl Write) -> u8 {
+    // A command opens the working copy as `.` from its top, so an unfinished
+    // lane would be named `.`; it is named by the place instead, so that the
+    // hint's `praps lane DIR` works from the working copy it was made from
+    // (Sprint 7 code review, finding 5).
+    let named;
+    let error = match error {
+        workspace::Error::UnfinishedLane(name, _) => {
+            named = workspace::Error::UnfinishedLane(name.clone(), PathBuf::from(place));
+            &named
+        }
+        other => other,
+    };
     refuse(
         command,
         format_args!("{place}: {}", hint::said(error)),
@@ -504,20 +516,31 @@ fn init(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 
         Ok(full) => full,
         Err(code) => return code,
     };
-    // A lane's own top: a repository is not made in a lane either.
-    if RealFs
-        .read(&dir.join(PRAPS_DIR).join(workspace::lane::WORKSPACE_FILE))
-        .is_ok()
-    {
-        return refuse(
-            "init",
-            format_args!(
-                "{}: it is a lane's working copy, and a repository is not made inside another",
-                dir.display()
-            ),
-            &hint::inside_a_working_copy(),
-            err,
-        );
+    // A lane's own top: a repository is not made in a lane either. A lane
+    // file that cannot be read is no proof there is none (Sprint 7 code
+    // review, finding 6).
+    let lane_file = dir.join(PRAPS_DIR).join(workspace::lane::WORKSPACE_FILE);
+    match RealFs.read(&lane_file) {
+        Ok(_) => {
+            return refuse(
+                "init",
+                format_args!(
+                    "{}: it is a lane's working copy, and a repository is not made inside another",
+                    dir.display()
+                ),
+                &hint::inside_a_working_copy(),
+                err,
+            );
+        }
+        Err(error) if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {}
+        Err(error) => {
+            return refuse(
+                "init",
+                format_args!("{}: {error}", lane_file.display()),
+                &hint::unreadable_file(),
+                err,
+            );
+        }
     }
     match top_above("init", &full, err) {
         Ok(None) => {}
@@ -640,7 +663,12 @@ fn lane(dir: &Path, out: &mut impl Write, err: &mut impl Write) -> u8 {
     let Some(name) = full
         .file_name()
         .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty() && *name != "." && *name != "..")
+        // A control character, such as a line break, is not plain text, and
+        // `.praps/workspace` holds the name on a line (Sprint 7 code review,
+        // finding 4).
+        .filter(|name| {
+            !name.is_empty() && *name != "." && *name != ".." && !name.chars().any(char::is_control)
+        })
         .map(str::to_owned)
     else {
         return refuse(

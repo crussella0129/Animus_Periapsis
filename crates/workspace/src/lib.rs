@@ -490,7 +490,9 @@ fn corrupt(what: impl fmt::Display) -> Error {
 /// Refuses an op log in which `ops/` holds files that do not hash to their
 /// names or do not decode: the valid ops alone would let a damaged head
 /// silently give way to its parent, or a store whose ops are all damaged
-/// look uninitialised (code review CR-10).
+/// look uninitialised (code review CR-10). Refuses one in which an op names
+/// a parent that is not there too: the merge walks every op a head follows
+/// (Sprint 7 code review, finding 3).
 fn refuse_invalid(log: &OpLog) -> Result<(), Error> {
     if log.invalid > 0 {
         return Err(corrupt(format!(
@@ -498,6 +500,11 @@ fn refuse_invalid(log: &OpLog) -> Result<(), Error> {
             log.invalid,
             log.ops.len() + log.invalid
         )));
+    }
+    for (id, op) in &log.ops {
+        if let Some(parent) = op.parents.iter().find(|p| !log.ops.contains_key(p)) {
+            return Err(corrupt(format!("op {id} names a missing parent {parent}")));
+        }
     }
     Ok(())
 }
@@ -1231,6 +1238,12 @@ impl<F: Fs> Workspace<F> {
         let plan = materialise::plan(fs, dir, &Tree::new(), &tree, fs.name_rules(), ALG, false)?;
         if !plan.hazards.is_empty() {
             return Err(Error::Hazards(plan.hazards));
+        }
+        // As `restore` refuses it: a path whose temporary name another of
+        // the change's paths takes would otherwise be left out of the lane
+        // (Sprint 7 code review, finding 1).
+        if !plan.blocked.is_empty() {
+            return Err(Error::Blocked(plan.blocked));
         }
         lane::write(
             fs,

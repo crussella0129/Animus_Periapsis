@@ -2726,7 +2726,7 @@ fn praps_lane_refusals() {
     fs::create_dir(dir.join("full")).unwrap();
     fs::write(dir.join("full/x"), b"x").unwrap();
     fs::create_dir(dir.join("other")).unwrap();
-    let cases: [(&str, String, &str); 5] = [
+    let cases: [(&str, String, &str); 6] = [
         (
             "a directory inside this working copy",
             "sub".into(),
@@ -2740,6 +2740,11 @@ fn praps_lane_refusals() {
         (
             "a directory with no plain last name",
             std::path::MAIN_SEPARATOR_STR.into(),
+            "plain text",
+        ),
+        (
+            "a last name that holds a line break",
+            "../a\nb".into(),
             "plain text",
         ),
         ("a name in use", "../other/l1".into(), "no workspace has"),
@@ -2790,10 +2795,46 @@ fn praps_lane_finishes_an_interrupted_lane() {
     assert_eq!(code(&output), 1, "{output:?}");
     let err = stderr(&output);
     assert!(err.contains("never finished"), "{err}");
-    assert!(err.contains("hint: run `praps lane "), "{err}");
-    let output = praps(&["lane", ghost.to_str().unwrap()], &root);
+    // The lane is named by its full path, never `.`, and the hint's command,
+    // run as printed from the repository, finishes it (Sprint 7 code
+    // review, finding 5).
+    assert!(!err.contains(" at . "), "{err}");
+    let hinted = err
+        .lines()
+        .find_map(|line| line.strip_prefix("hint: run `"))
+        .and_then(|rest| rest.split('`').next())
+        .unwrap_or_else(|| panic!("no command in the hint: {err}"));
+    let path = hinted
+        .strip_prefix("praps lane ")
+        .unwrap_or_else(|| panic!("{hinted}"));
+    assert_eq!(
+        fs::canonicalize(path).unwrap(),
+        fs::canonicalize(&ghost).unwrap()
+    );
+    let output = praps(&["lane", path], &root);
     assert_eq!(code(&output), 0, "{output:?}");
     assert_eq!(code(&praps(&["status"], &ghost)), 0);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `init` refuses a directory whose `.praps/workspace` cannot be read, here
+/// because a directory stands in its place, rather than making a repository
+/// inside what may be a lane (Sprint 7 code review, finding 6).
+#[test]
+fn init_refuses_an_unreadable_workspace_file() {
+    let dir = claim("init-unreadable");
+    let top = dir.join("w");
+    fs::create_dir_all(top.join(".praps/workspace")).unwrap();
+    let output = praps(&["init"], &top);
+    assert_eq!(code(&output), 1, "{output:?}");
+    let err = stderr(&output);
+    assert!(err.contains("workspace"), "{err}");
+    assert_eq!(
+        err.lines().filter(|l| l.starts_with("hint: ")).count(),
+        1,
+        "{err}"
+    );
+    assert!(!top.join(".praps/store").exists());
     let _ = fs::remove_dir_all(&dir);
 }
 
