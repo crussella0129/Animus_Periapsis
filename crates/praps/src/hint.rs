@@ -427,6 +427,18 @@ mod tests {
                 unreadable_above(),
             ),
             (
+                "a `.praps/workspace` that cannot be read",
+                "praps status: lane/.praps/workspace: Is a directory (os error 21)".to_owned(),
+                unreadable_file(),
+            ),
+            (
+                "a `.praps/workspace` above that cannot be read",
+                "praps status: /home/me/lane/sub: a directory above it could not be searched for \
+                 a repository: /home/me/lane/.praps/workspace: Is a directory (os error 21)"
+                    .to_owned(),
+                unreadable_file(),
+            ),
+            (
                 "a top that cannot be entered",
                 "praps status: /home/me/work: Permission denied (os error 13)".to_owned(),
                 cannot_enter(),
@@ -467,6 +479,21 @@ mod tests {
                  objects/ and ops/)"
                     .to_owned(),
                 unfinished_store(),
+            ),
+            (
+                "`verify` in a lane whose `.praps/workspace` does not parse",
+                "praps verify: /home/me/lane: /home/me/lane/.praps/workspace cannot be read: \
+                 `not a lane file` is not a `name` line"
+                    .to_owned(),
+                for_error(&Error::BadWorkspaceFile(PathBuf::new(), String::new())),
+            ),
+            (
+                "`verify` in a lane whose store does not open",
+                "praps verify: /home/me/lane: the store this lane names, \
+                 /home/me/repo/.praps/store, does not open: No such file or directory (os error \
+                 2)"
+                .to_owned(),
+                for_error(&Error::StoreGone(PathBuf::new(), String::new())),
             ),
             (
                 "`verify` stopped by the filesystem",
@@ -561,7 +588,7 @@ mod tests {
             forms[2]
         );
         assert!(forms.iter().all(|count| *count > 0), "{forms:?}");
-        assert_eq!(table.len(), VARIANTS.len() + 24);
+        assert_eq!(table.len(), VARIANTS.len() + 28);
     }
 
     /// Every command a hint names, wherever in the line, is one the
