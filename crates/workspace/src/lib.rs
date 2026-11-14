@@ -458,6 +458,8 @@ pub struct Workspace<F: Fs> {
     /// opens and runs one command then reads the op log once. `None` once a
     /// command has taken it, and on a workspace `init` returned.
     kept: Option<State>,
+    /// The op this handle committed last, if any.
+    last_op: Option<HashRef>,
     #[cfg(feature = "variants")]
     variant: Variant,
 }
@@ -542,12 +544,38 @@ impl<F: Fs> Workspace<F> {
             .into(),
         };
         let view_id = workspace.store.put_object(&view.to_envelope())?;
-        workspace.store.commit_op(&Operation {
+        let root_op = workspace.store.commit_op(&Operation {
             parents: BTreeSet::new(),
             workspace: DEFAULT_WORKSPACE.to_owned(),
             view: view_id,
         })?;
+        workspace.last_op = Some(root_op);
         Ok((workspace, true))
+    }
+
+    /// Opens the lane at `root` over `store`, a store built with a
+    /// negative-control variant, as [`Workspace::open`] opens it over the
+    /// store its `.praps/workspace` names. For the Concurrency scenario.
+    #[cfg(feature = "variants")]
+    pub fn open_lane_with_store(store: Store<F>, root: &Path, seed: u64) -> Result<Self, Error> {
+        let praps = root.join(PRAPS_DIR);
+        let file = match lane::read(store.fs(), &praps)? {
+            Some(Ok(file)) => file,
+            Some(Err(why)) => {
+                return Err(Error::BadWorkspaceFile(
+                    praps.join(lane::WORKSPACE_FILE),
+                    why,
+                ));
+            }
+            None => return Err(Error::NotInitialised(root.to_path_buf())),
+        };
+        let mut workspace = Self::new(store, root, seed);
+        workspace.name = file.name;
+        let log = workspace.store.op_log()?;
+        refuse_invalid(&log)?;
+        workspace.resume(&log.ops)?;
+        workspace.kept = Some(workspace.state_of(log)?);
+        Ok(workspace)
     }
 
     /// Opens the repository at `root`: makes `.praps` and the root durable
@@ -607,6 +635,7 @@ impl<F: Fs> Workspace<F> {
             notes: Vec::new(),
             reported: Vec::new(),
             kept: None,
+            last_op: None,
             #[cfg(feature = "variants")]
             variant: Variant::Correct,
         }
@@ -626,6 +655,26 @@ impl<F: Fs> Workspace<F> {
     #[cfg(not(feature = "variants"))]
     fn writes_record(&self) -> bool {
         true
+    }
+
+    #[cfg(feature = "variants")]
+    fn loads_first_head_only(&self) -> bool {
+        self.variant == Variant::FirstHeadOnly
+    }
+
+    #[cfg(not(feature = "variants"))]
+    fn loads_first_head_only(&self) -> bool {
+        false
+    }
+
+    #[cfg(feature = "variants")]
+    fn commits_merges(&self) -> bool {
+        self.variant == Variant::MergeOnRead
+    }
+
+    #[cfg(not(feature = "variants"))]
+    fn commits_merges(&self) -> bool {
+        false
     }
 
     #[cfg(feature = "variants")]
@@ -815,6 +864,7 @@ impl<F: Fs> Workspace<F> {
             )?;
         }
         let committed = self.store.commit_op(&op)?;
+        self.last_op = Some(committed);
         if committed != id {
             return Err(corrupt(format!(
                 "op {committed} was committed where {id} was expected"
@@ -880,9 +930,15 @@ impl<F: Fs> Workspace<F> {
     fn state_of(&self, log: OpLog) -> Result<State, Error> {
         refuse_invalid(&log)?;
         let ops = log.ops;
-        let heads = store::heads_of(&ops);
+        let mut heads = store::heads_of(&ops);
         if heads.is_empty() {
             return Err(Error::NotInitialised(self.root.clone()));
+        }
+        if self.loads_first_head_only() {
+            heads = heads.into_iter().take(1).collect();
+        }
+        if heads.len() > 1 {
+            self.store.fs().point("workspace.merge.computed");
         }
         let view = self.merged(&ops, &heads)?;
         let pointer = &view
@@ -938,10 +994,22 @@ impl<F: Fs> Workspace<F> {
     /// (code review CR-07).
     fn begin(&mut self) -> Result<State, Error> {
         self.reported.clear();
-        let state = match self.kept.take() {
+        let mut state = match self.kept.take() {
             Some(state) => state,
             None => self.read_state()?,
         };
+        if self.commits_merges() && state.at.heads.len() > 1 {
+            let view_id = self.store.put_object(&state.at.view.to_envelope())?;
+            let op = Operation {
+                parents: std::mem::take(&mut state.at.heads),
+                workspace: self.name.clone(),
+                view: view_id,
+            };
+            let head = self.store.commit_op(&op)?;
+            self.last_op = Some(head);
+            state.ops.insert(head, op);
+            state.at.heads = [head].into();
+        }
         if !state.at.raced.is_empty() {
             let raced: Vec<String> = state.at.raced.iter().map(ToString::to_string).collect();
             self.notes.push(format!(
@@ -1056,6 +1124,7 @@ impl<F: Fs> Workspace<F> {
             view: view_id,
         };
         let head = self.store.commit_op(&op)?;
+        self.last_op = Some(head);
         let parent_tree = match changeset.parents.as_slice() {
             [] => Tree::new(),
             // A new change on top of the old working-copy change.
@@ -1181,11 +1250,13 @@ impl<F: Fs> Workspace<F> {
             },
         )?;
         let committed = self.store.commit_op(&op)?;
+        self.last_op = Some(committed);
         if committed != id {
             return Err(corrupt(format!(
                 "op {committed} was committed where {id} was expected"
             )));
         }
+        self.store.fs().point("workspace.lane.made");
         let fs = self.store.fs();
         let kept =
             materialise::apply(fs, dir, &Tree::new(), ALG, &plan, |blob| self.content(blob))?;
@@ -1380,6 +1451,19 @@ impl<F: Fs> Workspace<F> {
     /// The workspace this working copy is.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The op this handle committed last, if it has committed one. A
+    /// command that writes nothing leaves it as it was, so a caller can
+    /// tell what each command committed (the Concurrency scenario).
+    pub fn last_op(&self) -> Option<HashRef> {
+        self.last_op
+    }
+
+    /// The view the op heads leave together, as a command loads it: read
+    /// from the store each time, never from the state a command holds.
+    pub fn view(&self) -> Result<View, Error> {
+        Ok(self.read_state()?.at.view)
     }
 
     /// Snapshots, then lists the working-copy change and the changes before

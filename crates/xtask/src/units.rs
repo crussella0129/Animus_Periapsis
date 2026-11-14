@@ -405,7 +405,7 @@ mod tests {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use super::{PREBUILD, Ran, TERMINAL, Unit, discover, executables, execute};
 
@@ -659,6 +659,14 @@ mod tests {
             }
             let inside = now.fetch_add(1, Ordering::SeqCst) + 1;
             most.fetch_max(inside, Ordering::SeqCst);
+            // Each unit stays until three have been inside at once, so on a
+            // loaded machine one cannot end before the third starts (Sprint
+            // 7: the first `cargo ci` with the Concurrency tests saw 2). The
+            // deadline keeps a runner that allows fewer from hanging.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while most.load(Ordering::SeqCst) < 3 && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(1));
+            }
             thread::sleep(Duration::from_millis(20));
             now.fetch_sub(1, Ordering::SeqCst);
             ran.fetch_add(1, Ordering::SeqCst);
