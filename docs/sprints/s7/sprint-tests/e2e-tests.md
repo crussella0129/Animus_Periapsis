@@ -36,7 +36,7 @@ At the tested head `4068f43`, through the built `praps` binary on the real files
 | 2 | 23:42:08 → 23:59:05, **16 min 57 s** | 23:42:08 → 23:51:58, 9 min 50 s | 38 s | 23 s | 14 s |
 | 3 | 00:01:20 → 00:11:11, **9 min 51 s** | 00:01:20 → 00:11:27, 10 min 7 s | 37 s | 16 s | 30 s |
 
-- **`three_samples_of_every_job` (INT-0003 AC-11): pass.** Every job of all three samples took under 20 minutes. The Windows suite took 17 min 10 s, 16 min 57 s and 9 min 51 s. The third is under the aim of 15 minutes, and the first and second are over it, by 2 min 10 s and 1 min 57 s.
+- **`three_samples_of_every_job` (INT-0003 AC-11): pass.** Every job of all three samples took under 20 minutes. The Windows suite took 17 min 10 s, 16 min 57 s and 9 min 51 s. The third is under the aim of 15 minutes, and the first and second are over it, by 2 min 10 s and 1 min 57 s. In `cargo ci`, each Concurrency control stops at its first caught cell; the sweep over every cell is run apart and is not in these times.
 - **The wait for a runner,** which AC-11 asks to be reported apart from the job's time: every job of every attempt started 3 to 4 s after it was queued.
 - **The scheduler tests on each runner** (test critique, C-011), from each job's own log:
 

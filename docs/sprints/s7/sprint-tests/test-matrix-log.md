@@ -13,10 +13,10 @@ They ran on Windows 11 (NTFS, the working checkout) and in WSL Ubuntu 26.04.1 (e
 
 Every cell count, every violation count and every control's result is the same on both systems.
 
-**What the test critique changed in these lines.** Against `5b65da8`, each system prints four lines more, and three lines of the Concurrency controls changed; no cell count, digest or result of a correct variant moved:
+**What the test critique changed in these lines.** Against `5b65da8`, each system prints four lines more, three portable digests and the fourth control's line, and one control line changed, `UnsyncedObjects`' one-store first cell. No cell count, digest or result of a correct variant moved, and the `FirstHeadOnly` and `MergeOnRead` lines are as they were:
 - **Three portable digests** (round 1, `b951d6d`), one for the lane matrix and one for each Concurrency run. Each reads every `\` in a lane file as `/`, and each is the same on both systems; the tests assert each as one literal everywhere (C-010).
 - **A fourth Concurrency control** (round 1; reordered in round 2, `4068f43`): the store's `UnsyncedObjects` again, stopped only where an acknowledged op is missing from a store. Its two-store run now comes first, and its first cell is caught, so it prints one line.
-- **Higher counts in the controls' first cells** (round 2). Each cell is now checked a second time after the next command, and in the two-store run after a second exchange, so a control's first cell counts some violations twice. The cells caught are the same.
+- **Higher counts in `UnsyncedObjects`' first cells** (round 2). Each cell is now checked a second time after the next command, and in the two-store run after a second exchange, so the two lines of that store count some violations twice. The cells caught are the same.
 
 At `5b65da8`, and at `1d5c94b` before it, the lines were the same but for those and the timing line.
 
@@ -51,7 +51,7 @@ A cell is one crash point. In the five matrices from Sprints 1 to 6, that is one
   - `FirstHeadOnly`, in the first cell: two writers for every lane;
   - `MergeOnRead`, in the first cell: a command that changes nothing commits;
   - the store's `UnsyncedObjects`, in the first cell: the store does not check clean;
-  - the same store, stopped only where an acknowledged op is missing from a store: in the first two-store cell. There the exchange stopped at an object the crash lost, and left on one store acknowledged ops it had not yet copied; with each lane's next op checked too, the cell counts 58. A crash that itself loses an op file is not shown, since no store variant leaves op files unsynced (backlog T-034).
+  - the same store, stopped only where an acknowledged op is missing from a store: in the first two-store cell. There the exchange stopped at an object the crash lost, and left on one store acknowledged ops it had not yet copied. The cell counts 58: the same 29 ops, counted at both of its checks, since every lane's next command failed there (`next: 8`) and made no op. A crash that itself loses an op file is not shown, since no store variant leaves op files unsynced (backlog T-034).
 - **The Concurrency scenario's coverage:**
   - one store: 112 processes killed, 590 commands stopped by the crash, 66 operations in flight that landed;
   - two stores: 116, 594 and 182.

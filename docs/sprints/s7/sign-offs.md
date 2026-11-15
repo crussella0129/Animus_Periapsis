@@ -23,7 +23,7 @@ Given in Sprint 7 as answers to separate questions: two in Plan, before the plan
 
 ## Decisions that are not sign-offs
 
-The same round of questions settled two choices that no criterion asks the owner to sign:
+Three choices that no criterion asks the owner to sign were settled by the same questions, two in Plan and one during Test:
 - **Two commands at once in one workspace.** The answer was "Continue from one, keep both (Recommended)". The next command continues from one change and keeps the other ([INT-0014](../../intents/INT-0014-working-copy-and-workspaces.md) Consequences).
 - **GitHub during Test.** The answer was "Push, PR, and two re-runs (Recommended)": push `dev`, open the pull request, and re-run every job of the tested head twice, for INT-0003 AC-11's three samples.
 - **The work after the merge of #10.** Asked during Test, in the same round as the format sign-off: "You merged PR #10 at b951d6d while Test was still running. The second test critique then found that in a lane, `praps verify` and commands run below the lane's top give the wrong hint (one even offers `praps init`). I fixed that in 4068f43, which is on dev but not in main; the sprint's records and its close still follow. How should that work reach main and get its three GitHub samples?" The answer was "Open a follow-up PR (Recommended)", which said: "Open a second dev → main pull request now. Its checks plus two re-runs of every job give the three samples at 4068f43, and the sprint's close lands on it too. You merge it when you choose." It is [#11](https://github.com/crussella0129/Animus_Periapsis/pull/11).

@@ -6,7 +6,7 @@
 - **Work evidence:** [Sprint 7 T-002 build plan](../sprints/s7/sprint-plans/build-plan.md#t-002-an-operation-names-its-workspace-and-a-view-holds-one-entry-per-workspace), [Sprint 7 T-003 build plan](../sprints/s7/sprint-plans/build-plan.md#t-003-the-canonical-merge-of-op-heads), [Sprint 7 T-004 build plan](../sprints/s7/sprint-plans/build-plan.md#t-004-commands-work-from-merged-states), [Sprint 7 T-005 build plan](../sprints/s7/sprint-plans/build-plan.md#t-005-undo-and-restore-are-scoped-to-their-workspace), [Sprint 7 T-009 build plan](../sprints/s7/sprint-plans/build-plan.md#t-009-the-concurrency-scenario), [Sprint 7 T-010 build plan](../sprints/s7/sprint-plans/build-plan.md#t-010-lanes-at-once-through-the-binary-spec-readme-credits-and-backlog)
 - **Completion evidence:** none
 - **Code evidence:** none
-- **Test evidence:** none
+- **Test evidence:** [Sprint 7 test report](../sprints/s7/sprint-tests/test-report.md)
 - **Documentation evidence:** none
 
 ## Intent

@@ -6,7 +6,7 @@
 - **Work evidence:** [Sprint 7 T-001 build plan](../sprints/s7/sprint-plans/build-plan.md#t-001-record-sprint-6s-last-runs-the-dependency-update-and-the-owners-two-sign-offs), [Sprint 7 T-003 build plan](../sprints/s7/sprint-plans/build-plan.md#t-003-the-canonical-merge-of-op-heads)
 - **Completion evidence:** none
 - **Code evidence:** none
-- **Test evidence:** none
+- **Test evidence:** [Sprint 7 test report](../sprints/s7/sprint-tests/test-report.md)
 - **Documentation evidence:** none
 
 ## Intent

@@ -6,7 +6,7 @@
 - **Work evidence:** [Sprint 6 T-006 build plan](../sprints/s6/sprint-plans/build-plan.md#t-006-the-command-registry-dispatch-help-and-suggestions-from-one-table), [Sprint 7 T-007 build plan](../sprints/s7/sprint-plans/build-plan.md#t-007-praps-lane-dir-and-praps-lanes)
 - **Completion evidence:** [Sprint 6 T-006 completion](../work/completed-tasks.md#t-006-sprint-6)
 - **Code evidence:** [registry.rs](../../crates/praps/src/registry.rs), [main.rs](../../crates/praps/src/main.rs)
-- **Test evidence:** [Sprint 6 test report](../sprints/s6/sprint-tests/test-report.md)
+- **Test evidence:** [Sprint 6 test report](../sprints/s6/sprint-tests/test-report.md), [Sprint 7 test report](../sprints/s7/sprint-tests/test-report.md)
 - **Documentation evidence:** [README](../../README.md)
 
 ## Intent
