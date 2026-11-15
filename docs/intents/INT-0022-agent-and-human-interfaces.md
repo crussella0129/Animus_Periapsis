@@ -6,7 +6,7 @@
 - **Work evidence:** [Sprint 6 T-006 build plan](../sprints/s6/sprint-plans/build-plan.md#t-006-the-command-registry-dispatch-help-and-suggestions-from-one-table), [Sprint 7 T-007 build plan](../sprints/s7/sprint-plans/build-plan.md#t-007-praps-lane-dir-and-praps-lanes)
 - **Completion evidence:** [Sprint 6 T-006 completion](../work/completed-tasks.md#t-006-sprint-6)
 - **Code evidence:** [registry.rs](../../crates/praps/src/registry.rs), [main.rs](../../crates/praps/src/main.rs)
-- **Test evidence:** [Sprint 6 test report](../sprints/s6/sprint-tests/test-report.md)
+- **Test evidence:** [Sprint 6 test report](../sprints/s6/sprint-tests/test-report.md), [Sprint 7 test report](../sprints/s7/sprint-tests/test-report.md)
 - **Documentation evidence:** [README](../../README.md)
 
 ## Intent
@@ -145,3 +145,4 @@ result with it or without.
 - 2026-11-10: revised while `planned` (Sprint 6 plan critique, round 2, C-008; `semantic`): the idempotent class is defined by the repeat alone, that it changes nothing and prints the same, so that a command which writes on its first run, as `status` and `cargo reach` do, has a settled class. "The commands that report" stays as a description of the `praps` commands in it.
 - 2026-11-10: `planned` → `active` (Sprint 6 build, T-006 starts: the command registry).
 - 2026-11-10: kept `active` at the close of Sprint 6. AC-8 and AC-11 pass. AC-9 passes for the six commands built whose help says they are idempotent, and stays open for the rest. Its other criteria are not tested: `praps mcp`, the schemas and the renderer are not built.
+- 2026-11-14: kept `active` at the close of Sprint 7. AC-8, AC-9 and AC-11 pass for `lane` and `lanes`, and `lanes` is marked idempotent. Its other criteria are not tested: `praps mcp`, the schemas and the renderer are not built.

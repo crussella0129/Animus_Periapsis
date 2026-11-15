@@ -2419,10 +2419,32 @@ store /no/such/.praps/store
         "make that file readable",
     );
     assert!(!unreadable.join(".praps").join("store").exists());
-    // 36 everywhere; four more on Unix by file modes and one by a removed
+    // The same lane files seen from below a lane's top, and through
+    // `verify`: each is refused as `status` at the top refuses it, and no
+    // hint offers `init` (Sprint 7 test critique, round 2, C-001).
+    fs::create_dir(unreadable.join("sub")).unwrap();
+    refused(
+        "an unreadable .praps/workspace, from below the lane's top",
+        praps(&["status"], &unreadable.join("sub")),
+        1,
+        "make that file readable",
+    );
+    refused(
+        "verify: a lane whose .praps/workspace does not parse",
+        praps(&["verify"], &lanes.join("damaged")),
+        1,
+        "put that file right",
+    );
+    refused(
+        "verify: a lane whose store is gone",
+        praps(&["verify"], &lanes.join("gone")),
+        1,
+        "put the store back",
+    );
+    // 39 everywhere; four more on Unix by file modes and one by a removed
     // current directory; two more on Windows (a hazard, text that is not
     // Unicode).
-    let expected = if cfg!(unix) { 41 } else { 38 };
+    let expected = if cfg!(unix) { 44 } else { 41 };
     assert_eq!(kinds, expected, "kinds of refusal checked");
     let _ = fs::remove_dir_all(&dir);
 }
@@ -3127,7 +3149,9 @@ fn lane_template(dir: &Path) -> PathBuf {
 /// top given does the same thing, byte for byte. Each run is on its own copy
 /// of one repository and lane, whose `.praps/workspace` is pointed at the
 /// copy's own store; the copy's path is masked (Sprint 7 test critique,
-/// C-007).
+/// C-007). `new`, which draws a random change ID, is compared as the
+/// repository's own test compares it, and the op it makes must name the
+/// lane (round 2, C-004).
 #[test]
 fn commands_act_the_same_from_below_in_a_lane() {
     let dir = claim("below-lane");
@@ -3217,6 +3241,66 @@ fn commands_act_the_same_from_below_in_a_lane() {
             assert_eq!(err, err0, "{name}, {place}: stderr");
             assert_eq!(files, files0, "{name}, {place}: the files left");
         }
+    }
+    // `new` draws a random change ID: the ID is masked, and what is
+    // compared is the number of ops, the lane's files outside `.praps` and
+    // what `status` then prints. The op `new` made is the newest, and it
+    // must name the lane (Sprint 7 test critique, round 2, C-004).
+    let mut results = Vec::new();
+    for (place, sub, given) in [
+        ("at the lane's top", "", None),
+        ("from two levels down", "d1/d2", None),
+        ("with a directory below given", "..", Some("d1")),
+    ] {
+        let root = dir.join(format!("copy-new-{}", results.len()));
+        copy_tree(&template, &root);
+        let lane = root.join("lane");
+        let store = root.join("repo").join(".praps").join("store");
+        fs::write(
+            lane.join(".praps").join("workspace"),
+            format!("name lane\nstore {}\n", store.display()),
+        )
+        .unwrap();
+        write(&lane, "a", b"3");
+        let (cwd, given) = match given {
+            Some(below) => (
+                dir.clone(),
+                Some(lane.join(below).to_str().unwrap().to_owned()),
+            ),
+            None if sub.is_empty() => (lane.clone(), None),
+            None => (lane.join(sub), None),
+        };
+        let mut line = vec!["new"];
+        if let Some(given) = &given {
+            line.push(given);
+        }
+        let output = praps(&line, &cwd);
+        assert_eq!(code(&output), 0, "new, {place}: {output:?}");
+        let printed = stdout(&output);
+        let id = printed.trim().strip_prefix("new change ").unwrap();
+        assert_eq!(id.len(), 32, "new, {place}: {printed}");
+        let ops = lines(&praps(&["ops"], &lane));
+        assert_eq!(
+            ops[0].split(' ').nth(1),
+            Some("lane"),
+            "new, {place}: {ops:?}"
+        );
+        let outside: Vec<_> = files_under(&lane)
+            .into_iter()
+            .filter(|(path, _)| !path.starts_with(".praps"))
+            .collect();
+        results.push((
+            place,
+            logged_ops(&root.join("repo")).len(),
+            outside,
+            stdout(&praps(&["status"], &lane)),
+        ));
+    }
+    let (_, ops0, files0, status0) = &results[0];
+    for (place, ops, files, status) in &results[1..] {
+        assert_eq!(ops, ops0, "new, {place}: the ops");
+        assert_eq!(files, files0, "new, {place}: the lane's files");
+        assert_eq!(status, status0, "new, {place}: what status prints next");
     }
     let _ = fs::remove_dir_all(&dir);
 }

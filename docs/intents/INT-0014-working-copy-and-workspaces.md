@@ -6,7 +6,7 @@
 - **Work evidence:** [Sprint 2 T-005 build plan](../sprints/s2/sprint-plans/build-plan.md#t-005-the-workspace-crate-init-snapshot-new-and-status), [Sprint 2 T-006 build plan](../sprints/s2/sprint-plans/build-plan.md#t-006-praps-init-praps-new-and-praps-status), [Sprint 2 T-007 build plan](../sprints/s2/sprint-plans/build-plan.md#t-007-snapshot-crash-scenario-and-edit-corpora), [Sprint 2 T-008 build plan](../sprints/s2/sprint-plans/build-plan.md#t-008-working-copy-spec-readme-credits-and-backlog), [Sprint 3 T-004 build plan](../sprints/s3/sprint-plans/build-plan.md#t-004-specify-writing-the-working-copy-undo-restore-and-log), [Sprint 3 T-006 build plan](../sprints/s3/sprint-plans/build-plan.md#t-006-materialise-the-working-copy-record-and-resume), [Sprint 3 T-009 build plan](../sprints/s3/sprint-plans/build-plan.md#t-009-reversibility-and-hazard-corpora-the-materialise-crash-scenario-and-the-extended-edit-corpus), [Sprint 4 T-006 build plan](../sprints/s4/sprint-plans/build-plan.md#t-006-plant-and-register-points-in-store-and-workspace-and-move-the-two-writer-race-to-a-named-point), [Sprint 4 T-009 build plan](../sprints/s4/sprint-plans/build-plan.md#t-009-report-skipped-names-from-every-command-that-snapshots-backlog-t-019), [Sprint 6 T-003 build plan](../sprints/s6/sprint-plans/build-plan.md#t-003-a-command-reads-the-op-log-once), [Sprint 6 T-004 build plan](../sprints/s6/sprint-plans/build-plan.md#t-004-open-checks-the-op-log-before-it-resumes-an-interrupted-write), [Sprint 6 T-005 build plan](../sprints/s6/sprint-plans/build-plan.md#t-005-undo-and-restore-scan-the-working-copy-once), [Sprint 6 T-008 build plan](../sprints/s6/sprint-plans/build-plan.md#t-008-commands-find-their-working-copy-from-any-directory-inside-it), [Sprint 6 T-010 build plan](../sprints/s6/sprint-plans/build-plan.md#t-010-describe-sets-the-description-of-the-current-change), [Sprint 6 T-012 build plan](../sprints/s6/sprint-plans/build-plan.md#t-012-a-write-leaves-a-directory-it-cannot-remove), [Sprint 6 T-013 build plan](../sprints/s6/sprint-plans/build-plan.md#t-013-readme-specs-and-credits), [Sprint 7 T-002 build plan](../sprints/s7/sprint-plans/build-plan.md#t-002-an-operation-names-its-workspace-and-a-view-holds-one-entry-per-workspace), [Sprint 7 T-004 build plan](../sprints/s7/sprint-plans/build-plan.md#t-004-commands-work-from-merged-states), [Sprint 7 T-006 build plan](../sprints/s7/sprint-plans/build-plan.md#t-006-workspaces-over-one-store-in-the-library), [Sprint 7 T-007 build plan](../sprints/s7/sprint-plans/build-plan.md#t-007-praps-lane-dir-and-praps-lanes), [Sprint 7 T-009 build plan](../sprints/s7/sprint-plans/build-plan.md#t-009-the-concurrency-scenario), [Sprint 7 T-010 build plan](../sprints/s7/sprint-plans/build-plan.md#t-010-lanes-at-once-through-the-binary-spec-readme-credits-and-backlog)
 - **Completion evidence:** [Sprint 2 T-005 completion](../work/completed-tasks.md#t-005-sprint-2), [Sprint 2 T-006 completion](../work/completed-tasks.md#t-006-sprint-2), [Sprint 2 T-007 completion](../work/completed-tasks.md#t-007-sprint-2), [Sprint 2 T-008 completion](../work/completed-tasks.md#t-008-sprint-2), [Sprint 6 T-003 completion](../work/completed-tasks.md#t-003-sprint-6), [Sprint 6 T-004 completion](../work/completed-tasks.md#t-004-sprint-6), [Sprint 6 T-005 completion](../work/completed-tasks.md#t-005-sprint-6), [Sprint 6 T-008 completion](../work/completed-tasks.md#t-008-sprint-6), [Sprint 6 T-010 completion](../work/completed-tasks.md#t-010-sprint-6), [Sprint 6 T-012 completion](../work/completed-tasks.md#t-012-sprint-6), [Sprint 6 T-013 completion](../work/completed-tasks.md#t-013-sprint-6)
 - **Code evidence:** [crates/workspace](../../crates/workspace/src/lib.rs), [praps](../../crates/praps/src/main.rs)
-- **Test evidence:** [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md), [Sprint 3 test report](../sprints/s3/sprint-tests/test-report.md), [Sprint 4 test report](../sprints/s4/sprint-tests/test-report.md), [Sprint 6 test report](../sprints/s6/sprint-tests/test-report.md)
+- **Test evidence:** [Sprint 2 test report](../sprints/s2/sprint-tests/test-report.md), [Sprint 3 test report](../sprints/s3/sprint-tests/test-report.md), [Sprint 4 test report](../sprints/s4/sprint-tests/test-report.md), [Sprint 6 test report](../sprints/s6/sprint-tests/test-report.md), [Sprint 7 test report](../sprints/s7/sprint-tests/test-report.md)
 - **Documentation evidence:** [The working copy](../spec/working-copy.md)
 
 ## Intent
@@ -101,9 +101,11 @@ Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
   check it. A file edited during a scan is captured as it was before or after
   the edit, either of which is a correct snapshot; the mtime-granularity race
   arrives with the cache and must be handled there.
-- Until [INT-0010](INT-0010-lock-free-concurrency.md)'s canonical merge exists,
-  a command that finds several op heads stops and names them instead of
-  guessing which to build on.
+- Until Sprint 7 a command that found several op heads stopped and named
+  them instead of guessing which to build on. Since
+  [INT-0010](INT-0010-lock-free-concurrency.md)'s canonical merge (Sprint 7
+  T-004), it works from their merge, and writes nothing unless it changes
+  something.
 
 - A first snapshot must stay linear in the working copy: Sprint 2's code
   review found a quadratic step and a whole-copy content buffer (CR-04). Until
@@ -190,7 +192,8 @@ Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
   a lane's top and below it: the working copy around it would track the
   lane's files and its `.praps` as content (C-009). `lanes` snapshots like
   every other command.
-- Two cases are left open in Sprint 7 (C-007, C-008):
+- Three cases are left open in Sprint 7 (plan critique C-007 and C-008;
+  code review, finding 2):
   - Two commands that write one working copy's files at the same moment
     (`undo`, `restore`) can interfere through the record and the files. One
     working copy is one agent's, and agents that work at once take a lane
@@ -202,8 +205,14 @@ Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
     pass the check, and both directories then share one entry. Lanes are
     made one at a time by whoever sets them up. Detecting the collision
     needs each lane to know the operation that made it.
+  - A lane whose making is killed before its operation lands, and which is
+    then made again at another directory with the same last name, leaves
+    the first directory opening as that lane: its first command records
+    its empty working copy into the lane's entry. Nothing is lost, since
+    every operation stays, but two directories then drive one entry. The
+    same knowledge would detect it.
 
-  Both are in the backlog.
+  All three are in the backlog (T-042).
 - The race rule (the owner's decision of 2026-11-14): when two commands in one
   workspace run at once, its working-copy pointer holds both changes. The
   next command there continues from the one with the smallest id, keeps
@@ -249,3 +258,5 @@ Three rules come from [INT-0035](INT-0035-scale-and-asynchrony.md) and
 - 2026-11-14: revised while `active` (Sprint 7 Plan; `editorial`: no criterion changes): Consequences record lanes and how a working copy finds its store, the race rule the owner chose, and what the record of a write names after a merge. Work evidence names Sprint 7's T-002, T-004, T-006, T-007, T-009 and T-010.
 - 2026-11-14: revised while `active` (Sprint 7 plan critique, round 1, C-006, C-007, C-008, C-009 and C-014; `editorial`: no criterion changes): Consequences define a lane's top and what stops the search, record that a lane starts from the parent of the working-copy change and why, that a lane is a checkout and the cheap workspace is still to come, where lanes and `init` are refused, the record's `empty` form and the interrupted lane, and the two cases Sprint 7 leaves open.
 - 2026-11-14: revised while `active` (Sprint 7 plan critique, round 2, C-002 and C-003; `editorial`: no criterion changes): Consequences say where `praps lane` looks for an enclosing working copy, what a free DIR may hold, and why the hint before `.praps/workspace` exists stays `praps init`.
+- 2026-11-14: revised while `active` (Sprint 7 Loop; `editorial`: no criterion changes): Consequences say that a command stopped on several op heads until Sprint 7, and now works from their merge; and they name a third open case, a lane killed while it was made and then made again at another directory (Sprint 7 code review, finding 2; test critique, round 2).
+- 2026-11-14: kept `active` at the close of Sprint 7. AC-3 passes: 8 lanes at once over one store, in simulation with a kill and a crash in each cell, and through the binary on NTFS and ext4. AC-1 holds with several op heads. The thousand workspaces of AC-7 and the stat cache of AC-8 are backlog T-031. Two commands that write one working copy's files at once, two lanes made at once with one name, and a lane killed while it was made and then made again elsewhere are backlog T-042.

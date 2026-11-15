@@ -6,7 +6,7 @@
 - **Work evidence:** [Sprint 7 T-002 build plan](../sprints/s7/sprint-plans/build-plan.md#t-002-an-operation-names-its-workspace-and-a-view-holds-one-entry-per-workspace), [Sprint 7 T-003 build plan](../sprints/s7/sprint-plans/build-plan.md#t-003-the-canonical-merge-of-op-heads), [Sprint 7 T-004 build plan](../sprints/s7/sprint-plans/build-plan.md#t-004-commands-work-from-merged-states), [Sprint 7 T-005 build plan](../sprints/s7/sprint-plans/build-plan.md#t-005-undo-and-restore-are-scoped-to-their-workspace), [Sprint 7 T-009 build plan](../sprints/s7/sprint-plans/build-plan.md#t-009-the-concurrency-scenario), [Sprint 7 T-010 build plan](../sprints/s7/sprint-plans/build-plan.md#t-010-lanes-at-once-through-the-binary-spec-readme-credits-and-backlog)
 - **Completion evidence:** none
 - **Code evidence:** none
-- **Test evidence:** none
+- **Test evidence:** [Sprint 7 test report](../sprints/s7/sprint-tests/test-report.md)
 - **Documentation evidence:** none
 
 ## Intent
@@ -101,16 +101,14 @@ Three rules hold the merge to [INT-0035](INT-0035-scale-and-asynchrony.md):
   AC-3); this intent covers views and pointers.
 - Once formal obligations exist they must be re-established whenever the merge
   changes (proof maintenance is a feature: it localises regressions).
-- Until this intent's merge is built, commands that find several op heads stop
-  and name them (Sprint 2,
-  [INT-0014](INT-0014-working-copy-and-workspaces.md) Consequences). That
-  contradicts this Intent's "no command fails because of another writer"; the
-  gap closes when the canonical merge lands.
-- That gap is the first thing in the way of several agents. Measured in
-  Sprint 6: two `praps new` commands that overlapped left two op heads, every
-  later command stopped, and no command could join them
-  ([research](../sprints/s6/sprint-research/research-report.md)). The merge
-  is therefore the next sprint's work (backlog T-029).
+- From Sprint 2 to Sprint 6, commands that found several op heads stopped
+  and named them ([INT-0014](INT-0014-working-copy-and-workspaces.md)
+  Consequences), against this Intent's "no command fails because of another
+  writer". Sprint 6 measured the cost: two `praps new` commands that
+  overlapped left two op heads, every later command stopped, and no command
+  could join them ([research](../sprints/s6/sprint-research/research-report.md)).
+  Sprint 7 closed the gap: a command works from the canonical merge (T-003,
+  T-004), and 8 `praps new` at once in one working copy now all succeed.
 - A merge stored as an operation would never settle once operations are
   signed ([INT-0016](INT-0016-actors-and-agent-lifecycle.md)). Two readers
   that merged the same heads would sign two different merge operations, each
@@ -176,3 +174,5 @@ Three rules hold the merge to [INT-0035](INT-0035-scale-and-asynchrony.md):
 - 2026-11-14: revised while `planned` (Sprint 7 plan critique, round 1, C-001 and C-015; `editorial`: no criterion changes): Consequences give the known limit's two cases with their values, the scopes in which AC-2 and AC-3 are shown, and why the merge does not group writers by heads; they record that Sprint 7's simulated replicas exchange every operation.
 - 2026-11-14: revised while `planned` (Sprint 7 plan critique, round 2, C-007; `editorial`: no criterion changes): the known limit's nested case is given with its history and both pairs of values.
 - 2026-11-14: `planned` → `active` (Sprint 7 build, T-003 starts: the canonical merge of op heads).
+- 2026-11-14: revised while `active` (Sprint 7 Loop; `editorial`: no criterion changes): Consequences say that commands stopped on several op heads until Sprint 7, and that they now work from the merge.
+- 2026-11-14: kept `active` at the close of Sprint 7. The canonical merge is built and every command works from it. AC-1 holds by construction, and AC-2 to AC-4 and AC-6 pass, AC-2 and AC-3 within the scope the plan locked (the known limit is backlog T-041). AC-5 passes in simulation: 8 lanes over two stores in one simulated filesystem, which exchange every op twice, both times after the run. AC-7 passes at 2, 8 and 1,000 readers. AC-8 and AC-9 are not tested (backlog T-039, T-040).

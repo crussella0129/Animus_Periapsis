@@ -6,7 +6,7 @@
 - **Work evidence:** [Sprint 7 T-001 build plan](../sprints/s7/sprint-plans/build-plan.md#t-001-record-sprint-6s-last-runs-the-dependency-update-and-the-owners-two-sign-offs), [Sprint 7 T-003 build plan](../sprints/s7/sprint-plans/build-plan.md#t-003-the-canonical-merge-of-op-heads)
 - **Completion evidence:** none
 - **Code evidence:** none
-- **Test evidence:** none
+- **Test evidence:** [Sprint 7 test report](../sprints/s7/sprint-tests/test-report.md)
 - **Documentation evidence:** none
 
 ## Intent
@@ -126,3 +126,4 @@ signed later counts".
 - 2026-11-10: revised while `proposed` (Sprint 6 Plan, on owner direction of 2026-11-09 for thousands of agents): signatures said who made an operation but nothing said what an actor may change. The Intent adds ownership of view entries, applied when operations are merged, so a faulty agent can change only its own work. AC-7 and AC-8 are added. Consequences record delegated birth signing, what "registered at that point" means on a log with many heads, and the format's part.
 - 2026-11-14: `proposed` → `planned` (Sprint 7 build plan T-001 and T-003, approved by the owner on 2026-11-14: the workspace as the first class of owner, applied when op heads are merged; AC-8 for that class. AC-1 to AC-7 wait for signed operations). Consequences record what is built, what is not proved without signatures, and what is not yet reported.
 - 2026-11-14: `planned` → `active` (Sprint 7 build, T-001 starts: the owner's approval of the workspace as a class of owner is recorded).
+- 2026-11-14: kept `active` at the close of Sprint 7. Every operation names its workspace, and the merge applies an operation's effect to its own workspace's entry only. AC-8 is signed for one class of owner, the workspace. Signatures (AC-1 to AC-3) and ownership against forged operations (AC-7) are backlog T-037.

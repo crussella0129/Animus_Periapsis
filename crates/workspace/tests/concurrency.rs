@@ -558,15 +558,6 @@ fn check_store(
     (merged, kept_entries)
 }
 
-/// The view the heads of the store at `root` leave together, if it can be
-/// read.
-fn merged_view(fs: &Arc<SimFs>, root: &str, seed: u64) -> Option<View> {
-    let store = Store::open(Arc::clone(fs), Path::new(root), ALG, seed).ok()?;
-    let ops = store.ops().ok()?;
-    let heads = store::heads_of(&ops);
-    merge::merge(&ops, &heads, |id| view_of(&store, id)).ok()
-}
-
 /// The oracles, on the recovered filesystem, and what the cell exercised.
 fn check(
     recovered: SimFs,
@@ -615,14 +606,24 @@ fn check(
             Err(_) => v.view += 1,
         }
     }
-    // One more command in each lane.
+    // One more command in each lane. The op it makes is acknowledged as the
+    // lane's last, and is checked below as every acknowledged op is (Sprint
+    // 7 test critique, round 2, C-003).
+    let mut after = log.clone();
     let mut next_ok = [false; LANES];
     for (p, ok) in next_ok.iter_mut().enumerate() {
-        let next = open_lane(&fs, p, two, seed + 600 + p as u64, variants)
-            .and_then(|mut ws| ws.describe(b"after recovery"));
+        let next = open_lane(&fs, p, two, seed + 600 + p as u64, variants).and_then(|mut ws| {
+            ws.describe(b"after recovery")?;
+            Ok(ws.last_op())
+        });
         *ok = next.is_ok();
-        if next.is_err() {
-            v.next += 1;
+        match next {
+            Ok(Some(op)) => {
+                after.lanes[p].acked.push(op);
+                after.lanes[p].done = true;
+            }
+            Ok(None) => {}
+            Err(_) => v.next += 1,
         }
     }
     // Then each lane's `.praps` holds its lane file, no record and no store,
@@ -651,24 +652,39 @@ fn check(
         v.store += 1;
     }
     // The ops just made stand on ops received from the other store; a second
-    // exchange brings the stores to one view again, which every lane loads.
-    if two {
-        if exchange(&fs, seed + 50).is_err() {
-            v.store += 1;
-        }
-        let views: Vec<Option<View>> = roots
-            .iter()
-            .map(|root| merged_view(&fs, root, seed))
-            .collect();
-        if views.iter().any(Option::is_none) || views[0] != views[1] {
-            v.view += 1;
-        }
-        for p in 0..LANES {
-            let loaded =
-                open_lane(&fs, p, two, seed + 700 + p as u64, variants).and_then(|ws| ws.view());
-            if !loaded.is_ok_and(|view| Some(&view) == views[0].as_ref()) {
-                v.view += 1;
+    // exchange brings the two stores together again.
+    if two && exchange(&fs, seed + 50).is_err() {
+        v.store += 1;
+    }
+    // Every op acknowledged so far, the next command's among them, is
+    // checked again on every store as after recovery: none is lost, each
+    // lane has one writer, the entry each lane loads is its last acknowledged
+    // one, and every store and every lane compute one view (Sprint 7 test
+    // critique, round 2, C-003).
+    let mut again = Seen::default();
+    let (views, kept): (Vec<Option<View>>, Vec<BTreeMap<usize, WorkspaceEntry>>) = roots
+        .iter()
+        .map(|root| check_store(&fs, root, seed, &after, &mut v, &mut again))
+        .unzip();
+    if views.iter().any(Option::is_none) || views.windows(2).any(|pair| pair[0] != pair[1]) {
+        v.view += 1;
+    }
+    for p in 0..LANES {
+        let lane = lane_name(p);
+        let at = usize::from(two && p >= LANES / 2);
+        match open_lane(&fs, p, two, seed + 700 + p as u64, variants).and_then(|ws| ws.view()) {
+            Ok(view) => {
+                if Some(&view) != views[at].as_ref() {
+                    v.view += 1;
+                }
+                if kept[at]
+                    .get(&p)
+                    .is_some_and(|entry| view.workspaces.get(&lane) != Some(entry))
+                {
+                    v.kept += 1;
+                }
             }
+            Err(_) => v.view += 1,
         }
     }
     (v, seen)
@@ -1043,7 +1059,8 @@ const TWO_STORE_DIGEST: &str =
 
 /// A negative control: the one-store run's cells and then the two-store
 /// run's, in order, up to the first that breaks the oracle the control is
-/// meant to break. Returns that cell's run, mode, seed and crash point.
+/// meant to break (see [`control_in`] for another order). Returns that
+/// cell's run, mode, seed and crash point.
 /// A control needs one such cell; running every cell costs as much as the
 /// scenario itself (the counts over all 320 are in Sprint 7's T-009
 /// record).
@@ -1055,9 +1072,19 @@ fn control(
     variants: Variants,
     breaks: fn(&Violations) -> bool,
 ) -> Option<(bool, Mode, u64, Option<u64>)> {
+    control_in([false, true], variants, breaks)
+}
+
+/// [`control`], with the runs in the order `runs` gives: `true` is the
+/// two-store run.
+fn control_in(
+    runs: [bool; 2],
+    variants: Variants,
+    breaks: fn(&Violations) -> bool,
+) -> Option<(bool, Mode, u64, Option<u64>)> {
     let full = std::env::var_os("PRAPS_FULL_CONTROLS").is_some();
     let mut found = None;
-    for two in [false, true] {
+    for two in runs {
         let cells = if full {
             matrix(two, variants)
         } else {
@@ -1098,16 +1125,21 @@ fn concurrency_catches_merge_on_read() {
     assert!(caught.is_some(), "no command that changes nothing wrote");
 }
 
-/// Op files whose data is never synced do not all survive the crash: an
-/// acknowledged op is missing from the store, which the `lost` oracle
-/// finds (Sprint 7 test critique, C-003).
+/// The `lost` oracle fires when an acknowledged op is missing from a
+/// store. With object data never synced, a crash loses objects but no op;
+/// the exchange that follows stops at the first object the crash lost, so
+/// the acknowledged ops it had not yet copied are missing from the other
+/// store. The two-store run comes first, since the one-store run cannot
+/// lose an op this way (Sprint 7 test critique, C-003, and round 2,
+/// C-002). An op file that a crash itself loses needs a store that does not
+/// sync op files, which no variant is yet (backlog T-034).
 #[test]
 fn concurrency_catches_lost_ops() {
     let variants = Variants {
         store: store::Variant::UnsyncedObjects,
         ..CORRECT
     };
-    let caught = control(variants, |v| v.lost > 0);
+    let caught = control_in([true, false], variants, |v| v.lost > 0);
     assert!(caught.is_some(), "no acknowledged op was lost");
 }
 

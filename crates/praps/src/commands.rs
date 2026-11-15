@@ -178,8 +178,9 @@ fn must_exist(command: &str, dir: &Path, missing: &Hint, err: &mut impl Write) -
 }
 
 /// The nearest top above `full`, if there is one. A `.praps/store` that
-/// cannot be listed for a reason other than its absence is a refusal: it is
-/// never passed over for a repository further up.
+/// cannot be listed for a reason other than its absence, or a
+/// `.praps/workspace` that cannot be read, is a refusal: it is never passed
+/// over for a repository further up.
 fn top_above(command: &str, full: &Path, err: &mut impl Write) -> Result<Option<PathBuf>, u8> {
     let above = place::above(full);
     match place::nearest_top(&RealFs, &above) {
@@ -190,7 +191,13 @@ fn top_above(command: &str, full: &Path, err: &mut impl Write) -> Result<Option<
                 "{}: a directory above it could not be searched for a repository: {error}",
                 full.display()
             ),
-            &hint::unreadable_above(),
+            // The hint follows what could not be read: a lane's file asks
+            // for that file, not for a store (Sprint 7 test critique, round
+            // 2, C-001).
+            &match error {
+                place::Unreadable::Store(..) => hint::unreadable_above(),
+                place::Unreadable::LaneFile(..) => hint::unreadable_file(),
+            },
             err,
         )),
     }
@@ -605,9 +612,11 @@ fn init(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 
 /// 3. the store of the nearest top above DIR;
 /// 4. DIR itself, which then fails as not a store.
 ///
-/// The last value says whether the store is a working copy's (rules 1 and
-/// 3) or a directory taken as a store itself (rules 2 and 4).
-fn store_for(given: Option<&Path>, err: &mut impl Write) -> Result<(PathBuf, String, bool), u8> {
+/// The last value says where the store was found (see [`StoreFrom`]).
+fn store_for(
+    given: Option<&Path>,
+    err: &mut impl Write,
+) -> Result<(PathBuf, String, StoreFrom), u8> {
     let dir = given.unwrap_or(Path::new("."));
     let full = full_path("verify", dir, err)?;
     let named = given.map_or_else(
@@ -615,7 +624,10 @@ fn store_for(given: Option<&Path>, err: &mut impl Write) -> Result<(PathBuf, Str
         |dir| dir.display().to_string(),
     );
     match place::is_top(&RealFs, dir) {
-        Ok(true) => return Ok((store_of(dir), named, true)),
+        Ok(true) => {
+            let (store, from) = store_of(dir, &named, err)?;
+            return Ok((store, named, from));
+        }
         Ok(false) => {}
         Err(error) => {
             return Err(refuse(
@@ -627,7 +639,7 @@ fn store_for(given: Option<&Path>, err: &mut impl Write) -> Result<(PathBuf, Str
         }
     }
     match Store::inspect(RealFs, dir, HashAlg::DEFAULT) {
-        Ok(_) => return Ok((dir.to_path_buf(), named, false)),
+        Ok(_) => return Ok((dir.to_path_buf(), named, StoreFrom::Directory)),
         // Not a store: the search goes on.
         Err(error) if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {}
         // Whether it is one could not be read. Going on would check, and
@@ -644,21 +656,54 @@ fn store_for(given: Option<&Path>, err: &mut impl Write) -> Result<(PathBuf, Str
     }
     must_exist("verify", dir, &hint::store_or_working_copy(), err)?;
     match top_above("verify", &full, err)? {
-        Some(top) => Ok((store_of(&top), top.display().to_string(), true)),
-        None => Ok((dir.to_path_buf(), named, false)),
+        Some(top) => {
+            let shown = top.display().to_string();
+            let (store, from) = store_of(&top, &shown, err)?;
+            Ok((store, shown, from))
+        }
+        None => Ok((dir.to_path_buf(), named, StoreFrom::Directory)),
     }
 }
 
+/// Where the store `verify` checks was found.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StoreFrom {
+    /// The directory given, taken as a store itself (rules 2 and 4).
+    Directory,
+    /// A working copy's own `.praps/store` (rules 1 and 3).
+    WorkingCopy,
+    /// The store a lane's `.praps/workspace` names (rules 1 and 3).
+    Lane,
+}
+
 /// The store a working copy at `top` uses: its own `.praps/store`, or, for
-/// a lane, the one its `.praps/workspace` names.
-fn store_of(top: &Path) -> PathBuf {
+/// a lane, the one its `.praps/workspace` names. A lane file that does not
+/// parse, or cannot be read, is refused as opening the lane refuses it,
+/// with its own error and hint. It is never taken for a store that is
+/// missing, whose hint would offer `init` (Sprint 7 test critique, round
+/// 2, C-001).
+fn store_of(top: &Path, shown: &str, err: &mut impl Write) -> Result<(PathBuf, StoreFrom), u8> {
     let own = top.join(PRAPS_DIR).join(STORE_DIR);
     if RealFs.list(&own).is_ok() {
-        return own;
+        return Ok((own, StoreFrom::WorkingCopy));
     }
-    match workspace::lane::read(&RealFs, &top.join(PRAPS_DIR)) {
-        Ok(Some(Ok(file))) => file.store,
-        _ => own,
+    let praps = top.join(PRAPS_DIR);
+    let file = praps.join(workspace::lane::WORKSPACE_FILE);
+    match workspace::lane::read(&RealFs, &praps) {
+        Ok(None) => Ok((own, StoreFrom::WorkingCopy)),
+        Ok(Some(Ok(lane))) => Ok((lane.store, StoreFrom::Lane)),
+        Ok(Some(Err(why))) => Err(fail(
+            "verify",
+            shown,
+            &workspace::Error::BadWorkspaceFile(file, why),
+            err,
+        )),
+        Err(error) => Err(refuse(
+            "verify",
+            format_args!("{}: {error}", file.display()),
+            &hint::unreadable_file(),
+            err,
+        )),
     }
 }
 
@@ -774,7 +819,7 @@ fn lanes(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8
 }
 
 fn verify(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u8 {
-    let (store_dir, shown, of_working_copy) = match store_for(given, err) {
+    let (store_dir, shown, from) = match store_for(given, err) {
         Ok(found) => found,
         Err(code) => return code,
     };
@@ -783,12 +828,19 @@ fn verify(given: Option<&Path>, out: &mut impl Write, err: &mut impl Write) -> u
     let report = match Store::inspect(RealFs, &store_dir, HashAlg::DEFAULT).and_then(|s| s.fsck()) {
         Ok(report) => report,
         Err(error) => {
+            // A lane's store that is not there is refused as opening the
+            // lane refuses it: a lane holds no store of its own, so `init`
+            // is no remedy (Sprint 7 test critique, round 2, C-001).
+            if from == StoreFrom::Lane && error.kind() == ErrorKind::NotFound {
+                let gone = workspace::Error::StoreGone(store_dir, error.to_string());
+                return fail("verify", &shown, &gone, err);
+            }
             // A directory that is no store is one to make or to name
             // rightly; a working copy's store that is no store was left by
             // an interrupted `init`, or has lost its directories.
-            let hint = match (error.kind() == ErrorKind::NotFound, of_working_copy) {
-                (true, false) => hint::not_a_store(),
-                (true, true) => hint::unfinished_store(),
+            let hint = match (error.kind() == ErrorKind::NotFound, from) {
+                (true, StoreFrom::Directory) => hint::not_a_store(),
+                (true, _) => hint::unfinished_store(),
                 (false, _) => hint::unreadable_store(),
             };
             return refuse("verify", format_args!("{shown}: {error}"), &hint, err);
