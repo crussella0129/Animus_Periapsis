@@ -1,29 +1,30 @@
 # Sprint 7 Test Matrix Log
 
-The result lines of the seven simulation matrices at the tested head, `b951d6d`, run optimised with `--nocapture` on both systems:
+The result lines of the seven simulation matrices at the tested head, `4068f43`, run optimised with `--nocapture` on both systems:
 
 ```
 cargo test --no-fail-fast -p store --test crash --test writers -- --nocapture
 cargo test --no-fail-fast -p workspace --test crash --test materialise_crash --test describe_crash --test lane_crash --test concurrency -- --nocapture
 ```
 
-They ran on Windows 11 (NTFS, the working checkout) and in WSL Ubuntu 26.04.1 (ext4, a fresh clone of `b951d6d`). Each system printed 99 result lines, and every test in the seven binaries passed. Sorted, the two outputs are equal line for line except four:
+They ran on Windows 11 (NTFS, the working checkout) and in WSL Ubuntu 26.04.1 (ext4, a fresh clone of `4068f43`). Each system printed 98 result lines, and every test in the seven binaries passed. Sorted, the two outputs are equal line for line except four:
 - **Three digests that cover lane files.** The lane matrix, and the Concurrency scenario's one-store and two-store runs, differ by system. A lane's `.praps/workspace` names the store's path as the system spells it, `repo\.praps\store` on Windows, and that file is part of every cell's state. Each test asserts one digest for Windows and one for other systems.
-- **The four-writer matrix's own timing line:** 37 s on Windows, 39 s in WSL.
+- **The four-writer matrix's own timing line:** 37 s on Windows, 216 s in WSL.
 
 Every cell count, every violation count and every control's result is the same on both systems.
 
-**What `b951d6d` changed in these lines** (test critique, round 1). Against `5b65da8`, each system prints the same lines and five more, and nothing else moved:
-- **Three portable digests,** one for the lane matrix and one for each Concurrency run. Each reads every `\` in a lane file as `/`, and each is the same on both systems; the tests assert each as one literal everywhere (C-010).
-- **Two lines of a fourth Concurrency control,** the store's `UnsyncedObjects` again, which stops only where an acknowledged op is lost (C-003). Its one-store run breaks every cell but loses no acknowledged op, so all 160 cells run; the first cell of its two-store run loses 29.
+**What the test critique changed in these lines.** Against `5b65da8`, each system prints four lines more, and three lines of the Concurrency controls changed; no cell count, digest or result of a correct variant moved:
+- **Three portable digests** (round 1, `b951d6d`), one for the lane matrix and one for each Concurrency run. Each reads every `\` in a lane file as `/`, and each is the same on both systems; the tests assert each as one literal everywhere (C-010).
+- **A fourth Concurrency control** (round 1; reordered in round 2, `4068f43`): the store's `UnsyncedObjects` again, stopped only where an acknowledged op is missing from a store. Its two-store run now comes first, and its first cell is caught, so it prints one line.
+- **Higher counts in the controls' first cells** (round 2). Each cell is now checked a second time after the next command, and in the two-store run after a second exchange, so a control's first cell counts some violations twice. The cells caught are the same.
 
-At `5b65da8`, and at `1d5c94b` before it, the lines were the same but for those five and the timing line.
+At `5b65da8`, and at `1d5c94b` before it, the lines were the same but for those and the timing line.
 
 ## Cell counts and digests, before and after
 
 A cell is one crash point. In the five matrices from Sprints 1 to 6, that is one for each syscall of the scenario and one after the last, for each of 40 seeds in each of two directory modes, so a count moves only if a scenario makes more or fewer syscalls.
 
-| Matrix | Cells at `855eb67` | Cells at `b951d6d` | Digest at `855eb67` | Digest at `b951d6d` |
+| Matrix | Cells at `855eb67` | Cells at `4068f43` | Digest at `855eb67` | Digest at `4068f43` |
 |---|---|---|---|---|
 | store | 32,840 | 32,840 | `blake3:d36b8c9c…` | `blake3:08b4e33445e94b1b154c19293d47a66da8b440a6f748d5a429d52ea40c8755d8` |
 | four writers | 44,836 | 44,836 | `blake3:253b1eab…` | `blake3:e5819bdf6d5f40714b3e6d8188016cc80ef08c5aadd312307e8b1646d194d28b` |
@@ -38,7 +39,7 @@ A cell is one crash point. In the five matrices from Sprints 1 to 6, that is one
 - **T-002 moved all five digests.** An operation now names its workspace, and a view holds one entry per workspace, so the bytes of every operation and view change.
 - **T-004 moved the Materialise digest again** (`blake3:3806881a…` after T-002), because the record names the changeset its write starts from.
 - No other task moved any of the five. Each asserts its digest as a literal, and all five literals passed at every task's commit.
-- The Windows digests of the lane matrix and the Concurrency runs are the ones T-006 and T-009 first asserted, and no later commit moved them. `1d5c94b` added the literals for other systems, and `b951d6d` the portable ones.
+- The Windows digests of the lane matrix and the Concurrency runs are the ones T-006 and T-009 first asserted, and no later commit moved them. `1d5c94b` added the literals for other systems, and `b951d6d` the portable ones. The digests are taken from each cell's state before its checks run, so the checks round 2 added move none of them.
 - A Concurrency cell is one run: for each seed and mode, the run with a kill, crashed once after its last syscall and once at a syscall drawn from the seed.
 
 ## Violations and controls
@@ -50,7 +51,7 @@ A cell is one crash point. In the five matrices from Sprints 1 to 6, that is one
   - `FirstHeadOnly`, in the first cell: two writers for every lane;
   - `MergeOnRead`, in the first cell: a command that changes nothing commits;
   - the store's `UnsyncedObjects`, in the first cell: the store does not check clean;
-  - the same store, stopping only where an acknowledged op is lost: in the first two-store cell, after all 160 one-store cells.
+  - the same store, stopped only where an acknowledged op is missing from a store: in the first two-store cell. There the exchange stopped at an object the crash lost, and left on one store acknowledged ops it had not yet copied; with each lane's next op checked too, the cell counts 58. A crash that itself loses an op file is not shown, since no store variant leaves op files unsynced (backlog T-034).
 - **The Concurrency scenario's coverage:**
   - one store: 112 processes killed, 590 commands stopped by the crash, 66 operations in flight that landed;
   - two stores: 116, 594 and 182.
@@ -67,19 +68,19 @@ Every control was caught on both systems, and both printed the same eight lines,
 - `FirstHeadOnly` broke 148 of the one-store cells and all 160 two-store cells: 308 of 320.
 - `MergeOnRead` broke 88 and 92: 180 of 320.
 - The store's `UnsyncedObjects` broke all 320.
-- The fourth control runs the same store, so its two lines are the same as the third's. Its lost-op check fires 3,632 times in the two-store run, and never in the one-store run, where a crash loses objects but no op.
+- The fourth control runs the same store, two-store run first, so its two lines are the third's. Its lost-op check fires 7,264 times in the two-store run, and never in the one-store run, where a crash loses objects but no op. Each op an exchange left behind is counted at both of its cell's checks: 3,632 of them, as at `b951d6d`.
 
-The binary took 353 s in WSL and 236 s on Windows, one test at a time. While T-009 was built, the first three controls had been caught in 302, 180 and 320 cells. The test critique's first round has since tightened the checks, and `FirstHeadOnly` is now caught in six more cells.
+The binary took 300 s in WSL and 162 s on Windows, one test at a time. While T-009 was built, the first three controls had been caught in 302, 180 and 320 cells. The test critique's first round tightened the checks, and `FirstHeadOnly` has since been caught in six more cells. The second round checks each cell again after its next command, which raises the violation counts but catches no control in more cells.
 
 ```
 Variants { store: Correct, workspace: FirstHeadOnly }, one store: 160 cells, 148 with a violation; violations: Violations { failed: 486, readers: 92, lost: 0, store: 0, writer: 1074, kept: 82, view: 1184, next: 0 }; seen: Seen { landed: 0, crashed: 518, killed: 122 }
-Variants { store: Correct, workspace: FirstHeadOnly }, two stores: 160 cells, 160 with a violation; violations: Violations { failed: 346, readers: 110, lost: 0, store: 0, writer: 1900, kept: 180, view: 2512, next: 0 }; seen: Seen { landed: 12, crashed: 538, killed: 124 }
-Variants { store: UnsyncedObjects, workspace: Correct }, one store: 160 cells, 160 with a violation; violations: Violations { failed: 0, readers: 0, lost: 0, store: 160, writer: 0, kept: 1252, view: 1440, next: 1280 }; seen: Seen { landed: 102, crashed: 592, killed: 126 }
-Variants { store: UnsyncedObjects, workspace: Correct }, two stores: 160 cells, 160 with a violation; violations: Violations { failed: 0, readers: 0, lost: 3632, store: 612, writer: 1144, kept: 1364, view: 2876, next: 1280 }; seen: Seen { landed: 70, crashed: 606, killed: 108 }
+Variants { store: Correct, workspace: FirstHeadOnly }, two stores: 160 cells, 160 with a violation; violations: Violations { failed: 346, readers: 110, lost: 0, store: 0, writer: 1900, kept: 820, view: 2512, next: 0 }; seen: Seen { landed: 12, crashed: 538, killed: 124 }
+Variants { store: UnsyncedObjects, workspace: Correct }, two stores: 160 cells, 160 with a violation; violations: Violations { failed: 0, readers: 0, lost: 7264, store: 932, writer: 2288, kept: 2728, view: 2876, next: 1280 }; seen: Seen { landed: 70, crashed: 606, killed: 108 }
+Variants { store: UnsyncedObjects, workspace: Correct }, one store: 160 cells, 160 with a violation; violations: Violations { failed: 0, readers: 0, lost: 0, store: 320, writer: 0, kept: 2504, view: 2880, next: 1280 }; seen: Seen { landed: 102, crashed: 592, killed: 126 }
 Variants { store: Correct, workspace: MergeOnRead }, one store: 160 cells, 88 with a violation; violations: Violations { failed: 0, readers: 596, lost: 0, store: 0, writer: 596, kept: 0, view: 0, next: 0 }; seen: Seen { landed: 289, crashed: 562, killed: 122 }
 Variants { store: Correct, workspace: MergeOnRead }, two stores: 160 cells, 92 with a violation; violations: Violations { failed: 0, readers: 574, lost: 0, store: 0, writer: 1148, kept: 0, view: 0, next: 0 }; seen: Seen { landed: 668, crashed: 580, killed: 126 }
-Variants { store: UnsyncedObjects, workspace: Correct }, one store: 160 cells, 160 with a violation; violations: Violations { failed: 0, readers: 0, lost: 0, store: 160, writer: 0, kept: 1252, view: 1440, next: 1280 }; seen: Seen { landed: 102, crashed: 592, killed: 126 }
-Variants { store: UnsyncedObjects, workspace: Correct }, two stores: 160 cells, 160 with a violation; violations: Violations { failed: 0, readers: 0, lost: 3632, store: 612, writer: 1144, kept: 1364, view: 2876, next: 1280 }; seen: Seen { landed: 70, crashed: 606, killed: 108 }
+Variants { store: UnsyncedObjects, workspace: Correct }, one store: 160 cells, 160 with a violation; violations: Violations { failed: 0, readers: 0, lost: 0, store: 320, writer: 0, kept: 2504, view: 2880, next: 1280 }; seen: Seen { landed: 102, crashed: 592, killed: 126 }
+Variants { store: UnsyncedObjects, workspace: Correct }, two stores: 160 cells, 160 with a violation; violations: Violations { failed: 0, readers: 0, lost: 7264, store: 932, writer: 2288, kept: 2728, view: 2876, next: 1280 }; seen: Seen { landed: 70, crashed: 606, killed: 108 }
 ```
 
 ## The result lines
@@ -90,9 +91,8 @@ As printed on Windows and sorted. The four lines that differ in WSL are given ab
 LaneFileInPlace: 1394 of 5440 cells caught
 Variants { store: Correct, workspace: FirstHeadOnly }, one store: 1 cells, 1 with a violation; violations: Violations { failed: 5, readers: 1, lost: 0, store: 0, writer: 8, kept: 0, view: 8, next: 0 }; seen: Seen { landed: 0, crashed: 0, killed: 1 }
 Variants { store: Correct, workspace: MergeOnRead }, one store: 1 cells, 1 with a violation; violations: Violations { failed: 0, readers: 7, lost: 0, store: 0, writer: 7, kept: 0, view: 0, next: 0 }; seen: Seen { landed: 1, crashed: 0, killed: 1 }
-Variants { store: UnsyncedObjects, workspace: Correct }, one store: 1 cells, 1 with a violation; violations: Violations { failed: 0, readers: 0, lost: 0, store: 1, writer: 0, kept: 8, view: 9, next: 8 }; seen: Seen { landed: 0, crashed: 0, killed: 1 }
-Variants { store: UnsyncedObjects, workspace: Correct }, one store: 160 cells, 160 with a violation; violations: Violations { failed: 0, readers: 0, lost: 0, store: 160, writer: 0, kept: 1252, view: 1440, next: 1280 }; seen: Seen { landed: 102, crashed: 592, killed: 126 }
-Variants { store: UnsyncedObjects, workspace: Correct }, two stores: 1 cells, 1 with a violation; violations: Violations { failed: 0, readers: 0, lost: 29, store: 4, writer: 8, kept: 8, view: 18, next: 8 }; seen: Seen { landed: 0, crashed: 0, killed: 1 }
+Variants { store: UnsyncedObjects, workspace: Correct }, one store: 1 cells, 1 with a violation; violations: Violations { failed: 0, readers: 0, lost: 0, store: 2, writer: 0, kept: 16, view: 18, next: 8 }; seen: Seen { landed: 0, crashed: 0, killed: 1 }
+Variants { store: UnsyncedObjects, workspace: Correct }, two stores: 1 cells, 1 with a violation; violations: Violations { failed: 0, readers: 0, lost: 58, store: 6, writer: 16, kept: 16, view: 18, next: 8 }; seen: Seen { landed: 0, crashed: 0, killed: 1 }
 cells that crashed during the retry: 196
 describe matrix correct          Correct Lenient: 14360 cells; violations: closure 0 durability 0 recency 0 liveness 0
 describe matrix correct          Correct Lenient: 14360 cells; violations: closure 0 durability 0 recency 0 liveness 0

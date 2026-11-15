@@ -1,6 +1,6 @@
 # Test Critique — Sprint 7, round 1
 
-Round 1. A read-only reviewer, run as a subagent, critiqued the Test evidence at `c3ad8b8` (tested head `5b65da8`) against the locked plans, the completion entries and the linked intents, using the Sprint Loops test-critic prompt. Its concerns are given as it wrote them; the responses are at the end. The verdict was `block`, so the evidence was revised and reviewed again ([critique.md](critique.md)).
+Round 1. A read-only reviewer, run as a subagent, critiqued the Test evidence at `c3ad8b8` (tested head `5b65da8`) against the locked plans, the completion entries and the linked intents, using the Sprint Loops test-critic prompt. Its concerns are given as it wrote them; the responses are at the end. The verdict was `block`, so the evidence was revised and reviewed again ([critique-round2.md](critique-round2.md), then [critique.md](critique.md)).
 
 ## Concerns
 
@@ -117,6 +117,7 @@ The tests below are commit `b951d6d`, which is now the tested head. `cargo ci` p
   - Tests: `an_unreadable_workspace_file_is_refused` in `lanes.rs`, and two new cases in `every_refusal_prints_one_hint`: an unreadable `.praps/workspace` (a directory in its place, so on both systems) and `init` refused there. The test now counts 41 refusals on Linux and 38 on Windows, and checks for each that the hint comes last and names only registry commands.
   - Without the fix in `open`, the first test fails. With the search reporting the store instead of the lane file, `every_refusal_prints_one_hint` fails.
   - So T-006's sixth clause, T-007's top clause and its list of refusals now hold for an unreadable file. Code-review finding 6 is fixed in full, and backlog T-036 no longer carries it.
+  - **Corrected in round 2:** this fix covered a lane's top only. From below the top, and through `verify`, the lane file still met the wrong hint ([critique-round2.md](critique-round2.md), C-001).
 - **C-002: tighten-assertion, by rewording.** `unit-tests.md` now says AC-1 holds by construction: the library's merge takes a set of heads, `writers` walks only from them, and every collection it builds is ordered. `merge_ignores_order_and_repeats` is cited as a check that the library is deterministic. The evidence that the property check can fail is its two mutants that take the heads as a list, the pairwise fold and the first-equals-last fast path, in `wrong_merges_are_rejected`.
 - **C-003: tighten-assertion.**
   - A fourth control, `concurrency_catches_lost_ops`, runs the store's `UnsyncedObjects` and stops only at a cell where `lost` is above 0. Its one-store run breaks every cell but loses no acknowledged op; the first cell of its two-store run loses 29.
